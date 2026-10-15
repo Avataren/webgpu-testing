@@ -88,8 +88,10 @@ write linear radiance and leave exposure and tonemapping to post-processing. The
 holds the octahedral normal and motion (`GBUFFER_NORMAL_FORMAT`) and the world position,
 whose `w` is 0 for background and on a surface at least 1, with the smoothness
 (1 − roughness, 0 when unlit) and specular colour F0 packed into the half float's bits
-(`encode_surface_w` in `common.wgsl`). Post-processing (`src/renderer/postprocess/`)
-runs: MSAA depth resolve → reflections (half-res, or full with `ssr.full_resolution`,
+(`encode_surface_w` in `common.wgsl`); the colour target's alpha is -transmission on
+transmissive surfaces drawn in the opaque pass for ray-traced refraction. Post-processing
+(`src/renderer/postprocess/`) runs: MSAA depth resolve → ray-traced refraction (when glass
+is on screen) → reflections (half-res, or full with `ssr.full_resolution`,
 trace through the G-buffer positions, or ray traced with `ssr.ray_traced`, accumulated
 over frames, separable blur, added to the HDR scene weighted by smoothness² and Fresnel
 from F0, minus the flat ambient a found reflection replaces on metals) → TAA (Halton-jittered camera,

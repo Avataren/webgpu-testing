@@ -201,8 +201,24 @@ pub struct SerializedMaterial {
     pub metallic_factor: u8,
     pub roughness_factor: u8,
     pub emissive_strength: u16,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transmission_factor: u8,
+    #[serde(default = "default_ior", skip_serializing_if = "is_default_ior")]
+    pub ior: u8,
     #[serde(default)]
     pub kind: SerializedMaterialKind,
+}
+
+fn is_zero(value: &u8) -> bool {
+    *value == 0
+}
+
+fn default_ior() -> u8 {
+    Material::DEFAULT_IOR
+}
+
+fn is_default_ior(value: &u8) -> bool {
+    *value == Material::DEFAULT_IOR
 }
 
 impl From<&MaterialAsset> for SerializedMaterial {
@@ -274,6 +290,8 @@ impl SerializedMaterial {
             metallic_factor: material.metallic_factor,
             roughness_factor: material.roughness_factor,
             emissive_strength: material.emissive_strength,
+            transmission_factor: material.transmission_factor,
+            ior: material.ior,
             kind: SerializedMaterialKind::default(),
         }
     }
@@ -452,6 +470,8 @@ impl From<SerializedMaterial> for Material {
             metallic_factor: serialized.metallic_factor,
             roughness_factor: serialized.roughness_factor,
             emissive_strength: serialized.emissive_strength,
+            transmission_factor: serialized.transmission_factor,
+            ior: serialized.ior,
         }
     }
 }

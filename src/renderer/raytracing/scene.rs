@@ -21,7 +21,7 @@ use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::batch::{InstanceSource, SkinKey};
 use crate::renderer::internal::PreparedBatches;
 use crate::renderer::skinning::SkinningStage;
-use crate::renderer::{Material, Vertex};
+use crate::renderer::Vertex;
 
 /// What a hit shader needs about a TLAS instance (`RtInstance` in the shader), found by
 /// the instance's custom data.
@@ -44,6 +44,11 @@ const INITIAL_INSTANCES: u32 = 256;
 const UNUSED_FRAMES_BEFORE_EVICT: u64 = 600;
 /// TLAS instance custom data is 24 bits wide.
 const MAX_INSTANCES: u32 = 1 << 24;
+/// TLAS instance masks: rays that only ask whether light gets through (shadows, ambient
+/// occlusion) cull with `MASK_OPAQUE` and pass transmissive surfaces such as glass;
+/// reflection and refraction rays see both.
+pub(crate) const MASK_OPAQUE: u8 = 0x01;
+pub(crate) const MASK_TRANSMISSIVE: u8 = 0x02;
 
 /// What a BLAS is built from: a rigid mesh, or one skinned instance's deformed copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -148,8 +153,8 @@ pub(crate) struct RayTracingScene {
     instances: wgpu::Buffer,
     instance_capacity: u32,
     instance_scratch: Vec<RtInstance>,
-    /// Geometry and transform of each entry in `instance_scratch`.
-    instance_transforms: Vec<(GeometryKey, [f32; 12])>,
+    /// Geometry, transform and mask of each entry in `instance_scratch`.
+    instance_transforms: Vec<(GeometryKey, [f32; 12], u8)>,
     layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     /// The materials buffer `bind_group` was made with (it is replaced when it grows).
@@ -289,20 +294,30 @@ impl RayTracingScene {
                 {
                     continue;
                 }
-                let material = batches.materials.get(instance.material_index as usize);
-                if material.is_none_or(Material::is_billboarded) {
+                let Some(material) = batches.materials.get(instance.material_index as usize) else {
+                    continue;
+                };
+                if material.is_billboarded() {
                     // Billboards turn to the camera in the vertex shader; a ray would see
                     // them edge-on or from behind.
                     continue;
                 }
+                let mask = if material.is_transmissive() {
+                    MASK_TRANSMISSIVE
+                } else {
+                    MASK_OPAQUE
+                };
                 self.instance_scratch.push(RtInstance {
                     vertex_base: entry.vertex_base,
                     index_base: entry.index_base,
                     material_index: instance.material_index,
                     _padding: 0,
                 });
-                self.instance_transforms
-                    .push((key, affine_rows(instance.transform.matrix())));
+                self.instance_transforms.push((
+                    key,
+                    affine_rows(instance.transform.matrix()),
+                    mask,
+                ));
             }
         }
         let count = self.instance_scratch.len() as u32;
@@ -315,9 +330,14 @@ impl RayTracingScene {
             buffers_changed = true;
         }
         // The custom data finds the instance's entry in `instances`.
-        for (slot, (key, transform)) in self.instance_transforms.iter().enumerate() {
+        for (slot, (key, transform, mask)) in self.instance_transforms.iter().enumerate() {
             let blas = &self.meshes[key].blas;
-            self.tlas[slot] = Some(wgpu::TlasInstance::new(blas, *transform, slot as u32, 0xff));
+            self.tlas[slot] = Some(wgpu::TlasInstance::new(
+                blas,
+                *transform,
+                slot as u32,
+                *mask,
+            ));
         }
         for slot in count..self.tlas_used {
             self.tlas[slot as usize] = None;

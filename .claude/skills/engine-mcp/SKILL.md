@@ -133,6 +133,11 @@ engine you launched; save first).
   `project_save`.
 - Material `emissive` makes a surface glow in its own color; above 1 it is HDR, which is
   what lets bloom pick up a lit surface (try 2 to 5 with bloom on).
+- Glass, gems and water: material `transmission` (1 = clear) with `ior` (1.5 glass, 2.42
+  diamond), roughness near 0 and metallic 0; the color tints what shows through. With
+  hardware ray tracing (`engine_info` `surface.ray_tracing`) light refracts through the
+  object (internal reflections, absorption); otherwise it is drawn see-through without
+  bending. glTF imports read KHR_materials_transmission / KHR_materials_ior.
 - The cone's tip points toward +Z, opposite to forward: ships and arrows made from cones
   need a 180 degree yaw.
 

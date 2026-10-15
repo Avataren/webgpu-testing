@@ -133,6 +133,8 @@ const SSAO_NOISE_DATA: [f32; (NOISE_TEXTURE_SIZE * NOISE_TEXTURE_SIZE * 4) as us
 
 pub struct PostProcess {
     scene_source: TextureBundle,
+    /// A copy of `scene_source` the refraction pass reads while adding to it.
+    scene_copy: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
     normal_source: TextureBundle,
     normal_msaa: Option<MsaaTarget>,
@@ -490,6 +492,7 @@ impl PostProcess {
 
         let post = Self {
             scene_source: targets.scene_source,
+            scene_copy: targets.scene_copy,
             scene_msaa: targets.scene_msaa,
             normal_source: targets.normal_source,
             normal_msaa: targets.normal_msaa,
@@ -563,6 +566,7 @@ impl PostProcess {
         };
         let targets = SizedTargets::new(device, &self.size, self.sample_count);
         self.scene_source = targets.scene_source;
+        self.scene_copy = targets.scene_copy;
         self.scene_msaa = targets.scene_msaa;
         self.normal_source = targets.normal_source;
         self.normal_msaa = targets.normal_msaa;
@@ -751,6 +755,12 @@ impl PostProcess {
         Ok(())
     }
 
+    /// Whether transmissive surfaces are refracted with ray tracing (otherwise they are
+    /// drawn see-through).
+    pub(crate) fn ray_traced_refraction(&self) -> bool {
+        self.rt_reflection_stage.is_some() && self.settings.refraction.ray_traced
+    }
+
     /// Whether this frame's post-processing would trace rays (reflections or occlusion)
     /// if the scene is ready.
     pub(crate) fn wants_ray_tracing(&self) -> bool {
@@ -834,6 +844,23 @@ impl PostProcess {
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             pass.set_bind_group(1, bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+
+        // Refraction first: reflections then see glass with what shows through it.
+        if let (Some(stage), Some(frame)) =
+            (self.rt_reflection_stage.as_ref(), ray_tracing.as_ref())
+        {
+            if frame.refraction && self.settings.refraction.ray_traced {
+                self.scene_source.copy_to(encoder, &self.scene_copy);
+                stage.refract(
+                    encoder,
+                    &self.uniform_bind_group,
+                    frame,
+                    &self.scene_source.view,
+                    region,
+                );
+                timer.mark(encoder, "refraction");
+            }
         }
 
         if self.settings.ssr_active() {
@@ -1073,6 +1100,7 @@ impl PostProcess {
                 device,
                 RtReflectionInputs {
                     scene: &self.scene_source.view,
+                    scene_copy: &self.scene_copy.view,
                     normal: &self.normal_source.view,
                     position: &self.position_source.view,
                     sampler: &self.sampler_linear,
@@ -1244,6 +1272,8 @@ impl ReflectionTargets {
 /// Every render target whose size follows the surface.
 struct SizedTargets {
     scene_source: TextureBundle,
+    /// A copy of `scene_source` the refraction pass reads while adding to it.
+    scene_copy: TextureBundle,
     scene_msaa: Option<MsaaTarget>,
     normal_source: TextureBundle,
     normal_msaa: Option<MsaaTarget>,
@@ -1280,6 +1310,7 @@ impl SizedTargets {
             "ScenePosition",
         );
         Self {
+            scene_copy: TextureBundle::copyable(device, size, HDR_FORMAT, "SceneColorCopy"),
             scene_source,
             scene_msaa,
             normal_source,

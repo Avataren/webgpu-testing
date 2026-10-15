@@ -94,6 +94,14 @@ pub(super) fn load_materials<D: SceneImportDevice>(
             material = material.with_emissive(emissive_strength);
         }
 
+        // KHR_materials_transmission / KHR_materials_ior: glass and gems.
+        if let Some(transmission) = gltf_mat.transmission() {
+            material = material.with_transmission(transmission.transmission_factor());
+        }
+        if let Some(ior) = gltf_mat.ior() {
+            material = material.with_ior(ior);
+        }
+
         if let Some(occlusion) = gltf_mat.occlusion_texture() {
             let tex_index = occlusion.texture().index();
             if let Some(texture) = textures.get(tex_index) {

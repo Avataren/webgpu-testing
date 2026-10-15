@@ -179,8 +179,32 @@ noise), because the pass runs after TAA. About 0.41 ms against SSAO's 0.15 ms in
 editor view at a 0.5 m radius. `engine_stats` `renderer.gpu` now splits `temporal` and
 `ambient_occlusion` out of post-processing.
 
+**RT refraction (2026-10-15).** Materials have `transmission` (0-1) and `ior` (stored as
+`(ior - 1) * 100`, 1.00-3.55; glTF KHR_materials_transmission / KHR_materials_ior). With
+ray tracing (`refraction.ray_traced`, default on) the batcher draws transmissive surfaces in
+the opaque pass (`RenderBatcher::set_ray_traced_transmission`, asked from
+`Renderer::ray_traced_transmission` each frame): they get depth, G-buffer and highlights,
+lose their diffuse share, and mark their pixels with colour alpha = -transmission. Before
+reflections, `fs_rt_refraction_trace` (rt_reflections.wgsl) traces 4 rays per marked pixel
+at rotated-grid sub-pixel positions (one per pixel made facet edges crawl under TAA): the
+view ray finds the glass's material, refracts in, crosses the object with Beer-Lambert
+absorption of its colour over 0.5 m, reflects internally where it cannot leave (up to 8
+events), refracts out and lights what it reaches (screen colour or hit shading, the
+environment on a miss), weighted by transmission and 1 - Fresnel from the ior. It reads a
+copy of the scene colour and adds to it. Glass instances get TLAS mask 0x02, and shadow,
+AO and hit-shadow rays cull with 0x01, so light passes glass; shadow maps leave
+transmissive casters out too. Reflection rays that meet glass take its on-screen colour
+(which includes the refraction) or, off screen, continue straight through it to opaque
+geometry. Without ray tracing (or `refraction.ray_traced` off) transmissive surfaces are
+drawn in the transparent pass, see-through with a little opacity. Test objects in rt-lab: a
+glass sphere (ior 1.5) and a Blender-modelled round brilliant (81 facets, ior 2.42, pale
+blue) under an emissive light bar. Cost scales with glass pixels (about 0.03 ms with none
+on screen).
+
 Not yet: a denoiser for large lights' soft shadows, temporal accumulation for RT AO (it
-would allow fewer rays), shadow rays for alpha-tested geometry.
+would allow fewer rays), shadow rays for alpha-tested geometry; for refraction, rough
+(frosted) glass, dispersion, coloured shadows and caustics, and refraction of glass seen in
+reflections off screen (it is see-through without bending there).
 
 ### What wgpu 30 provides
 

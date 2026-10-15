@@ -131,6 +131,8 @@ fn entity_fields() -> serde_json::Map<String, Value> {
             "metallic": { "type": "number", "minimum": 0, "maximum": 1 },
             "roughness": { "type": "number", "minimum": 0, "maximum": 1 },
             "emissive": { "type": "number", "minimum": 0, "maximum": 64, "description": "Emission strength: the surface glows in its own base color. 1 is full color; above 1 is HDR, which is what makes bloom pick a lit surface up (try 2-5)" },
+            "transmission": { "type": "number", "minimum": 0, "maximum": 1, "description": "Light passing through the surface: glass, gems, water (1 = clear). Refracted by ior and tinted by the color; ray traced where engine_info surface.ray_tracing is available, otherwise drawn see-through. Use low roughness and metallic 0" },
+            "ior": { "type": "number", "minimum": 1, "maximum": 3.55, "description": "Index of refraction for transmissive materials: 1.33 water, 1.5 glass (default), 1.77 sapphire, 2.42 diamond" },
             "unlit": { "type": "boolean" },
             "transparent": { "type": "boolean", "description": "Alpha blending; set the color's alpha below 1" },
             "double_sided": { "type": "boolean" },
@@ -777,6 +779,9 @@ pub fn tools() -> Vec<Tool> {
                 "chromatic_aberration": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" } }},
                 "film_grain": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "response": { "type": "number" } }},
                 "sharpen": { "type": "object", "properties": { "enabled": { "type": "boolean" }, "strength": { "type": "number" } }},
+                "refraction": { "type": "object", "description": "Light through transmissive materials (material transmission > 0)", "properties": {
+                    "ray_traced": { "type": "boolean", "description": "Refract with hardware ray tracing (bending, internal reflection, absorption; default true); off or without engine_info surface.ray_tracing they are drawn see-through" }
+                }},
                 "rt_shadows": { "type": "object", "description": "Shadows of shadow-casting lights (up to 4 directional, 4 point, 4 spot) traced per pixel with hardware ray tracing instead of shadow maps: exact at any distance, no acne or leaks. Needs engine_info surface.ray_tracing and no MSAA; otherwise shadow maps", "properties": {
                     "enabled": { "type": "boolean" },
                     "softness": { "type": "number", "description": "Directional lights' apparent size in degrees: 0 hard shadows, 0.5 like the sun (soft edges smoothed by TAA)" },

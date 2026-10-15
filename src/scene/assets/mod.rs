@@ -67,6 +67,8 @@ mod tests {
             metallic_factor: 0,
             roughness_factor: 0,
             emissive_strength: 0,
+            transmission_factor: 0,
+            ior: crate::renderer::Material::DEFAULT_IOR,
             kind: SerializedMaterialKind::default(),
         }
     }

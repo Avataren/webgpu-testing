@@ -128,7 +128,8 @@ struct VsOut {
     @location(7) @interpolate(flat) material_texture_indices0: vec4<u32>,
     @location(8) @interpolate(flat) material_texture_indices1: vec2<u32>,
     @location(9) @interpolate(flat) material_flags: u32,
-    @location(10) @interpolate(flat) material_factors: vec3<f32>,
+    // metallic, roughness, emissive strength, transmission
+    @location(10) @interpolate(flat) material_factors: vec4<f32>,
     @location(11) curr_clip: vec4<f32>,
     @location(12) prev_clip: vec4<f32>,
 };
@@ -137,7 +138,19 @@ struct ShadedFragment {
     color: vec4<f32>,
     normal: vec4<f32>,
     world_pos: vec4<f32>,
+    // Share of light the surface lets through (glass); 0 for opaque surfaces.
+    transmission: f32,
 };
+
+// The colour target's alpha in the G-buffer pass: transmissive surfaces store
+// -transmission, which marks them for the ray-traced refraction pass (opaque surfaces
+// store their alpha, never negative). See rt_reflections.wgsl, fs_rt_refraction_trace.
+fn gbuffer_color(shaded: ShadedFragment) -> vec4<f32> {
+    return vec4<f32>(
+        shaded.color.rgb,
+        select(shaded.color.a, -shaded.transmission, shaded.transmission > 0.0),
+    );
+}
 
 struct FragmentOutNoPick {
     @location(0) color: vec4<f32>,
@@ -206,10 +219,11 @@ fn vs_main(in: VsIn) -> VsOut {
     );
     out.material_texture_indices1 = vec2<u32>(material.occlusion_texture, 0u);
     out.material_flags = material.material_flags;
-    out.material_factors = vec3<f32>(
+    out.material_factors = vec4<f32>(
         material.metallic_factor,
         material.roughness_factor,
         material.emissive_strength,
+        material.transmission,
     );
     return out;
 }
@@ -288,14 +302,18 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     // This function is from lighting_with_shadows.wgsl. Opaque surfaces are the ones the
     // ray-traced shadow mask was traced for (from the depth prepass).
     let opaque = (material_flags & FLAG_ALPHA_BLEND) == 0u;
+    // Light a transmissive surface lets through is not scattered back diffusely: its
+    // diffuse share goes (the refraction pass adds what shows through instead).
+    let transmission = clamp(in.material_factors.w, 0.0, 1.0);
+    let lit_color = base_color.rgb * (1.0 - transmission);
     let Lo = calculate_scene_lighting_at(
-        in.world_pos, N, V, base_color.rgb, metallic, roughness,
+        in.world_pos, N, V, lit_color, metallic, roughness,
         select(vec2<f32>(-1.0), in.pos.xy, opaque)
     );
     
     // This function is from environment.wgsl
     let environment_light = calculate_environment_lighting(
-        N, V, base_color.rgb, metallic, roughness, occlusion
+        N, V, lit_color, metallic, roughness, occlusion
     );
     
     // Conditionally use lighting based on material flags
@@ -312,10 +330,14 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
     let lit = (material_flags & FLAG_UNLIT) == 0u;
     let smoothness = select(0.0, clamp(1.0 - roughness, 0.0, 1.0), lit);
     let specular_color = mix(vec3<f32>(0.04), base_color.rgb, metallic);
+    // Drawn see-through (the transparent pass, without ray-traced refraction), a
+    // transmissive surface shows what is behind it in proportion, keeping a little opacity
+    // so its highlights and edges still show.
     return ShadedFragment(
-        vec4<f32>(color, base_color.a),
+        vec4<f32>(color, base_color.a * (1.0 - 0.85 * transmission)),
         vec4<f32>(normalize(N), 1.0),
         vec4<f32>(in.world_pos, encode_surface_w(smoothness, specular_color)),
+        transmission,
     );
 }
 
@@ -343,7 +365,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 fn fs_main_gbuffer(in: VsOut) -> FragmentOutNoPick {
     let shaded = shade_fragment(in);
     return FragmentOutNoPick(
-        shaded.color,
+        gbuffer_color(shaded),
         pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
         shaded.world_pos,
     );
@@ -361,7 +383,7 @@ fn fs_main_gbuffer_pick(in: VsOut) -> FragmentOut {
     let shaded = shade_fragment(in);
     let pick_value = object_pick_output(in.instance_id, shaded.color.a, in.material_flags);
     return FragmentOut(
-        shaded.color,
+        gbuffer_color(shaded),
         pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
         shaded.world_pos,
         pick_value,

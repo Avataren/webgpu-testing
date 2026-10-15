@@ -15,8 +15,10 @@ struct MaterialData {
     metallic_factor: f32,
     roughness_factor: f32,
     emissive_strength: f32,
+    // Share of light passing through (refracting glass), and its index of refraction.
+    transmission: f32,
+    ior: f32,
     _padding: u32,
-    _padding2: vec2<u32>,
 };
 
 const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;

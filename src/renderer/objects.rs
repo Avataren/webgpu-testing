@@ -41,8 +41,9 @@ pub struct MaterialData {
     pub metallic_factor: f32,            // 4 bytes
     pub roughness_factor: f32,           // 4 bytes
     pub emissive_strength: f32,          // 4 bytes
-    pub _padding: u32,                   // 4 bytes
-    pub _padding2: [u32; 2],             // 8 bytes (ensures 64-byte stride)
+    pub transmission: f32,               // 4 bytes
+    pub ior: f32,                        // 4 bytes
+    pub _padding: u32,                   // 4 bytes (ensures 64-byte stride)
 }
 
 impl MaterialData {
@@ -58,8 +59,9 @@ impl MaterialData {
             metallic_factor: material.metallic_f32(),
             roughness_factor: material.roughness_f32(),
             emissive_strength: material.emissive_f32(),
+            transmission: material.transmission_f32(),
+            ior: material.ior_f32(),
             _padding: 0,
-            _padding2: [0, 0],
         }
     }
 }

@@ -20,6 +20,12 @@ pub struct Material {
     pub roughness_factor: u8, // 0-255 -> 0.0-1.0
     /// 255 is 1.0; larger values give HDR emission for bloom, up to `MAX_EMISSIVE`.
     pub emissive_strength: u16,
+    /// How much light passes through the surface, 0-255 -> 0.0-1.0 (glass, gems, water).
+    /// Transmitted light is refracted by `ior` and tinted by the base colour.
+    pub transmission_factor: u8,
+    /// Index of refraction as `(ior - 1) * 100`: 50 is 1.5 (glass), 142 is 2.42
+    /// (diamond); covers 1.00 to 3.55.
+    pub ior: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,6 +84,8 @@ impl std::ops::BitOrAssign for MaterialFlags {
 impl Material {
     /// Largest emissive strength; values above 1 are HDR and make bloom pick the surface up.
     pub const MAX_EMISSIVE: f32 = 64.0;
+    /// Stored index of refraction for 1.5 (glass); see [`Material::ior`].
+    pub const DEFAULT_IOR: u8 = 50;
 
     pub fn new(color: [u8; 4]) -> Self {
         Self {
@@ -91,6 +99,8 @@ impl Material {
             metallic_factor: 0,
             roughness_factor: 255, // Default to rough
             emissive_strength: 0,
+            transmission_factor: 0,
+            ior: Self::DEFAULT_IOR,
         }
     }
 
@@ -124,6 +134,35 @@ impl Material {
     pub fn with_roughness(mut self, roughness: f32) -> Self {
         self.roughness_factor = (roughness.clamp(0.0, 1.0) * 255.0) as u8;
         self
+    }
+
+    /// How much light passes through (0-1); see [`Material::transmission_factor`].
+    pub fn with_transmission(mut self, transmission: f32) -> Self {
+        self.transmission_factor = (transmission.clamp(0.0, 1.0) * 255.0).round() as u8;
+        self
+    }
+
+    /// Index of refraction (1.0-3.55); see [`Material::ior`].
+    pub fn with_ior(mut self, ior: f32) -> Self {
+        self.ior = Self::encode_ior(ior);
+        self
+    }
+
+    pub fn encode_ior(ior: f32) -> u8 {
+        ((ior.clamp(1.0, 3.55) - 1.0) * 100.0).round() as u8
+    }
+
+    pub fn transmission_f32(&self) -> f32 {
+        self.transmission_factor as f32 / 255.0
+    }
+
+    pub fn ior_f32(&self) -> f32 {
+        1.0 + self.ior as f32 / 100.0
+    }
+
+    /// Whether light passes through the surface (refracting glass).
+    pub fn is_transmissive(&self) -> bool {
+        self.transmission_factor > 0
     }
 
     pub fn with_emissive(mut self, strength: f32) -> Self {
@@ -271,8 +310,11 @@ impl Material {
     }
 
     /// Whether objects drawn with this material appear in shadow maps.
+    /// Whether the material shows up in shadow maps. Transmissive materials (glass) do
+    /// not: light passes them (ray-traced shadows skip them too).
     pub fn casts_shadow(&self) -> bool {
-        !self.is_unlit() && !self.flags.contains(MaterialFlags::NO_SHADOW)
+        (!self.is_unlit() && !self.flags.contains(MaterialFlags::NO_SHADOW))
+            && !self.is_transmissive()
     }
 
     pub fn requires_separate_pass(&self) -> bool {

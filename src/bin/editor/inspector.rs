@@ -737,6 +737,13 @@ fn show_material_section(
                         material.roughness_factor = value
                     });
                 changed |= material_emissive_editor(ui, &mut material.emissive_strength);
+                changed |= material_float_editor(
+                    ui,
+                    "Transmission",
+                    material.transmission_factor,
+                    |value| material.transmission_factor = value,
+                );
+                changed |= material_ior_editor(ui, &mut material.ior);
 
                 let slots = [
                     (
@@ -2359,6 +2366,25 @@ fn material_float_editor(
     }
 }
 
+/// Index of refraction of transmissive materials (1.5 glass, 2.42 diamond).
+fn material_ior_editor(ui: &mut egui::Ui, encoded_value: &mut u8) -> bool {
+    let mut value = 1.0 + f32::from(*encoded_value) / 100.0;
+    ui.label("Index of refraction");
+    let changed = ui
+        .add(
+            DragValue::new(&mut value)
+                .speed(0.01)
+                .range(1.0..=3.55)
+                .fixed_decimals(2),
+        )
+        .changed();
+    ui.end_row();
+    if changed {
+        *encoded_value = Material::encode_ior(value);
+    }
+    changed
+}
+
 /// Emissive strength; values above 1 are HDR and make bloom pick the surface up.
 fn material_emissive_editor(ui: &mut egui::Ui, encoded_value: &mut u16) -> bool {
     let mut value = f32::from(*encoded_value) / 255.0;
@@ -3245,6 +3271,23 @@ fn show_post_process_volume_section(
                     0.0..=48.0,
                     0.1,
                     " px",
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
+            "Refraction",
+            "refraction",
+            None,
+            &mut rows,
+            |ui, rows| {
+                rows.checkbox(
+                    ui,
+                    "refraction.ray_traced",
+                    "Ray traced (hardware)",
+                    &mut settings.refraction.ray_traced,
                 );
             },
         );

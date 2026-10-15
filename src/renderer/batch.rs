@@ -146,6 +146,9 @@ pub struct RenderBatcher {
     material_pipeline_keys: Vec<MaterialPipelineKey>,
     material_lookup: HashMap<MaterialCacheKey, u32>,
     skins: HashMap<SkinKey, SkinJob>,
+    /// Whether transmissive materials (glass) are drawn as opaque surfaces whose
+    /// refraction is ray traced afterwards, or see-through in the transparent pass.
+    ray_traced_transmission: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -170,7 +173,15 @@ impl RenderBatcher {
             material_pipeline_keys: Vec::new(),
             material_lookup: HashMap::new(),
             skins: HashMap::new(),
+            ray_traced_transmission: false,
         }
+    }
+
+    /// Draw transmissive materials as opaque surfaces for ray-traced refraction (true) or
+    /// see-through in the transparent pass (false, the default). The renderer says which
+    /// (`Renderer::ray_traced_transmission`).
+    pub fn set_ray_traced_transmission(&mut self, enabled: bool) {
+        self.ray_traced_transmission = enabled;
     }
 
     /// Add an object to be rendered
@@ -200,7 +211,9 @@ impl RenderBatcher {
         let pass = obj.render_pass.unwrap_or_else(|| {
             if obj.force_overlay {
                 RenderPass::Overlay
-            } else if material.requires_separate_pass() {
+            } else if material.requires_separate_pass()
+                || (material.is_transmissive() && !self.ray_traced_transmission)
+            {
                 RenderPass::Transparent
             } else {
                 RenderPass::Opaque

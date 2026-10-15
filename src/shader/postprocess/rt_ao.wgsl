@@ -27,7 +27,8 @@ fn rt_ao_blocked(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
         rt_ao_tlas,
         RayDesc(
             RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
-            0xffu,
+            // Opaque geometry only (MASK_OPAQUE in raytracing/scene.rs): light passes glass.
+            0x01u,
             0.0,
             distance,
             origin,

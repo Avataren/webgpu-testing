@@ -11,12 +11,19 @@ pub struct RtReflectionStage {
     inputs_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
     inputs_bind_group: Option<wgpu::BindGroup>,
+    /// Ray-traced refraction through transmissive surfaces, added to the scene.
+    refraction_pipeline: wgpu::RenderPipeline,
+    /// As `inputs_bind_group`, but reading a copy of the scene colour, which the
+    /// refraction pass adds to.
+    refraction_bind_group: Option<wgpu::BindGroup>,
     /// Whether hits sample material textures (group 4 is the bindless texture array).
     textures: bool,
 }
 
 pub struct RtReflectionInputs<'a> {
     pub scene: &'a wgpu::TextureView,
+    /// A copy of `scene` taken before refraction is added to it.
+    pub scene_copy: &'a wgpu::TextureView,
     pub normal: &'a wgpu::TextureView,
     pub position: &'a wgpu::TextureView,
     pub sampler: &'a wgpu::Sampler,
@@ -106,6 +113,27 @@ impl RtReflectionStage {
             .with_vertex_state(fullscreen_vertex(&shader))
             .with_no_culling()
             .build();
+        // Adds the refracted light to the scene's colour and keeps its alpha.
+        let add = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::Zero,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let refraction_pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
+            .with_label("RtRefractionTracePipeline")
+            .with_vertex_entry("vs_fullscreen")
+            .with_fragment_entry("fs_rt_refraction_trace")
+            .with_color_target(HDR_FORMAT, Some(add))
+            .with_vertex_state(fullscreen_vertex(&shader))
+            .with_no_culling()
+            .build();
 
         let internal = pollster::block_on(internal.pop());
         let validation = pollster::block_on(validation.pop());
@@ -116,32 +144,83 @@ impl RtReflectionStage {
             inputs_layout,
             pipeline,
             inputs_bind_group: None,
+            refraction_pipeline,
+            refraction_bind_group: None,
             textures: textures_layout.is_some(),
         })
     }
 
     pub fn invalidate(&mut self) {
         self.inputs_bind_group = None;
+        self.refraction_bind_group = None;
     }
 
     pub fn ensure_bind_groups(&mut self, device: &wgpu::Device, inputs: RtReflectionInputs<'_>) {
-        let texture = |binding, view| wgpu::BindGroupEntry {
-            binding,
-            resource: wgpu::BindingResource::TextureView(view),
+        let create = |label, scene| {
+            let texture = |binding, view| wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            };
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &self.inputs_layout,
+                entries: &[
+                    texture(170, scene),
+                    texture(171, inputs.normal),
+                    texture(172, inputs.position),
+                    wgpu::BindGroupEntry {
+                        binding: 173,
+                        resource: wgpu::BindingResource::Sampler(inputs.sampler),
+                    },
+                ],
+            })
         };
-        self.inputs_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RtReflectionInputsBindGroup"),
-            layout: &self.inputs_layout,
-            entries: &[
-                texture(170, inputs.scene),
-                texture(171, inputs.normal),
-                texture(172, inputs.position),
-                wgpu::BindGroupEntry {
-                    binding: 173,
-                    resource: wgpu::BindingResource::Sampler(inputs.sampler),
-                },
-            ],
-        }));
+        self.inputs_bind_group = Some(create("RtReflectionInputsBindGroup", inputs.scene));
+        self.refraction_bind_group = Some(create("RtRefractionInputsBindGroup", inputs.scene_copy));
+    }
+
+    fn textures<'a>(&self, frame: &RayTracingFrame<'a>) -> Result<Option<&'a wgpu::BindGroup>, ()> {
+        match (self.textures, frame.textures) {
+            (true, Some(textures)) => Ok(Some(textures)),
+            (true, None) => Err(()),
+            (false, _) => Ok(None),
+        }
+    }
+
+    /// Add the light refracted through transmissive surfaces to `scene` (full
+    /// resolution); `scene_copy` must hold the scene as it is now. Returns false, drawing
+    /// nothing, when the bind groups are not ready.
+    pub fn refract(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        uniform_bind_group: &wgpu::BindGroup,
+        frame: &RayTracingFrame<'_>,
+        scene: &wgpu::TextureView,
+        region: Option<RenderRegion>,
+    ) -> bool {
+        let Some(inputs) = self.refraction_bind_group.as_ref() else {
+            return false;
+        };
+        let Ok(textures) = self.textures(frame) else {
+            return false;
+        };
+        let mut pass = begin_color_pass(
+            encoder,
+            "RtRefraction",
+            ColorAttachment::single(scene),
+            wgpu::LoadOp::Load,
+            region,
+        );
+        pass.set_pipeline(&self.refraction_pipeline);
+        pass.set_bind_group(0, uniform_bind_group, &[]);
+        pass.set_bind_group(1, inputs, &[]);
+        pass.set_bind_group(2, frame.lights, &[]);
+        pass.set_bind_group(3, frame.scene, &[]);
+        if let Some(textures) = textures {
+            pass.set_bind_group(4, textures, &[]);
+        }
+        pass.draw(0..3, 0..1);
+        true
     }
 
     /// Trace into `reflection` (half resolution). Returns false, drawing nothing, when
@@ -157,10 +236,8 @@ impl RtReflectionStage {
         let Some(inputs) = self.inputs_bind_group.as_ref() else {
             return false;
         };
-        let textures = match (self.textures, frame.textures) {
-            (true, Some(textures)) => Some(textures),
-            (true, None) => return false,
-            (false, _) => None,
+        let Ok(textures) = self.textures(frame) else {
+            return false;
         };
         let mut pass = begin_color_pass(
             encoder,

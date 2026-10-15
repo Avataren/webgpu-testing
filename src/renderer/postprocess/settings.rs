@@ -32,6 +32,7 @@ pub struct PostProcessSettings {
     pub ssao: SsaoSettings,
     pub ssr: ReflectionSettings,
     pub rt_shadows: RayTracedShadowSettings,
+    pub refraction: RefractionSettings,
     pub depth_of_field: DepthOfFieldSettings,
     pub motion_blur: MotionBlurSettings,
     pub vignette: VignetteSettings,
@@ -62,6 +63,9 @@ impl PostProcessSettings {
             ssao: self.ssao.blend(&other.ssao, t),
             ssr: self.ssr.blend(&other.ssr, t),
             rt_shadows: self.rt_shadows.blend(&other.rt_shadows, t),
+            refraction: RefractionSettings {
+                ray_traced: pick(self.refraction.ray_traced, other.refraction.ray_traced, t),
+            },
             depth_of_field: self.depth_of_field.blend(&other.depth_of_field, t),
             motion_blur: self.motion_blur.blend(&other.motion_blur, t),
             vignette: self.vignette.blend(&other.vignette, t),
@@ -722,6 +726,22 @@ impl ReflectionSettings {
             ray_traced: pick(from.ray_traced, to.ray_traced, t),
             full_resolution: pick(from.full_resolution, to.full_resolution, t),
         }
+    }
+}
+
+/// Light passing through transmissive materials (`transmission` > 0: glass, gems).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RefractionSettings {
+    /// Refract through them with hardware ray tracing when the GPU has it (bending,
+    /// internal reflection, absorption); otherwise, or when false, they are drawn
+    /// see-through without bending.
+    pub ray_traced: bool,
+}
+
+impl Default for RefractionSettings {
+    fn default() -> Self {
+        Self { ray_traced: true }
     }
 }
 

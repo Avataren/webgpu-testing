@@ -72,6 +72,8 @@ pub struct RayTracingFrame<'a> {
     pub scene: &'a wgpu::BindGroup,
     /// The bindless texture array (group 4), on adapters that have one.
     pub textures: Option<&'a wgpu::BindGroup>,
+    /// Whether the frame draws transmissive surfaces to refract through.
+    pub refraction: bool,
 }
 
 /// Ray tracing counters for the last frame.

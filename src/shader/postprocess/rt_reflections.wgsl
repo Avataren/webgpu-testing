@@ -74,11 +74,21 @@ const RT_SHADOW_BIAS : f32 = 0.02;
 const RT_BOUNCE_MIN_SMOOTHNESS : f32 = 0.7;
 
 fn rt_closest_hit(origin : vec3<f32>, direction : vec3<f32>, max_t : f32) -> RayIntersection {
+    return rt_closest_hit_masked(origin, direction, max_t, 0xffu);
+}
+
+// `mask` 0x01 sees opaque geometry only (MASK_OPAQUE in raytracing/scene.rs).
+fn rt_closest_hit_masked(
+    origin : vec3<f32>,
+    direction : vec3<f32>,
+    max_t : f32,
+    mask : u32,
+) -> RayIntersection {
     var query : ray_query;
     rayQueryInitialize(
         &query,
         rt_tlas,
-        RayDesc(RAY_FLAG_FORCE_OPAQUE, 0xffu, 0.0, max_t, origin, direction),
+        RayDesc(RAY_FLAG_FORCE_OPAQUE, mask, 0.0, max_t, origin, direction),
     );
     loop {
         if !rayQueryProceed(&query) {
@@ -96,7 +106,8 @@ fn rt_unoccluded(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
         rt_tlas,
         RayDesc(
             RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_TERMINATE_ON_FIRST_HIT,
-            0xffu,
+            // Opaque geometry only (MASK_OPAQUE in raytracing/scene.rs): light passes glass.
+            0x01u,
             0.0,
             distance,
             origin,
@@ -261,6 +272,7 @@ struct RtMaterial {
     metallic : f32,
     roughness : f32,
     occlusion : f32,
+    transmission : f32,
     unlit : bool,
 };
 
@@ -284,6 +296,7 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
             * material.emissive_strength;
     }
     out.unlit = (flags & FLAG_UNLIT) != 0u;
+    out.transmission = clamp(material.transmission, 0.0, 1.0);
     out.metallic = material.metallic_factor;
     out.roughness = material.roughness_factor;
     if (flags & FLAG_USE_METALLIC_ROUGHNESS_TEXTURE) != 0u {
@@ -306,11 +319,14 @@ fn rt_light(material : RtMaterial, position : vec3<f32>, direction : vec3<f32>) 
         return material.base_color + material.emissive;
     }
     let v = -direction;
+    // As the main pass: light passing through a transmissive surface is not scattered
+    // back diffusely (what shows through it is not traced from here).
+    let lit_color = material.base_color * (1.0 - material.transmission);
     let direct = rt_direct_lighting(
-        position, material.normal, v, material.base_color, material.metallic, material.roughness
+        position, material.normal, v, lit_color, material.metallic, material.roughness
     );
     let ambient = calculate_environment_lighting(
-        material.normal, v, material.base_color, material.metallic, material.roughness,
+        material.normal, v, lit_color, material.metallic, material.roughness,
         material.occlusion
     );
     return ambient + direct + material.emissive;
@@ -331,8 +347,11 @@ fn rt_screen_radiance(position : vec3<f32>) -> vec4<f32> {
         return vec4<f32>(0.0);
     }
     // The screen shows smooth surfaces before their reflections are added; those are
-    // shaded here instead, so their own reflection can be traced.
-    if ssr_smoothness(surface) >= RT_BOUNCE_MIN_SMOOTHNESS {
+    // shaded here instead, so their own reflection can be traced. Transmissive ones
+    // (marked by a negative alpha) are taken from the screen anyway: it shows what is seen
+    // through them, which they are mostly made of.
+    let screen_color = textureSampleLevel(rt_scene_color, rt_scene_sampler, scene_uv, 0.0);
+    if ssr_smoothness(surface) >= RT_BOUNCE_MIN_SMOOTHNESS && screen_color.a >= 0.0 {
         return vec4<f32>(0.0);
     }
     // A pixel covers more of the world further away; allow for that and for TAA jitter.
@@ -340,8 +359,40 @@ fn rt_screen_radiance(position : vec3<f32>) -> vec4<f32> {
     if distance(surface.xyz, position) > tolerance {
         return vec4<f32>(0.0);
     }
-    let color = textureSampleLevel(rt_scene_color, rt_scene_sampler, scene_uv, 0.0).rgb;
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(screen_color.rgb, 1.0);
+}
+
+// What a reflected ray sees through transmissive geometry it hits off screen, straight
+// on past it (opaque geometry only, no bending: refraction at reflection scale), tinted by
+// its colour and weighted by transmission and 1 - Fresnel. On-screen glass comes from the
+// screen instead, which has the full refraction.
+fn rt_seen_through(
+    hit : RayIntersection,
+    material : RtMaterial,
+    position : vec3<f32>,
+    direction : vec3<f32>,
+    cone_width : f32,
+) -> vec3<f32> {
+    let surface = rt_surface(hit, direction);
+    let data = rt_materials[surface.material_index];
+    let ior = max(data.ior, 1.0);
+    let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(direction, material.normal), 0.0, 1.0), 5.0);
+    let behind = rt_closest_hit_masked(position + direction * RT_SHADOW_BIAS, direction, 1.0e3, 0x01u);
+    var color : vec3<f32>;
+    if behind.kind == RAY_QUERY_INTERSECTION_NONE {
+        color = rt_environment(direction);
+    } else {
+        let behind_position = position + direction * (RT_SHADOW_BIAS + behind.t);
+        let screen = rt_screen_radiance(behind_position);
+        if screen.w > 0.5 {
+            color = screen.rgb;
+        } else {
+            color = rt_light(rt_material(behind, direction, cone_width), behind_position, direction);
+        }
+    }
+    let tint = data.color.rgb * surface.color.rgb;
+    return color * tint * material.transmission * (1.0 - fresnel);
 }
 
 // The reflection a smooth hit surface shows, weighted as the apply pass (fs_ssr_apply)
@@ -426,10 +477,157 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         if !material.unlit && hit_smoothness >= RT_BOUNCE_MIN_SMOOTHNESS {
             color += rt_second_bounce(material, hit_position, r, pixel_angle, travelled + hit.t, max_distance);
         }
+        if material.transmission > 0.0 {
+            color += rt_seen_through(hit, material, hit_position, r, pixel_angle * (travelled + hit.t));
+        }
     }
     color = select(color, vec3<f32>(0.0), color != color);
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
 
     let weight = 1.0 - smoothstep(0.8, 1.0, hit.t / max_distance);
     return vec4<f32>(ssr_compress(color) * weight, weight);
+}
+
+// ---------------------------------------------------------------------------------------
+// Ray-traced refraction
+// ---------------------------------------------------------------------------------------
+
+// Path events (surfaces crossed or internal reflections) a refracted ray may take before
+// it gives up; a cut gem needs several.
+const RT_REFRACTION_MAX_EVENTS : u32 = 8u;
+// Distance through a transmissive medium over which its colour tints light fully
+// (Beer-Lambert): thin glass stays nearly clear, a thick gem saturates.
+const RT_REFRACTION_ABSORPTION_DISTANCE : f32 = 0.5;
+
+// What a ray leaving the scene sees: the HDR environment, or the background colour.
+fn rt_environment(direction : vec3<f32>) -> vec3<f32> {
+    if environment_hdr_enabled() {
+        return sample_environment_hdr(direction, 0.0) * environment_hdr_intensity();
+    }
+    return environment_settings.ambient_color.rgb;
+}
+
+// Rays per pixel, at rotated-grid sub-pixel positions: refraction through a cut gem
+// changes completely across a facet edge, and one ray per pixel would make those edges
+// crawl under TAA's jitter.
+const RT_REFRACTION_SAMPLES : u32 = 4u;
+
+// The world-space view ray through `scene_uv` (scene texture uv), through the same
+// jittered camera the frame was drawn with.
+fn rt_view_ray(scene_uv : vec2<f32>) -> vec3<f32> {
+    let viewport_uv = scene_to_viewport_uv(scene_uv);
+    let ndc = vec2<f32>(viewport_uv.x * 2.0 - 1.0, 1.0 - viewport_uv.y * 2.0);
+    let near = post_uniform.view_proj_inv * vec4<f32>(ndc, 0.25, 1.0);
+    let far = post_uniform.view_proj_inv * vec4<f32>(ndc, 0.75, 1.0);
+    let a = near.xyz / near.w;
+    let b = far.xyz / far.w;
+    var direction = normalize(b - a);
+    if dot(direction, a - post_uniform.camera_position.xyz) < 0.0 {
+        direction = -direction;
+    }
+    return direction;
+}
+
+// Light that reaches the camera through transmissive geometry along the view ray `v`
+// (zero when the ray's first hit is not transmissive), weighted by 1 - Fresnel at entry.
+// The ray refracts in, crosses the object (bending, absorbing its colour, reflecting
+// internally where it cannot leave), refracts out and lights what it reaches.
+fn rt_refracted(v : vec3<f32>, pixel_angle : f32) -> vec3<f32> {
+    let camera = post_uniform.camera_position.xyz;
+    let primary = rt_closest_hit(camera, v, 1.0e3);
+    if primary.kind == RAY_QUERY_INTERSECTION_NONE {
+        return vec3<f32>(0.0);
+    }
+    let entry_surface = rt_surface(primary, v);
+    let entry_material = rt_materials[entry_surface.material_index];
+    if entry_material.transmission <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    var ior = max(entry_material.ior, 1.0);
+    var tint = entry_material.color.rgb * entry_surface.color.rgb;
+    let n = entry_surface.normal;
+    let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
+    let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(v, n), 0.0, 1.0), 5.0);
+    let weight = entry_material.transmission * (1.0 - fresnel);
+
+    let entry = camera + v * primary.t;
+    let bias = 0.002 + 0.0005 * primary.t;
+    var direction = refract(v, n, 1.0 / ior);
+    var origin = entry - n * bias;
+    var travelled = primary.t;
+    var throughput = vec3<f32>(1.0);
+    var inside = true;
+    var color = vec3<f32>(0.0);
+    for (var event = 0u; event < RT_REFRACTION_MAX_EVENTS; event = event + 1u) {
+        let hit = rt_closest_hit(origin, direction, 1.0e3);
+        if hit.kind == RAY_QUERY_INTERSECTION_NONE {
+            color = rt_environment(direction);
+            break;
+        }
+        let hit_position = origin + direction * hit.t;
+        travelled = travelled + hit.t;
+        // Normal facing the ray: back into the medium the ray travels in.
+        let surface = rt_surface(hit, direction);
+        let material = rt_materials[surface.material_index];
+        if inside {
+            throughput *= pow(max(tint, vec3<f32>(1e-4)), vec3<f32>(hit.t / RT_REFRACTION_ABSORPTION_DISTANCE));
+            let out = refract(direction, surface.normal, ior);
+            if dot(out, out) < 1e-8 {
+                // Total internal reflection: the ray stays inside.
+                direction = reflect(direction, surface.normal);
+                origin = hit_position + surface.normal * bias;
+            } else {
+                direction = out;
+                origin = hit_position - surface.normal * bias;
+                inside = false;
+            }
+            continue;
+        }
+        if material.transmission > 0.0 {
+            // Into glass again (another object, or this one's far side seen past it).
+            ior = max(material.ior, 1.0);
+            tint = material.color.rgb * surface.color.rgb;
+            let into = refract(direction, surface.normal, 1.0 / ior);
+            inside = dot(into, into) >= 1e-8;
+            direction = select(reflect(direction, surface.normal), into, inside);
+            origin = hit_position - surface.normal * bias * select(-1.0, 1.0, inside);
+            continue;
+        }
+        let screen = rt_screen_radiance(hit_position);
+        if screen.w > 0.5 {
+            color = screen.rgb;
+        } else {
+            color = rt_light(rt_material(hit, direction, pixel_angle * travelled), hit_position, direction);
+        }
+        break;
+    }
+    color = select(color, vec3<f32>(0.0), color != color);
+    return clamp(color * throughput * weight, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
+}
+
+// Light passing through transmissive surfaces (glass, gems), at the pixels the main pass
+// marked as one (colour alpha = -transmission, see gbuffer_color in common.wgsl), averaged
+// over RT_REFRACTION_SAMPLES rays across the pixel. Added to the scene; the reflection
+// passes add the reflected part, and the main pass already drew the surface's highlights.
+@fragment
+fn fs_rt_refraction_trace(in : VertexOutput) -> @location(0) vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(rt_gbuffer_position));
+    let pixel = min(vec2<i32>(in.position.xy), dims - vec2<i32>(1));
+    if textureLoad(rt_scene_color, pixel, 0).a >= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    let pixel_angle = 2.0 / (post_uniform.proj[1][1] * f32(dims.y));
+    // Rotated grid: four distinct rows and columns within the pixel.
+    var offsets = array<vec2<f32>, 4>(
+        vec2<f32>(-0.375, -0.125),
+        vec2<f32>(0.125, -0.375),
+        vec2<f32>(0.375, 0.125),
+        vec2<f32>(-0.125, 0.375),
+    );
+    var sum = vec3<f32>(0.0);
+    for (var i = 0u; i < RT_REFRACTION_SAMPLES; i = i + 1u) {
+        let scene_uv = (in.position.xy + offsets[i]) / vec2<f32>(dims);
+        sum += rt_refracted(rt_view_ray(scene_uv), pixel_angle * 0.5);
+    }
+    return vec4<f32>(sum / f32(RT_REFRACTION_SAMPLES), 0.0);
 }

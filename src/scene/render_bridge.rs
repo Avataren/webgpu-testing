@@ -24,6 +24,7 @@ impl RenderBridge {
     ) -> Result<RenderFrame, crate::renderer::SurfaceError> {
         scene.refresh_environment_state();
         batcher.clear();
+        batcher.set_ray_traced_transmission(renderer.ray_traced_transmission());
         let camera_vectors = rendering::CameraVectors::from_renderer(renderer);
         let gizmo_resources = if gizmos_enabled {
             Some(scene.ensure_gizmo_resources(renderer))

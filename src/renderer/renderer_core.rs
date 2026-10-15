@@ -395,6 +395,13 @@ impl Renderer {
     }
 
     /// How skinned meshes are deformed on this device.
+    /// Whether transmissive materials (glass) are drawn as opaque surfaces whose refraction
+    /// is ray traced, rather than see-through in the transparent pass. The batcher asks
+    /// before each frame.
+    pub fn ray_traced_transmission(&self) -> bool {
+        self.ray_tracing.is_some() && self.postprocess.ray_traced_refraction()
+    }
+
     /// GPU time per frame stage, from a frame or two ago; `None` without timestamp
     /// queries inside command encoders.
     pub fn gpu_timings(&self) -> Option<&crate::renderer::GpuTimings> {
@@ -801,10 +808,17 @@ impl Renderer {
         let rt_shadows_wanted = self.rt_shadows.is_some()
             && self.postprocess.settings().rt_shadows.enabled
             && self.context.sample_count == 1;
+        // Transmissive surfaces were batched as opaque for ray-traced refraction.
+        let refraction_wanted = self.ray_traced_transmission()
+            && frame_state
+                .prepared_batches
+                .materials
+                .iter()
+                .any(Material::is_transmissive);
         let ray_traced = self.update_ray_tracing(
             &mut frame_state,
             assets,
-            self.postprocess.wants_ray_tracing() || rt_shadows_wanted,
+            self.postprocess.wants_ray_tracing() || rt_shadows_wanted || refraction_wanted,
         );
         self.gpu_timer
             .mark(&mut frame_state.encoder, "acceleration_structures");
@@ -851,7 +865,7 @@ impl Renderer {
         // bloom and tonemapping like everything else.
         self.run_transparent_pass(&mut frame_state, assets);
         self.gpu_timer.mark(&mut frame_state.encoder, "transparent");
-        self.execute_postprocess(&mut frame_state, ray_traced);
+        self.execute_postprocess(&mut frame_state, ray_traced, refraction_wanted);
         self.gpu_timer
             .mark(&mut frame_state.encoder, "post_process");
         self.run_custom_stage(
@@ -1294,7 +1308,7 @@ impl Renderer {
             .set_rt_shadow_bits(&self.context.queue, bits);
     }
 
-    fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool) {
+    fn execute_postprocess(&mut self, frame: &mut FrameState, ray_traced: bool, refraction: bool) {
         let ray_tracing = self
             .ray_tracing
             .as_ref()
@@ -1304,6 +1318,7 @@ impl Renderer {
                 lights: &self.lights_buffer.bind_group,
                 scene,
                 textures: self.texture_binder.global_bind_group(),
+                refraction,
             });
         self.postprocess.execute(
             &mut frame.encoder,

@@ -160,6 +160,8 @@ pub(super) fn material_json(asset: &MaterialAsset) -> Value {
         "metallic": round(material.metallic_f32()),
         "roughness": round(material.roughness_f32()),
         "emissive": round(material.emissive_f32()),
+        "transmission": round(material.transmission_f32()),
+        "ior": round(material.ior_f32()),
         "unlit": flags.contains(MaterialFlags::UNLIT),
         "transparent": flags.contains(MaterialFlags::ALPHA_BLEND),
         "double_sided": flags.contains(MaterialFlags::DOUBLE_SIDED),
@@ -1402,6 +1404,12 @@ pub(crate) fn patch_material(
     }
     if let Some(emissive) = opt_f64(patch, "emissive") {
         material.emissive_strength = Material::encode_emissive(emissive as f32);
+    }
+    if let Some(transmission) = opt_f64(patch, "transmission") {
+        material.transmission_factor = unit_to_u8(transmission);
+    }
+    if let Some(ior) = opt_f64(patch, "ior") {
+        material.ior = Material::encode_ior(ior as f32);
     }
     for (key, flag) in [
         ("unlit", MaterialFlags::UNLIT),
