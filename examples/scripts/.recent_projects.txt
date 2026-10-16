@@ -1,3 +1,4 @@
+/home/avataren/src/rust/webgpu-testing/games/chess/study
 /home/avataren/src/rust/webgpu-testing/games/robotron
 /home/avataren/engine_projects/Test1
 /home/avataren/engine_projects/NewProject4

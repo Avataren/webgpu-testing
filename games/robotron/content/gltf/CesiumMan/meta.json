@@ -1,0 +1,12 @@
+{
+  "CesiumMan.glb.import": {
+    "materials": {
+      "0": "content/materials/cesiumman_glb_000_1.mat.json"
+    },
+    "materials_by_key": {
+      "material:0": "content/materials/cesiumman_glb_000_1.mat.json",
+      "node:2/primitive:0": "content/materials/cesiumman_glb_000_1.mat.json",
+      "node:2/primitive:0/material:0": "content/materials/cesiumman_glb_000_1.mat.json"
+    }
+  }
+}
