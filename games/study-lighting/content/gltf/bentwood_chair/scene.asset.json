@@ -1,0 +1,464 @@
+{
+  "name": "bentwood_chair (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "BackFrame",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.20048115,
+          -0.0025841498,
+          0.14138494
+        ],
+        "max": [
+          0.20048115,
+          0.91129726,
+          0.28018707
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "BackLoop",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 1,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.10949831,
+          0.45505375,
+          0.1507015
+        ],
+        "max": [
+          0.10949831,
+          0.7442712,
+          0.22927117
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "FrontLeg1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.12491035,
+          -0.0015436511,
+          -0.21040373
+        ],
+        "max": [
+          0.17521903,
+          0.44224408,
+          -0.12464213
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "FrontLeg-1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.17521903,
+          -0.0015436511,
+          -0.21040373
+        ],
+        "max": [
+          -0.12491035,
+          0.44224408,
+          -0.12464213
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 3,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "LegRing",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.24849999,
+          0.1967131,
+          -0.2175
+        ],
+        "max": [
+          0.24849999,
+          0.21328689,
+          0.2795
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 4,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "SeatPad",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.20321874,
+          0.439,
+          -0.20321874
+        ],
+        "max": [
+          0.20321874,
+          0.476,
+          0.20321874
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_001_2.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 5,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "SeatRing",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.2185,
+          0.4275,
+          -0.2185
+        ],
+        "max": [
+          0.2185,
+          0.45450002,
+          0.2185
+        ]
+      },
+      "material": "content/materials/bentwood_chair_glb_000.mat.json",
+      "parent": 7,
+      "children": [],
+      "gltf_node": 6,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "BentwoodChair",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "gltf_node": 7,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/bentwood_chair/bentwood_chair.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

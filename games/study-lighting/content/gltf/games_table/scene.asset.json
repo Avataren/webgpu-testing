@@ -1,0 +1,856 @@
+{
+  "name": "games_table (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "Apron0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.62799996,
+          -0.34
+        ],
+        "max": [
+          0.43,
+          0.718,
+          -0.318
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Apron1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 1,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.62799996,
+          0.318
+        ],
+        "max": [
+          0.43,
+          0.718,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Apron2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.408,
+          0.62799996,
+          -0.34
+        ],
+        "max": [
+          0.43,
+          0.718,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Apron3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.62799996,
+          -0.34
+        ],
+        "max": [
+          -0.408,
+          0.718,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 3,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Leg0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.384,
+          0.0,
+          -0.34
+        ],
+        "max": [
+          0.43,
+          0.6,
+          -0.294
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 4,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Leg1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.0,
+          -0.34
+        ],
+        "max": [
+          -0.384,
+          0.6,
+          -0.294
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 5,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Leg2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.384,
+          0.0,
+          0.294
+        ],
+        "max": [
+          0.43,
+          0.6,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 6,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Leg3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.0,
+          0.294
+        ],
+        "max": [
+          -0.384,
+          0.6,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 7,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "LegBlock0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.384,
+          0.59999996,
+          -0.34
+        ],
+        "max": [
+          0.43,
+          0.718,
+          -0.294
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 8,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "LegBlock1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.59999996,
+          -0.34
+        ],
+        "max": [
+          -0.384,
+          0.718,
+          -0.294
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 9,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "LegBlock2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 10,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.384,
+          0.59999996,
+          0.294
+        ],
+        "max": [
+          0.43,
+          0.718,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 10,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "LegBlock3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 11,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.43,
+          0.59999996,
+          0.294
+        ],
+        "max": [
+          -0.384,
+          0.718,
+          0.34
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 11,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "TableLeather",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 12,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.35,
+          0.7504,
+          -0.27
+        ],
+        "max": [
+          0.35,
+          0.7504,
+          0.27
+        ]
+      },
+      "material": "content/materials/games_table_glb_001_2.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 12,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "TableTop",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 13,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.5,
+          0.71800005,
+          -0.41
+        ],
+        "max": [
+          0.5,
+          0.75,
+          0.41
+        ]
+      },
+      "material": "content/materials/games_table_glb_000.mat.json",
+      "parent": 14,
+      "children": [],
+      "gltf_node": 13,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "GamesTable",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "gltf_node": 14,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/games_table/games_table.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

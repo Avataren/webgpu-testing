@@ -1,0 +1,1416 @@
+{
+  "name": "chess_clock (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "Bezel0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.014927439,
+          0.02049923,
+          0.013
+        ],
+        "max": [
+          0.036945336,
+          0.09262151,
+          0.087
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Bezel1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 1,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.014927439,
+          0.02049923,
+          -0.087
+        ],
+        "max": [
+          0.036945336,
+          0.09262151,
+          -0.013
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "ClockCase",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.035,
+          0.006000001,
+          -0.1
+        ],
+        "max": [
+          0.034371223,
+          0.106000006,
+          0.1
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_001_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Crystal0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.022673316,
+          0.03461682,
+          0.027038993
+        ],
+        "max": [
+          0.033759393,
+          0.07937038,
+          0.07296102
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_002_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 3,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Crystal1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.022673316,
+          0.03461682,
+          -0.07296101
+        ],
+        "max": [
+          0.033759393,
+          0.07937038,
+          -0.027038982
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_002_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 4,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Dial0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.017720886,
+          0.026057769,
+          0.019000001
+        ],
+        "max": [
+          0.031618044,
+          0.086480185,
+          0.081
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_003_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 5,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Dial1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.017720886,
+          0.026057769,
+          -0.081
+        ],
+        "max": [
+          0.031618044,
+          0.086480185,
+          -0.019000001
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_003_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 6,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Flag0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.020240111,
+          0.070002414,
+          0.0425
+        ],
+        "max": [
+          0.02192122,
+          0.077311575,
+          0.0472
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_004_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 7,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Flag1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.020240111,
+          0.070002414,
+          -0.0575
+        ],
+        "max": [
+          0.02192122,
+          0.077311575,
+          -0.0528
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_004_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 8,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Foot",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.031341407,
+          -0.0002109375,
+          0.078658596
+        ],
+        "max": [
+          -0.018658593,
+          0.0065,
+          0.091341406
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 9,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Foot.001",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 10,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.031341407,
+          -0.0002109375,
+          -0.091341406
+        ],
+        "max": [
+          -0.018658593,
+          0.0065,
+          -0.078658596
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 10,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Foot.002",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 11,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.018658593,
+          -0.0002109375,
+          0.078658596
+        ],
+        "max": [
+          0.031341407,
+          0.0065,
+          0.091341406
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 11,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Foot.003",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 12,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.018658593,
+          -0.0002109375,
+          -0.091341406
+        ],
+        "max": [
+          0.031341407,
+          0.0065,
+          -0.078658596
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 12,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "HourHand0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 13,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.024535261,
+          0.04321878,
+          0.040953483
+        ],
+        "max": [
+          0.028563578,
+          0.058325376,
+          0.05191485
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_005_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 13,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "HourHand1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 14,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.02455571,
+          0.042162202,
+          -0.056936894
+        ],
+        "max": [
+          0.028806591,
+          0.058236465,
+          -0.048167877
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_005_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 14,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Hub0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 15,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.025735628,
+          0.054483596,
+          0.0478
+        ],
+        "max": [
+          0.02672188,
+          0.058771636,
+          0.0522
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 15,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Hub1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 16,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.025735628,
+          0.054483596,
+          -0.0522
+        ],
+        "max": [
+          0.02672188,
+          0.058771636,
+          -0.0478
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 16,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "MinuteHand0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 17,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.022126924,
+          0.054537106,
+          0.047911495
+        ],
+        "max": [
+          0.026678639,
+          0.07191934,
+          0.06736333
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_005_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 17,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "MinuteHand1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 18,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.023464201,
+          0.05489908,
+          -0.071176276
+        ],
+        "max": [
+          0.026595384,
+          0.0661051,
+          -0.047806848
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_005_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 18,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Plate",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 19,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          0.030487278,
+          0.021612074,
+          -0.015
+        ],
+        "max": [
+          0.03128728,
+          0.030612074,
+          0.015
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 19,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Plunger0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 20,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0213375,
+          0.105,
+          0.0401625
+        ],
+        "max": [
+          -0.0016625002,
+          0.1295,
+          0.0598375
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 20,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Plunger1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 21,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.0213375,
+          0.105,
+          -0.0598375
+        ],
+        "max": [
+          -0.0016625002,
+          0.1215,
+          -0.0401625
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_000.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 21,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "PlungerCollar0",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 22,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.023710936,
+          0.1055,
+          0.03778906
+        ],
+        "max": [
+          0.0007109372,
+          0.1085,
+          0.06221094
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_006_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 22,
+      "gltf_material": 6,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "PlungerCollar1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 23,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.023710936,
+          0.1055,
+          -0.06221094
+        ],
+        "max": [
+          0.0007109372,
+          0.1085,
+          -0.03778906
+        ]
+      },
+      "material": "content/materials/chess_clock_glb_006_2.mat.json",
+      "parent": 24,
+      "children": [],
+      "gltf_node": 23,
+      "gltf_material": 6,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "ChessClock",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23
+      ],
+      "gltf_node": 24,
+      "gltf_material": null,
+      "gltf_source": "content/gltf/chess_clock/chess_clock.glb.import",
+      "gltf_primitive": null,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

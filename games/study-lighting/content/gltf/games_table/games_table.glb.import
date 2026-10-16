@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "source": null,
+  "scene": {
+    "json": "scene.asset.json",
+    "meshes": [
+      {
+        "index": 0,
+        "path": "meshes/mesh_0000.json"
+      },
+      {
+        "index": 1,
+        "path": "meshes/mesh_0001.json"
+      },
+      {
+        "index": 2,
+        "path": "meshes/mesh_0002.json"
+      },
+      {
+        "index": 3,
+        "path": "meshes/mesh_0003.json"
+      },
+      {
+        "index": 4,
+        "path": "meshes/mesh_0004.json"
+      },
+      {
+        "index": 5,
+        "path": "meshes/mesh_0005.json"
+      },
+      {
+        "index": 6,
+        "path": "meshes/mesh_0006.json"
+      },
+      {
+        "index": 7,
+        "path": "meshes/mesh_0007.json"
+      },
+      {
+        "index": 8,
+        "path": "meshes/mesh_0008.json"
+      },
+      {
+        "index": 9,
+        "path": "meshes/mesh_0009.json"
+      },
+      {
+        "index": 10,
+        "path": "meshes/mesh_0010.json"
+      },
+      {
+        "index": 11,
+        "path": "meshes/mesh_0011.json"
+      },
+      {
+        "index": 12,
+        "path": "meshes/mesh_0012.json"
+      },
+      {
+        "index": 13,
+        "path": "meshes/mesh_0013.json"
+      }
+    ],
+    "textures": [
+      {
+        "index": 0,
+        "path": "textures/mahogany_normal.png",
+        "name": "mahogany_normal"
+      },
+      {
+        "index": 1,
+        "path": "textures/mahogany_base_color.png",
+        "name": "mahogany_base_color"
+      },
+      {
+        "index": 2,
+        "path": "textures/mahogany_mr.png",
+        "name": "mahogany_mr"
+      },
+      {
+        "index": 3,
+        "path": "textures/leather_panel_normal.png",
+        "name": "leather_panel_normal"
+      },
+      {
+        "index": 4,
+        "path": "textures/leather_panel_base_color.png",
+        "name": "leather_panel_base_color"
+      },
+      {
+        "index": 5,
+        "path": "textures/leather_panel_mr.png",
+        "name": "leather_panel_mr"
+      }
+    ]
+  }
+}

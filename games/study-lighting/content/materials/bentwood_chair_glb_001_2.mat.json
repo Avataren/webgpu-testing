@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/gltf/bentwood_chair/textures/velvet_base_color.png",
+    "name": "EmbeddedTexture_4"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/gltf/bentwood_chair/textures/velvet_mr.png",
+    "name": "EmbeddedTexture_5"
+  },
+  "normal_texture": {
+    "path": "content/gltf/bentwood_chair/textures/velvet_normal.png",
+    "name": "EmbeddedTexture_3"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

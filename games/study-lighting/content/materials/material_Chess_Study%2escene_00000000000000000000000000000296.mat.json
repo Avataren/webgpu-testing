@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/gltf/bentwood_chair/textures/walnut_satin_base_color.png",
+    "name": "EmbeddedTexture_1"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/gltf/bentwood_chair/textures/walnut_satin_mr.png",
+    "name": "EmbeddedTexture_2"
+  },
+  "normal_texture": {
+    "path": "content/gltf/bentwood_chair/textures/walnut_satin_normal.png",
+    "name": "EmbeddedTexture_0"
+  },
+  "emissive_texture": 187,
+  "occlusion_texture": 187,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/gltf/study_room/textures/rug_base_color.png",
+    "name": "EmbeddedTexture_28"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/gltf/study_room/textures/rug_mr.png",
+    "name": "EmbeddedTexture_29"
+  },
+  "normal_texture": {
+    "path": "content/gltf/study_room/textures/rug_normal.png",
+    "name": "EmbeddedTexture_27"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}
