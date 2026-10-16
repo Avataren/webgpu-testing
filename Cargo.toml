@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 wasm = []
-egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit", "dep:egui_tiles"]
+egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit", "dep:egui_tiles", "dep:epaint_default_fonts"]
 profile = ["dep:once_cell"]
 optimized-allocator = []
 
@@ -24,7 +24,8 @@ bytemuck = { version = "1.23", features = ["derive"] }
 env_logger = "0.11"
 log = "0.4"
 bitflags = "2.4"
-image = "0.25"
+# Runtime formats only; native builds add the rest below for editor imports.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr"] }
 hecs = "0.10"
 slotmap = "1.0"
 gltf = { version = "1.4", features = ["KHR_materials_transmission", "KHR_materials_ior", "extensions"] }
@@ -39,8 +40,10 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "send", "serialize"]
 thiserror = "1.0"
 toml = "0.8"
 naga = { version = "30", features = ["wgsl-in"] }
-egui = { version = "0.36", optional = true }
-egui-wgpu = { version = "0.36", optional = true }
+# Native builds add egui's default fonts below; the web player installs only the text fonts.
+egui = { version = "0.36", optional = true, default-features = false }
+# Default features would also enable wgpu's WebGL backend, which the engine never uses.
+egui-wgpu = { version = "0.36", optional = true, default-features = false, features = ["fragile-send-sync-non-atomic-wasm", "macos-window-resize-jitter-fix"] }
 egui-winit = { version = "0.36", optional = true, default-features=false }
 once_cell = { version = "1.21", optional = true }
 egui_tiles = { version = "0.17", optional = true }
@@ -85,14 +88,25 @@ web-sys = { version = "0.3", features = [
     "GainNode",
     "Storage",
 ] }
+epaint_default_fonts = { version = "0.36", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+image = { version = "0.25", features = ["default-formats", "rayon"] }
+egui = { version = "0.36", optional = true, features = ["default_fonts"] }
 rfd = "0.15"
 notify = "8.2"
 rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
 
 [dev-dependencies]
 tempfile = "3.10"
+
+# Size-optimized release build for wasm downloads (build_web.sh); slower to link.
+[profile.web]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
 
 
 

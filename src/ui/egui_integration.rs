@@ -41,6 +41,32 @@ pub struct EguiRenderTarget<'a> {
     pub surface_size: [u32; 2],
 }
 
+/// egui's default text fonts without its two emoji fonts, which are about 740 KB of the
+/// web download. Emoji and icon glyphs render as boxes in the web player.
+#[cfg(target_arch = "wasm32")]
+fn web_fonts() -> egui::FontDefinitions {
+    use egui::{FontData, FontFamily};
+    use std::sync::Arc;
+
+    let mut fonts = egui::FontDefinitions::empty();
+    fonts.font_data.insert(
+        "Ubuntu-Light".to_owned(),
+        Arc::new(FontData::from_static(epaint_default_fonts::UBUNTU_LIGHT)),
+    );
+    fonts.font_data.insert(
+        "Hack".to_owned(),
+        Arc::new(FontData::from_static(epaint_default_fonts::HACK_REGULAR)),
+    );
+    fonts
+        .families
+        .insert(FontFamily::Proportional, vec!["Ubuntu-Light".to_owned()]);
+    fonts.families.insert(
+        FontFamily::Monospace,
+        vec!["Hack".to_owned(), "Ubuntu-Light".to_owned()],
+    );
+    fonts
+}
+
 impl EguiContext {
     pub fn new(
         device: &wgpu::Device,
@@ -52,6 +78,8 @@ impl EguiContext {
         // Run the UI callback once per frame: the editor's UI code has side effects
         // (actions, script UI) that must not repeat in a discarded pass.
         ctx.options_mut(|options| options.max_passes = std::num::NonZeroUsize::MIN);
+        #[cfg(target_arch = "wasm32")]
+        ctx.set_fonts(web_fonts());
         let viewport_id = ctx.viewport_id();
 
         let state = egui_winit::State::new(

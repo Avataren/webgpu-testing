@@ -23,16 +23,26 @@ fi
 
 export RUSTFLAGS="--cfg=web_sys_unstable_apis"
 
+# Shrink a wasm-bindgen output in place. Skipped, with a warning, without wasm-opt.
+optimize_wasm() {
+    if command -v wasm-opt >/dev/null; then
+        wasm-opt -Os --all-features --strip-debug --strip-producers "$1" -o "$1"
+    else
+        echo "wasm-opt not found; $1 is unoptimized (install binaryen)" >&2
+    fi
+}
+
 if [ "${1:-}" = "--project" ]; then
     PROJECT="${2:?usage: $0 --project <dir>}"
     [ -f "$PROJECT/project.json" ] || { echo "$PROJECT has no project.json" >&2; exit 1; }
     OUT="target/web/$(basename "$(cd "$PROJECT" && pwd)")"
 
-    cargo build --target wasm32-unknown-unknown --release --bin player --features egui
+    cargo build --target wasm32-unknown-unknown --profile web --bin player --features egui
     rm -rf "$OUT"
     mkdir -p "$OUT"
     wasm-bindgen --target web --out-dir "$OUT/pkg" \
-        "$BUILD_DIR/wasm32-unknown-unknown/release/player.wasm"
+        "$BUILD_DIR/wasm32-unknown-unknown/web/player.wasm"
+    optimize_wasm "$OUT/pkg/player_bg.wasm"
     # The player loads project.json and content/ relative to the page.
     cp web/index.html "$PROJECT/project.json" "$OUT/"
     cp -r "$PROJECT/content" "$OUT/"
@@ -43,9 +53,10 @@ if [ "${1:-}" = "--project" ]; then
 fi
 
 EXAMPLE="${1:-minimal}"
-cargo build --target wasm32-unknown-unknown --release --example "$EXAMPLE"
+cargo build --target wasm32-unknown-unknown --profile web --example "$EXAMPLE"
 wasm-bindgen --target web --out-dir web/pkg \
-    "$BUILD_DIR/wasm32-unknown-unknown/release/examples/$EXAMPLE.wasm"
+    "$BUILD_DIR/wasm32-unknown-unknown/web/examples/$EXAMPLE.wasm"
+optimize_wasm "web/pkg/${EXAMPLE}_bg.wasm"
 
 echo "Open http://localhost:$PORT/?example=$EXAMPLE"
 if [ "$NO_SERVE" = 1 ]; then exit 0; fi
