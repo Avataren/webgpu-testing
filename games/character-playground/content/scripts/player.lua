@@ -1,4 +1,4 @@
--- The playground's robot: the shared third-person controller (lib/third_person.lua)
+-- The playground's robot: the engine's third-person controller (engine.third_person)
 -- plus this game's extras: jump and landing sounds, landing dust, a respawn after
 -- falling out of the world, and debug keys.
 --
@@ -12,7 +12,7 @@
 --     right drag  look around    Space  jump    Shift  walk    wheel  zoom
 --   F1 colliders    F2 double jump
 
-local ThirdPerson = require("lib.third_person")
+local ThirdPerson = require("engine.third_person")
 
 local player
 local spawn
@@ -21,7 +21,7 @@ local spawn
 PLAYER = nil
 local debug_draw = false
 -- Shown by the HUD (on_ui cannot query the physics itself).
-HUD = { grounded = false, speed = 0, clip = "", double_jump = false, scheme = "mmo" }
+HUD = { grounded = false, speed = 0, animation = "", double_jump = false, scheme = "mmo" }
 
 local HELP = {
     mmo = "W/S move · A/D turn · Q/E strafe · left drag look · right drag steer · both buttons run",
@@ -88,8 +88,9 @@ function update(self, dt)
     if s then
         HUD.grounded = s.grounded
         HUD.speed = s.horizontal_speed
-        HUD.clip = player.clip or ""
     end
+    local animation = animation_state(self)
+    HUD.animation = animation and animation.state or "(no AnimationTree)"
 end
 
 function on_jumped(self) player:jumped() end
@@ -104,6 +105,6 @@ function on_ui(self, ui)
         panel:label(HELP[HUD.scheme] .. " · Space jump · Shift walk · wheel zoom")
         panel:label(string.format("F1 colliders · F2 double jump (%s) · F3 controls (%s)   %.1f m/s  %s  %s",
             HUD.double_jump and "on" or "off", HUD.scheme, HUD.speed,
-            HUD.grounded and "grounded" or "airborne", HUD.clip))
+            HUD.grounded and "grounded" or "airborne", HUD.animation))
     end)
 end

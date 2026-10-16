@@ -3972,6 +3972,236 @@
       "camera": null
     },
     {
+      "name": "Player",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          10.0
+        ],
+        "rotation": [
+          0.0,
+          1.0,
+          0.0,
+          -4.371139e-8
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": null,
+      "primitive_mesh": null,
+      "mesh_bounds": null,
+      "material": null,
+      "parent": null,
+      "children": [
+        53
+      ],
+      "gltf_node": null,
+      "gltf_material": null,
+      "gltf_source": null,
+      "gltf_primitive": null,
+      "script": {
+        "source": {
+          "File": {
+            "path": "content/scripts/player.lua"
+          }
+        }
+      },
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": 6,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "character_controller": {
+        "radius": 0.3,
+        "height": 1.8,
+        "max_slope": 50.0,
+        "step_height": 0.35,
+        "snap_distance": 0.3,
+        "walk_speed": 2.2,
+        "run_speed": 6.0,
+        "acceleration": 40.0,
+        "air_control": 0.35,
+        "gravity": 22.0,
+        "jump_height": 1.3,
+        "air_jumps": 0,
+        "coyote_time": 0.12,
+        "jump_buffer": 0.15,
+        "max_fall_speed": 45.0,
+        "face_movement": true,
+        "turn_speed": 720.0,
+        "yaw_offset": 0.0,
+        "push_mass": 80.0,
+        "ride_platforms": true
+      },
+      "animation_tree": {
+        "from_character": true,
+        "start": "Locomotion",
+        "states": [
+          {
+            "name": "Locomotion",
+            "motion": {
+              "kind": "blend2d",
+              "x": "side_speed",
+              "y": "forward_speed",
+              "points": [
+                {
+                  "at": [
+                    0.0,
+                    0.0
+                  ],
+                  "clip": "Idle",
+                  "speed": 1.0
+                },
+                {
+                  "at": [
+                    0.0,
+                    1.4
+                  ],
+                  "clip": "Walk",
+                  "speed": 1.0
+                },
+                {
+                  "at": [
+                    0.0,
+                    4.6
+                  ],
+                  "clip": "Run",
+                  "speed": 1.0
+                },
+                {
+                  "at": [
+                    0.0,
+                    -1.4
+                  ],
+                  "clip": "Walk",
+                  "speed": -1.0
+                },
+                {
+                  "at": [
+                    -3.0,
+                    0.0
+                  ],
+                  "clip": "StrafeLeft",
+                  "speed": 1.0
+                },
+                {
+                  "at": [
+                    3.0,
+                    0.0
+                  ],
+                  "clip": "StrafeRight",
+                  "speed": 1.0
+                }
+              ],
+              "scale_speed": true
+            },
+            "looping": true,
+            "speed": 1.0
+          },
+          {
+            "name": "Jump",
+            "motion": {
+              "kind": "clip",
+              "clip": "Jump",
+              "speed": 1.0
+            },
+            "looping": false,
+            "speed": 1.0
+          },
+          {
+            "name": "Fall",
+            "motion": {
+              "kind": "clip",
+              "clip": "Fall",
+              "speed": 1.0
+            },
+            "looping": true,
+            "speed": 1.0
+          },
+          {
+            "name": "Land",
+            "motion": {
+              "kind": "clip",
+              "clip": "Land",
+              "speed": 1.0
+            },
+            "looping": false,
+            "speed": 1.0
+          }
+        ],
+        "transitions": [
+          {
+            "from": "*",
+            "to": "Jump",
+            "when": "jumped",
+            "fade": 0.08
+          },
+          {
+            "from": "Fall",
+            "to": "Land",
+            "when": "landed && landing_speed > 8",
+            "fade": 0.06
+          },
+          {
+            "from": "Jump",
+            "to": "Land",
+            "when": "landed && landing_speed > 8",
+            "fade": 0.06
+          },
+          {
+            "from": "Jump",
+            "to": "Locomotion",
+            "when": "grounded",
+            "fade": 0.15
+          },
+          {
+            "from": "Jump",
+            "to": "Fall",
+            "when": "",
+            "fade": 0.2,
+            "after": 0.95
+          },
+          {
+            "from": "Fall",
+            "to": "Locomotion",
+            "when": "grounded",
+            "fade": 0.15
+          },
+          {
+            "from": "Locomotion",
+            "to": "Fall",
+            "when": "!grounded && air_time > 0.15",
+            "fade": 0.25
+          },
+          {
+            "from": "Land",
+            "to": "Locomotion",
+            "when": "speed > 1",
+            "fade": 0.15
+          },
+          {
+            "from": "Land",
+            "to": "Locomotion",
+            "when": "",
+            "fade": 0.2,
+            "after": 0.75
+          }
+        ],
+        "parameters": {}
+      },
+      "camera": null
+    },
+    {
       "name": "Robot",
       "transform": {
         "translation": [
@@ -3996,10 +4226,10 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 80,
+      "parent": 52,
       "children": [
-        53,
-        59
+        54,
+        60
       ],
       "gltf_node": 22,
       "gltf_material": null,
@@ -4060,13 +4290,13 @@
         ]
       },
       "material": "content/materials/robot_glb_000_1.mat.json",
-      "parent": 52,
+      "parent": 53,
       "children": [
-        54,
         55,
         56,
         57,
-        58
+        58,
+        59
       ],
       "gltf_node": 21,
       "gltf_material": 0,
@@ -4086,27 +4316,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -4526,7 +4756,7 @@
         ]
       },
       "material": "content/materials/robot_glb_001_1.mat.json",
-      "parent": 53,
+      "parent": 54,
       "children": [],
       "gltf_node": 21,
       "gltf_material": 1,
@@ -4546,27 +4776,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -4986,7 +5216,7 @@
         ]
       },
       "material": "content/materials/robot_glb_002_1.mat.json",
-      "parent": 53,
+      "parent": 54,
       "children": [],
       "gltf_node": 21,
       "gltf_material": 2,
@@ -5006,27 +5236,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -5446,7 +5676,7 @@
         ]
       },
       "material": "content/materials/robot_glb_003_1.mat.json",
-      "parent": 53,
+      "parent": 54,
       "children": [],
       "gltf_node": 21,
       "gltf_material": 3,
@@ -5466,27 +5696,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -5906,7 +6136,7 @@
         ]
       },
       "material": "content/materials/robot_glb_004_1.mat.json",
-      "parent": 53,
+      "parent": 54,
       "children": [],
       "gltf_node": 21,
       "gltf_material": 4,
@@ -5926,27 +6156,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -6366,7 +6596,7 @@
         ]
       },
       "material": "content/materials/robot_glb_005_1.mat.json",
-      "parent": 53,
+      "parent": 54,
       "children": [],
       "gltf_node": 21,
       "gltf_material": 5,
@@ -6386,27 +6616,27 @@
       "camera": null,
       "skin": {
         "joints": [
-          59,
           60,
           61,
           62,
-          75,
           63,
+          76,
           64,
           65,
-          76,
           66,
+          77,
           67,
           68,
           69,
           70,
-          77,
           71,
           78,
           72,
+          79,
           73,
           74,
-          79
+          75,
+          80
         ],
         "inverse_bind": [
           [
@@ -6815,11 +7045,11 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 52,
+      "parent": 53,
       "children": [
-        60,
-        63,
-        66
+        61,
+        64,
+        67
       ],
       "gltf_node": 20,
       "gltf_material": null,
@@ -6863,9 +7093,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 59,
+      "parent": 60,
       "children": [
-        61
+        62
       ],
       "gltf_node": 3,
       "gltf_material": null,
@@ -6909,9 +7139,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 60,
+      "parent": 61,
       "children": [
-        62
+        63
       ],
       "gltf_node": 2,
       "gltf_material": null,
@@ -6955,9 +7185,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 61,
+      "parent": 62,
       "children": [
-        75
+        76
       ],
       "gltf_node": 1,
       "gltf_material": null,
@@ -7001,9 +7231,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 59,
+      "parent": 60,
       "children": [
-        64
+        65
       ],
       "gltf_node": 7,
       "gltf_material": null,
@@ -7047,9 +7277,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 63,
+      "parent": 64,
       "children": [
-        65
+        66
       ],
       "gltf_node": 6,
       "gltf_material": null,
@@ -7093,9 +7323,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 64,
+      "parent": 65,
       "children": [
-        76
+        77
       ],
       "gltf_node": 5,
       "gltf_material": null,
@@ -7139,9 +7369,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 59,
+      "parent": 60,
       "children": [
-        67
+        68
       ],
       "gltf_node": 19,
       "gltf_material": null,
@@ -7185,11 +7415,11 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 66,
+      "parent": 67,
       "children": [
-        68,
-        71,
-        72
+        69,
+        72,
+        73
       ],
       "gltf_node": 18,
       "gltf_material": null,
@@ -7233,9 +7463,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 67,
+      "parent": 68,
       "children": [
-        69
+        70
       ],
       "gltf_node": 11,
       "gltf_material": null,
@@ -7279,9 +7509,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 68,
+      "parent": 69,
       "children": [
-        70
+        71
       ],
       "gltf_node": 10,
       "gltf_material": null,
@@ -7325,9 +7555,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 69,
+      "parent": 70,
       "children": [
-        77
+        78
       ],
       "gltf_node": 9,
       "gltf_material": null,
@@ -7371,9 +7601,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 67,
+      "parent": 68,
       "children": [
-        78
+        79
       ],
       "gltf_node": 13,
       "gltf_material": null,
@@ -7417,9 +7647,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 67,
+      "parent": 68,
       "children": [
-        73
+        74
       ],
       "gltf_node": 17,
       "gltf_material": null,
@@ -7463,9 +7693,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 72,
+      "parent": 73,
       "children": [
-        74
+        75
       ],
       "gltf_node": 16,
       "gltf_material": null,
@@ -7509,9 +7739,9 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 73,
+      "parent": 74,
       "children": [
-        79
+        80
       ],
       "gltf_node": 15,
       "gltf_material": null,
@@ -7555,7 +7785,7 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 62,
+      "parent": 63,
       "children": [],
       "gltf_node": 0,
       "gltf_material": null,
@@ -7599,7 +7829,7 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 65,
+      "parent": 66,
       "children": [],
       "gltf_node": 4,
       "gltf_material": null,
@@ -7643,7 +7873,7 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 70,
+      "parent": 71,
       "children": [],
       "gltf_node": 8,
       "gltf_material": null,
@@ -7687,7 +7917,7 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 71,
+      "parent": 72,
       "children": [],
       "gltf_node": 12,
       "gltf_material": null,
@@ -7731,7 +7961,7 @@
       "primitive_mesh": null,
       "mesh_bounds": null,
       "material": null,
-      "parent": 74,
+      "parent": 75,
       "children": [],
       "gltf_node": 14,
       "gltf_material": null,
@@ -7748,80 +7978,6 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
-      "camera": null
-    },
-    {
-      "name": "Player",
-      "transform": {
-        "translation": [
-          0.0,
-          0.0,
-          10.0
-        ],
-        "rotation": [
-          0.0,
-          1.0,
-          0.0,
-          -4.371139e-8
-        ],
-        "scale": [
-          1.0,
-          1.0,
-          1.0
-        ]
-      },
-      "visible": true,
-      "mesh_handle": null,
-      "primitive_mesh": null,
-      "mesh_bounds": null,
-      "material": null,
-      "parent": null,
-      "children": [
-        52
-      ],
-      "gltf_node": null,
-      "gltf_material": null,
-      "gltf_source": null,
-      "gltf_primitive": null,
-      "script": {
-        "source": {
-          "File": {
-            "path": "content/scripts/player.lua"
-          }
-        }
-      },
-      "directional_light": null,
-      "point_light": null,
-      "spot_light": null,
-      "casts_shadow": null,
-      "billboard": null,
-      "editor_id": 6,
-      "particle_system": null,
-      "particle_emitter": null,
-      "particle_behavior": null,
-      "environment": null,
-      "character_controller": {
-        "radius": 0.3,
-        "height": 1.8,
-        "max_slope": 50.0,
-        "step_height": 0.35,
-        "snap_distance": 0.3,
-        "walk_speed": 2.2,
-        "run_speed": 6.0,
-        "acceleration": 40.0,
-        "air_control": 0.35,
-        "gravity": 22.0,
-        "jump_height": 1.3,
-        "air_jumps": 0,
-        "coyote_time": 0.12,
-        "jump_buffer": 0.15,
-        "max_fall_speed": 45.0,
-        "face_movement": true,
-        "turn_speed": 720.0,
-        "yaw_offset": 0.0,
-        "push_mass": 80.0,
-        "ride_platforms": true
-      },
       "camera": null
     }
   ],

@@ -39,13 +39,14 @@ F1 shows every collider, F2 toggles a double jump.
 
 ## Scripts
 
-- `content/scripts/lib/third_person.lua` is the reusable controller, with the two
-  control schemes (`scheme = "mmo"` or `"action"`), mouse capture and the
-  idle/walk/run/strafe/jump/fall/land animation state machine (backpedalling plays the
-  walk backwards). Every step is a method, so a game changes one by replacing it (see the
-  header of the file). Copy it into another project's `content/scripts/lib/` to use it.
-- `content/scripts/player.lua` uses it and adds this game's extras: sounds, landing dust,
-  a respawn, debug keys and the HUD.
+- `content/scripts/player.lua` uses the engine's third-person controller
+  (`require("engine.third_person")`, built into the engine: two control schemes,
+  `scheme = "mmo"` or `"action"`, and mouse capture) and adds this game's extras: sounds,
+  landing dust, a respawn, debug keys and the HUD.
+- The Player's `AnimationTree` animates the robot: a 2D blend space of
+  idle/walk/run/strafes by its velocity (backpedalling plays the walk backwards), then
+  jump, fall and land states. It was generated from the clips ("Generate from clips" in
+  the inspector); `docs/characters.md` explains how to add states.
 - `content/scripts/mover.lua` and `content/scripts/jump_pad.lua` drive the platforms and
   the pad.
 
