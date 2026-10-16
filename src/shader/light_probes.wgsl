@@ -6,7 +6,9 @@
 // sphere with a one-texel border. A point takes the light of the eight probes around it,
 // weighted by distance, by facing and by whether the probe can see it (Chebyshev's
 // inequality on the distances), after Majercik et al., "Dynamic Diffuse Global
-// Illumination with Ray-Traced Irradiance Fields" (JCGT 2019).
+// Illumination with Ray-Traced Irradiance Fields" (JCGT 2019). Probes may sit off their
+// grid positions, moved out of geometry (relocation): below its tiles the irradiance
+// atlas keeps one texel per probe with that offset.
 //
 // Needs environment.wgsl (its sampler).
 
@@ -18,12 +20,14 @@ struct LightProbeGrid {
     // x: probe tiles per atlas row, y: irradiance tile side, z: distance tile side (texels,
     // with the border), w: rays per probe.
     atlas : vec4<u32>,
-    // x: intensity, y: normal bias, z: view bias (in spacings), w: unused.
+    // x: intensity, y: normal bias, z: view bias (in spacings), w: 1 while probes may be
+    // moved out of geometry.
     params : vec4<f32>,
 };
 
 @group(2) @binding(12) var<uniform> light_probe_grid : LightProbeGrid;
-// rgb: irradiance; a: 1 for a probe in the open, 0 for one inside geometry.
+// rgb: irradiance; a: 1 for a probe in the open, 0 for one inside geometry. Below the
+// tiles, one texel per probe: rgb its offset from the grid position (m).
 @group(2) @binding(13) var light_probe_irradiance : texture_2d<f32>;
 // r: mean distance, g: mean squared distance (m).
 @group(2) @binding(14) var light_probe_distance : texture_2d<f32>;
@@ -55,9 +59,36 @@ fn light_probe_index(coords : vec3<i32>) -> u32 {
     return u32(coords.x + counts.x * (coords.y + counts.y * coords.z));
 }
 
-fn light_probe_position(coords : vec3<i32>) -> vec3<f32> {
+fn light_probe_count() -> u32 {
+    let counts = light_probe_grid.counts.xyz;
+    return counts.x * counts.y * counts.z;
+}
+
+// Rows of probe tiles in an atlas.
+fn light_probe_tile_rows() -> u32 {
+    let columns = max(light_probe_grid.atlas.x, 1u);
+    return (light_probe_count() + columns - 1u) / columns;
+}
+
+// The irradiance atlas texel holding `probe`'s offset: rows below the tiles, as wide.
+fn light_probe_offset_texel(probe : u32) -> vec2<i32> {
+    let width = max(light_probe_grid.atlas.x, 1u) * light_probe_grid.atlas.y;
+    let top = light_probe_tile_rows() * light_probe_grid.atlas.y;
+    return vec2<i32>(i32(probe % width), i32(top + probe / width));
+}
+
+// Where probe `coords` sits in its grid (before relocation).
+fn light_probe_grid_position(coords : vec3<i32>) -> vec3<f32> {
     return light_probe_grid.origin_spacing.xyz
         + vec3<f32>(coords) * light_probe_grid.origin_spacing.w;
+}
+
+// Where probe `coords` is: its grid position, moved out of geometry.
+fn light_probe_position(coords : vec3<i32>) -> vec3<f32> {
+    let offset = textureLoad(
+        light_probe_irradiance, light_probe_offset_texel(light_probe_index(coords)), 0
+    ).xyz;
+    return light_probe_grid_position(coords) + offset;
 }
 
 // Where direction `d` of probe `probe` lies in an atlas of `tile`-texel tiles, as uv.

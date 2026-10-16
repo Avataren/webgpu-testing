@@ -35,7 +35,7 @@ pub(super) fn sync(renderer: &mut Renderer, scene: &mut Scene, failed_load: &mut
 
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(result) = renderer.take_finished_light_probe_bake() {
-        match (result, volume) {
+        let outcome = match (result, volume) {
             (Ok(bytes), Some(volume)) => match save_bake(scene, volume.entity, &bytes) {
                 Ok(path) => {
                     log::info!(
@@ -46,12 +46,17 @@ pub(super) fn sync(renderer: &mut Renderer, scene: &mut Scene, failed_load: &mut
                         log::warn!("Light probes: {error}");
                     }
                     *failed_load = None;
+                    Ok(path)
                 }
-                Err(error) => log::error!("Light probes: saving the bake failed: {error}"),
+                Err(error) => Err(format!("saving the bake failed: {error}")),
             },
-            (Ok(_), None) => log::warn!("Light probes: the volume went away during the bake"),
-            (Err(error), _) => log::error!("Light probes: the bake failed: {error}"),
+            (Ok(_), None) => Err("the volume went away during the bake".to_owned()),
+            (Err(error), _) => Err(format!("the bake failed: {error}")),
+        };
+        if let Err(error) = &outcome {
+            log::error!("Light probes: {error}");
         }
+        renderer.set_light_probe_bake_outcome(outcome);
     }
 }
 

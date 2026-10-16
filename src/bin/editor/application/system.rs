@@ -166,6 +166,16 @@ impl<'shared> EditorAppAccess<'shared> {
         self.shared.active_scene_handle
     }
 
+    pub(super) fn take_light_probe_requests(&mut self) -> Vec<crate::inspector::LightProbeRequest> {
+        std::mem::take(&mut self.shared.light_probe_requests)
+    }
+
+    pub(super) fn light_probe_status_mut(
+        &mut self,
+    ) -> &mut crate::inspector::LightProbePanelStatus {
+        &mut self.shared.light_probe_status
+    }
+
     pub fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
@@ -239,6 +249,10 @@ impl<'shared> EditorAppAccess<'shared> {
 
     pub fn create_environment(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
         EditorApplication::create_environment(ctx)
+    }
+
+    pub fn create_light_probe_volume(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {
+        EditorApplication::create_light_probe_volume(ctx)
     }
 
     pub fn create_post_process_volume(&mut self, ctx: &mut GpuUpdateContext<'_>) -> Option<Entity> {

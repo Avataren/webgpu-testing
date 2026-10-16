@@ -51,6 +51,7 @@ impl SceneCreationSystem {
                     SceneCreationAction::PostProcessVolume => {
                         app.create_post_process_volume(gpu_ctx)
                     }
+                    SceneCreationAction::LightProbeVolume => app.create_light_probe_volume(gpu_ctx),
                     SceneCreationAction::SceneInstance {
                         document_id,
                         node_path,

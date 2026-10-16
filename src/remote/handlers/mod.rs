@@ -141,6 +141,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "The light probe volume, bake progress and the baked data it shows",
     ),
     (
+        "light_probes.debug",
+        "Show or hide the light probe debug view (a sphere per probe, lit by its data)",
+    ),
+    (
         "graphics.set",
         "Change the player's graphics settings or open/close the settings page",
     ),
@@ -305,6 +309,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "graphics.get" => graphics::get(),
         "light_probes.bake" => light_probes::bake(params, ctx),
         "light_probes.status" => light_probes::status(ctx),
+        "light_probes.debug" => light_probes::debug(params, ctx),
         "graphics.set" => graphics::set(params),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
         "asset.reload" => rendering::asset_reload(params, ctx),

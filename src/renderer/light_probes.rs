@@ -11,6 +11,10 @@
 //! of the probes traces its rays each frame (direct light at the hits plus the grid's own
 //! light there, so bounces add up over frames), then the rays are blended into the tiles.
 //!
+//! Probes inside or right against geometry move out of it (relocation, as in RTXGI): the
+//! irradiance pass also keeps an offset per probe, in texel rows below the irradiance
+//! tiles, which every lookup and trace adds to the probe's grid position.
+//!
 //! A bake ([`LightProbes::start_bake`]) traces the grid at high quality instead: more rays,
 //! warm-up sweeps for the bounces to build up, then the exact mean of many sweeps. Its
 //! atlases are saved as a `.probes` file ([`encode_bake`]); where the grid cannot trace
@@ -59,6 +63,8 @@ pub struct LightProbeGrid {
     pub intensity: f32,
     /// Update by ray tracing where possible (false: show baked data only).
     pub live: bool,
+    /// Move probes out of geometry they sit in or against.
+    pub relocate: bool,
 }
 
 impl LightProbeGrid {
@@ -81,6 +87,7 @@ impl LightProbeGrid {
             hysteresis,
             intensity,
             live: true,
+            relocate: true,
         }
     }
 
@@ -97,10 +104,20 @@ impl LightProbeGrid {
         (self.probe_count() as f32).sqrt().ceil().max(1.0) as u32
     }
 
+    /// Rows of probe tiles in an atlas.
+    fn rows(&self) -> u32 {
+        self.probe_count().div_ceil(self.columns())
+    }
+
     fn atlas_size(&self, tile: u32) -> (u32, u32) {
-        let columns = self.columns();
-        let rows = self.probe_count().div_ceil(columns);
-        (columns * tile, rows * tile)
+        (self.columns() * tile, self.rows() * tile)
+    }
+
+    /// The irradiance atlas: its tiles, then the probes' offsets (one texel each, rows
+    /// as wide as the tiles).
+    fn irradiance_atlas_size(&self) -> (u32, u32) {
+        let (width, height) = self.atlas_size(IRRADIANCE_TILE);
+        (width, height + self.probe_count().div_ceil(width))
     }
 
     /// Whether `other` needs new atlases (a different layout of probes).
@@ -136,6 +153,8 @@ struct UpdateUniform {
 }
 
 const FLAG_RESET: u32 = 1;
+/// Move the probes this update traces out of geometry (else their offsets stay).
+const FLAG_RELOCATE: u32 = 2;
 
 struct Atlas {
     current: wgpu::Texture,
@@ -251,6 +270,15 @@ pub struct LightProbeBakeProgress {
     /// Sweeps completed, warm-up included.
     pub sweeps_done: u32,
     pub finished: bool,
+}
+
+/// How a finished bake ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LightProbeBakeOutcome {
+    /// Counts the bakes that ended, from 1.
+    pub serial: u32,
+    /// The project path of the saved `.probes` file, or what went wrong.
+    pub result: Result<String, String>,
 }
 
 struct UpdateStage {
@@ -459,6 +487,13 @@ impl LightProbes {
         }
     }
 
+    /// The probes the debug view draws: all of the grid's, once it holds light.
+    pub(crate) fn debug_probe_count(&self) -> Option<u32> {
+        self.grid
+            .filter(|_| self.has_data)
+            .map(|grid| grid.probe_count())
+    }
+
     /// Whether the grid can trace at all (hardware ray tracing).
     pub(crate) fn can_trace(&self) -> bool {
         self.update.is_some()
@@ -541,7 +576,12 @@ impl LightProbes {
             return Err("no light probe grid to load into".into());
         };
         let bake = decode_bake(bytes)?;
-        let expected = BakeHeader::new(&grid, bake.header.sweeps, bake.header.rays);
+        let mut expected = BakeHeader::new(&grid, bake.header.sweeps, bake.header.rays);
+        let (tiles_width, tiles_height) = grid.atlas_size(IRRADIANCE_TILE);
+        if bake.version == 1 {
+            // Tiles only: the probes stay at their grid positions.
+            expected.irradiance_size = [tiles_width, tiles_height];
+        }
         if !bake.header.matches(&expected) {
             return Err(format!(
                 "{source} was baked for other probes ({:?} from {:?}, spacing {}; the volume now \
@@ -554,9 +594,20 @@ impl LightProbes {
                 expected.spacing
             ));
         }
+        let mut irradiance = std::borrow::Cow::Borrowed(&bake.irradiance[..]);
+        if bake.version == 1 {
+            // No offsets: zero rows below the tiles.
+            let (_, full_height) = grid.irradiance_atlas_size();
+            let mut padded = irradiance.into_owned();
+            padded.resize(
+                padded.len() + ((full_height - tiles_height) * tiles_width * 8) as usize,
+                0,
+            );
+            irradiance = std::borrow::Cow::Owned(padded);
+        }
         for (texture, data, texel_bytes) in [
-            (&self.irradiance.current, &bake.irradiance, 8u32),
-            (&self.distance.current, &bake.distance, 4u32),
+            (&self.irradiance.current, &irradiance[..], 8u32),
+            (&self.distance.current, &bake.distance[..], 4u32),
         ] {
             let size = texture.size();
             queue.write_texture(
@@ -602,7 +653,7 @@ impl LightProbes {
                     device,
                     "LightProbeIrradiance",
                     IRRADIANCE_FORMAT,
-                    new.atlas_size(IRRADIANCE_TILE),
+                    new.irradiance_atlas_size(),
                 );
                 self.distance = Atlas::new(
                     device,
@@ -668,7 +719,12 @@ impl LightProbes {
             origin_spacing: [grid.origin.x, grid.origin.y, grid.origin.z, grid.spacing],
             counts: [grid.counts[0], grid.counts[1], grid.counts[2], lit as u32],
             atlas: [grid.columns(), IRRADIANCE_TILE, DISTANCE_TILE, grid.rays()],
-            params: [grid.intensity.max(0.0), NORMAL_BIAS, VIEW_BIAS, 0.0],
+            params: [
+                grid.intensity.max(0.0),
+                NORMAL_BIAS,
+                VIEW_BIAS,
+                grid.relocate as u32 as f32,
+            ],
         }
     }
 
@@ -711,6 +767,11 @@ impl LightProbes {
                     let averaged = (bake.done - bake.warmup) as f32;
                     averaged / (averaged + 1.0)
                 };
+                // Probes settle where they are during the warm-up; the averaged sweeps
+                // all see them in one place.
+                if bake.done < bake.warmup {
+                    flags |= FLAG_RELOCATE;
+                }
                 bake.into_sweep += probes;
                 if bake.into_sweep >= total {
                     bake.into_sweep = 0;
@@ -728,6 +789,7 @@ impl LightProbes {
                         self.reset = false;
                     }
                 }
+                flags |= FLAG_RELOCATE;
                 (
                     total.min(MAX_PROBES_PER_UPDATE),
                     grid.rays(),
@@ -816,7 +878,9 @@ impl LightProbes {
             "probes.irradiance",
             "Light probe irradiance: an octahedral tile per probe (8x8 with the border, probes \
              in rows of about the square root of their count) of the light arriving from each \
-             direction, cosine weighted (rgb); a: 1 for a probe in the open, 0 inside geometry",
+             direction, cosine weighted (rgb); a: 1 for a probe in the open, 0 inside geometry. \
+             Below the tiles, one texel per probe in probe order: its offset from its grid \
+             position (rgb, m; relocation out of geometry)",
             &self.irradiance.current,
         ));
         out.push(FetchableTexture::new(
@@ -854,7 +918,7 @@ pub(crate) struct BakeHeader {
 
 impl BakeHeader {
     fn new(grid: &LightProbeGrid, sweeps: u32, rays: u32) -> Self {
-        let irradiance = grid.atlas_size(IRRADIANCE_TILE);
+        let irradiance = grid.irradiance_atlas_size();
         let distance = grid.atlas_size(DISTANCE_TILE);
         Self {
             counts: grid.counts,
@@ -891,12 +955,15 @@ impl BakeHeader {
 }
 
 const BAKE_MAGIC: &[u8; 8] = b"WGCPROBE";
-const BAKE_VERSION: u32 = 1;
+/// 2: the irradiance atlas has the probes' offsets below its tiles (1: tiles only, no
+/// relocation).
+const BAKE_VERSION: u32 = 2;
 const BAKE_HEADER_BYTES: usize = 8 + 4 * 17;
 
 /// A decoded `.probes` file: the atlases as the textures hold them (half floats; RGBA
 /// irradiance, RG distances).
 pub(crate) struct DecodedBake {
+    pub version: u32,
     pub header: BakeHeader,
     pub irradiance: Vec<u8>,
     pub distance: Vec<u8>,
@@ -962,10 +1029,10 @@ pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
         let at = 8 + index * 4;
         u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
     };
-    if word(0) != BAKE_VERSION {
+    let version = word(0);
+    if !(1..=BAKE_VERSION).contains(&version) {
         return Err(format!(
-            "light probe bake version {} (this engine reads {BAKE_VERSION})",
-            word(0)
+            "light probe bake version {version} (this engine reads 1 to {BAKE_VERSION})"
         ));
     }
     let header = BakeHeader {
@@ -992,6 +1059,7 @@ pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
         ));
     }
     Ok(DecodedBake {
+        version,
         header,
         irradiance: bytes[BAKE_HEADER_BYTES..irradiance_end].to_vec(),
         distance: bytes[irradiance_end..end].to_vec(),
@@ -1114,5 +1182,38 @@ mod tests {
         let columns = width / IRRADIANCE_TILE;
         assert!(columns * (height / IRRADIANCE_TILE) >= grid.probe_count());
         assert_eq!(grid.atlas_size(DISTANCE_TILE).0, columns * DISTANCE_TILE);
+        // A texel per probe for its offset, in rows below the tiles.
+        let (offsets_width, full_height) = grid.irradiance_atlas_size();
+        assert_eq!(offsets_width, width);
+        assert!((full_height - height) * width >= grid.probe_count());
+        assert_eq!(full_height - height, 4);
+    }
+
+    #[test]
+    fn version_1_bakes_without_offsets_still_decode() {
+        use crate::renderer::readback::Readback;
+        let grid = LightProbeGrid::centered(Vec3::ZERO, 0.5, [3, 2, 2], 128, 0.97, 1.0);
+        let mut header = BakeHeader::new(&grid, 8, 64);
+        let (width, height) = grid.atlas_size(IRRADIANCE_TILE);
+        header.irradiance_size = [width, height];
+        let readback = |size: [u32; 2], channels: usize| Readback {
+            width: size[0],
+            height: size[1],
+            channels,
+            values: vec![0.5; size[0] as usize * size[1] as usize * channels],
+            integer: false,
+        };
+        let mut bytes = encode_bake(
+            &header,
+            &readback(header.irradiance_size, 4),
+            &readback(header.distance_size, 2),
+        )
+        .unwrap();
+        bytes[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let decoded = decode_bake(&bytes).unwrap();
+        assert_eq!(decoded.version, 1);
+        assert_eq!(decoded.header.irradiance_size, [width, height]);
+        bytes[8..12].copy_from_slice(&3u32.to_le_bytes());
+        assert!(decode_bake(&bytes).is_err());
     }
 }

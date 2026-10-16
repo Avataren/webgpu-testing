@@ -51,6 +51,7 @@ pub fn active_light_probe_volume(world: &World) -> Option<ActiveLightProbeVolume
         volume.intensity,
     );
     grid.live = !volume.use_baked;
+    grid.relocate = volume.relocate;
     Some(ActiveLightProbeVolume {
         entity,
         grid,

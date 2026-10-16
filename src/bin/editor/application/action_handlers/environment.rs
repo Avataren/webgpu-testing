@@ -1,5 +1,5 @@
 use hecs::Entity;
-use wgpu_cube::scene::{EnvironmentComponent, PostProcessVolume};
+use wgpu_cube::scene::{EnvironmentComponent, LightProbeVolume, PostProcessVolume};
 
 use super::{ActionContext, ActionResult};
 
@@ -83,6 +83,36 @@ pub fn handle_update_environment(
     } else {
         ActionResult::no_change()
     }
+}
+
+/// Handle UpdateLightProbeVolume action
+pub fn handle_update_light_probe_volume(
+    ctx: &mut ActionContext,
+    entity: Entity,
+    component: LightProbeVolume,
+) -> ActionResult {
+    let world = ctx.scene.main_world_mut();
+    match world.get::<&mut LightProbeVolume>(entity) {
+        Ok(mut existing) if *existing != component => {
+            *existing = component;
+            ActionResult::scene_changed()
+        }
+        Ok(_) => ActionResult::no_change(),
+        Err(err) => {
+            log::warn!("Failed to update light probe volume for {entity:?}: {err}");
+            ActionResult::no_change()
+        }
+    }
+}
+
+/// Handle a light probe request: the renderer carries it out on the GPU update
+/// (LightProbeSystem).
+pub fn handle_light_probe_request(
+    ctx: &mut ActionContext,
+    request: crate::inspector::LightProbeRequest,
+) -> ActionResult {
+    ctx.app.queue_light_probe_request(request);
+    ActionResult::no_change()
 }
 
 /// Handle UpdatePostProcessVolume action

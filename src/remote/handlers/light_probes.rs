@@ -1,10 +1,12 @@
-//! `light_probes.bake` and `light_probes.status`: bake the scene's light probe volume and
-//! see how far a bake has come, or what the grid shows.
+//! `light_probes.bake`, `light_probes.status` and `light_probes.debug`: bake the scene's
+//! light probe volume, see how far a bake has come or what the grid shows, and show the
+//! probes themselves.
 
 use serde_json::{json, Value};
 
 use super::{RemoteContext, RemoteResult};
-use crate::remote::json::opt_u64;
+use crate::remote::json::{opt_bool, opt_f64, opt_u64};
+use crate::renderer::LightProbeDebugView;
 
 /// Defaults: high quality, a few seconds at 60 frames per second for a room.
 const WARMUP_SWEEPS: u64 = 32;
@@ -57,10 +59,41 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "spacing": volume.grid.spacing,
             "origin": volume.grid.origin.to_array(),
             "live": volume.grid.live,
+            "relocate": volume.grid.relocate,
             "baked": volume.baked,
         })),
         "can_trace": renderer.light_probes_can_trace(),
         "showing_bake": renderer.light_probe_baked_source(),
         "bake": progress,
+        "last_bake": renderer.light_probe_bake_outcome().map(|outcome| match &outcome.result {
+            Ok(path) => json!({ "saved": path }),
+            Err(error) => json!({ "error": error }),
+        }),
+        "debug": debug_json(renderer.light_probe_debug()),
     }))
+}
+
+pub(super) fn debug(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let renderer = &mut *ctx.gpu.renderer;
+    let current = renderer.light_probe_debug();
+    let show = opt_bool(params, "show").unwrap_or(true);
+    let view = show.then(|| {
+        let mut view = current.unwrap_or_default();
+        if let Some(radius) = opt_f64(params, "radius") {
+            view.radius = (radius as f32).clamp(0.005, 1.0);
+        }
+        if let Some(exposure) = opt_f64(params, "exposure") {
+            view.exposure = (exposure as f32).clamp(0.0, 1000.0);
+        }
+        view
+    });
+    renderer.set_light_probe_debug(view);
+    Ok(json!({ "debug": debug_json(view) }))
+}
+
+fn debug_json(view: Option<LightProbeDebugView>) -> Value {
+    match view {
+        Some(view) => json!({ "show": true, "radius": view.radius, "exposure": view.exposure }),
+        None => json!({ "show": false }),
+    }
 }

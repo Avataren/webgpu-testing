@@ -131,9 +131,12 @@ engine you launched; save first).
   and GPUs without it, `light_probes_bake` (high quality, a few seconds; then `wait` the frames
   it reports) saves `content/lighting/<volume>.probes` and sets the volume's `baked` path:
   `project_save` keeps it. Bake again after moving the volume or changing the room's lighting.
-  `light_probes_status` shows the volume, bake progress and what is shown; `use_baked: true`
-  previews the bake in the editor; `texture_fetch probes.irradiance` / `probes.distance` show the
-  probes' data.
+  `light_probes_status` shows the volume, bake progress, the last bake's outcome and what is
+  shown; `use_baked: true` previews the bake in the editor; `light_probes_debug {show: true}`
+  draws a sphere per probe lit by its data (dark red: inside geometry, yellow rim: relocated);
+  `texture_fetch probes.irradiance` / `probes.distance` show the probes' data. Probes inside or
+  against walls move out of them (`relocate`, default on, within 0.45 spacing). In the editor
+  the volume's inspector section has the same: Bake (Preview or High), progress, Show probes.
 - Path tracing (`graphics_set {path_tracing: true, path_tracing_bounces, path_tracing_samples,
   path_tracing_denoiser}`, or a volume's `path_tracing` group) replaces the raster lighting of
   opaque surfaces with denoised path-traced light; it needs `engine_info`

@@ -5,7 +5,8 @@
 //    along the ray (direct light at the hit, plus the probes' own light there for the
 //    further bounces) and the distance to the hit (negative for the back of a surface);
 // 2. fs_probe_irradiance: every irradiance atlas texel, the cosine-weighted mean of its
-//    probe's rays, blended into its previous value;
+//    probe's rays, blended into its previous value; and below the tiles each probe's
+//    offset, moving it out of geometry (relocation, after RTXGI's DDGI);
 // 3. fs_probe_distance: the same for the distances (and their squares), with a sharper
 //    lobe.
 // Border texels repeat the interior texel across the octahedral seam, so bilinear
@@ -25,6 +26,15 @@ struct LightProbeUpdate {
 
 // No previous value: take this update's.
 const PROBE_FLAG_RESET : u32 = 1u;
+// Move the probes traced now out of geometry (else their offsets stay).
+const PROBE_FLAG_RELOCATE : u32 = 2u;
+// Relocation keeps probes this far from the nearest surface (in spacings)...
+const PROBE_MIN_FRONTFACE : f32 = 0.25;
+// ...and within this distance of their grid positions (in spacings); a probe that
+// would have to move farther stays.
+const PROBE_MAX_OFFSET : f32 = 0.45;
+// The trace stores backface hit distances scaled by this (negative).
+const PROBE_BACKFACE_SCALE : f32 = 0.2;
 const PROBE_MAX_RAY_DISTANCE : f32 = 1.0e3;
 // Through at most this many transmissive surfaces before a ray counts as blocked.
 const PROBE_MAX_TRANSMISSIONS : u32 = 3u;
@@ -33,20 +43,37 @@ const PROBE_MAX_TRANSMISSIONS : u32 = 3u;
 // rgb: radiance, a: distance (negative at a backface); one row per probe updated.
 @group(0) @binding(1) var probe_rays : texture_2d<f32>;
 
-// Ray `index` of `count`, spread evenly over the sphere (a spherical Fibonacci lattice)
-// and turned by this update's rotation.
-fn probe_ray_direction(index : u32, count : u32) -> vec3<f32> {
+// The first rays of every probe keep their directions from update to update: they
+// classify and relocate the probe, so neither flickers with the random rotation (as in
+// RTXGI's DDGI). The others turn with it and carry the light.
+const PROBE_FIXED_RAYS_MAX : u32 = 32u;
+
+fn probe_fixed_rays() -> u32 {
+    return min(PROBE_FIXED_RAYS_MAX, probe_update.frame.w / 4u);
+}
+
+// Point `index` of `count` spread evenly over the sphere (a spherical Fibonacci lattice).
+fn probe_fibonacci(index : u32, count : u32) -> vec3<f32> {
     let golden_angle = 2.399963229728653;
     let z = 1.0 - (2.0 * f32(index) + 1.0) / f32(count);
     let r = sqrt(max(1.0 - z * z, 0.0));
     let phi = f32(index) * golden_angle;
-    let d = vec3<f32>(cos(phi) * r, sin(phi) * r, z);
+    return vec3<f32>(cos(phi) * r, sin(phi) * r, z);
+}
+
+// The direction of ray `index` of this update: a fixed one, or one of the rest spread
+// over the sphere and turned by this update's rotation.
+fn probe_ray_direction(index : u32) -> vec3<f32> {
+    let fixed = probe_fixed_rays();
+    if index < fixed {
+        return probe_fibonacci(index, fixed);
+    }
+    let d = probe_fibonacci(index - fixed, probe_update.frame.w - fixed);
     return normalize((probe_update.rotation * vec4<f32>(d, 0.0)).xyz);
 }
 
 fn probe_count_total() -> u32 {
-    let counts = light_probe_grid.counts.xyz;
-    return counts.x * counts.y * counts.z;
+    return light_probe_count();
 }
 
 fn probe_coords(probe : u32) -> vec3<i32> {
@@ -98,8 +125,8 @@ fn fs_probe_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     }
     let probe = (probe_update.frame.x + texel.y) % probe_count_total();
     let start = light_probe_position(probe_coords(probe));
-    let direction = probe_ray_direction(texel.x, rays);
-    let cone_spread = sqrt(4.0 * PI / f32(rays));
+    let direction = probe_ray_direction(texel.x);
+    let cone_spread = sqrt(4.0 * PI / f32(rays - probe_fixed_rays()));
 
     var origin = start;
     var travelled = 0.0;
@@ -115,7 +142,7 @@ fn fs_probe_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         if material.back_facing {
             // Inside a closed mesh or behind a wall: no light, and a mark for the
             // probe's classification (shortened, as DDGI does, so it barely blocks).
-            return vec4<f32>(0.0, 0.0, 0.0, -0.2 * travelled);
+            return vec4<f32>(0.0, 0.0, 0.0, -PROBE_BACKFACE_SCALE * travelled);
         }
         if material.transmission > 0.5 && event < PROBE_MAX_TRANSMISSIONS {
             // Glass passes the light on, tinted.
@@ -190,9 +217,92 @@ fn probe_texel(pixel : vec2<i32>, tile_u : u32) -> ProbeTexel {
     return out;
 }
 
+// The offset of `probe` (traced this update in ray texture `row`, from `previous`) that
+// moves it out of geometry: through the nearest backface when it sees mostly backfaces,
+// away from a surface it is too close to, else back toward its grid position as far as
+// the surfaces allow (RTXGI's DDGI probe relocation).
+fn probe_relocated(previous : vec3<f32>, row : i32) -> vec3<f32> {
+    let rays = probe_fixed_rays();
+    let spacing = light_probe_grid.origin_spacing.w;
+    let min_frontface = PROBE_MIN_FRONTFACE * spacing;
+    var backfaces = 0u;
+    var closest_back = 1.0e30;
+    var closest_back_dir = vec3<f32>(0.0);
+    var closest_front = 1.0e30;
+    var closest_front_dir = vec3<f32>(0.0);
+    var farthest_front = 0.0;
+    var farthest_front_dir = vec3<f32>(0.0);
+    for (var ray = 0u; ray < rays; ray = ray + 1u) {
+        let distance = textureLoad(probe_rays, vec2<i32>(i32(ray), row), 0).a;
+        let direction = probe_ray_direction(ray);
+        if distance < 0.0 {
+            backfaces += 1u;
+            let back = -distance / PROBE_BACKFACE_SCALE;
+            if back < closest_back {
+                closest_back = back;
+                closest_back_dir = direction;
+            }
+        } else {
+            if distance < closest_front {
+                closest_front = distance;
+                closest_front_dir = direction;
+            }
+            if distance > farthest_front {
+                farthest_front = distance;
+                farthest_front_dir = direction;
+            }
+        }
+    }
+    var offset = previous;
+    if f32(backfaces) > probe_update.params.w * f32(rays) {
+        // Inside: just past the nearest backface.
+        offset = previous + closest_back_dir * (closest_back + min_frontface * 0.5);
+    } else if closest_front < min_frontface {
+        // Too close to a surface: toward the most open direction, unless that is the
+        // surface's own.
+        if dot(farthest_front_dir, closest_front_dir) <= 0.5 {
+            offset = previous
+                + farthest_front_dir * min(farthest_front, min_frontface - closest_front);
+        }
+    } else if length(previous) > 0.0 {
+        // Clear of everything: back toward the grid position, staying clear.
+        let back = min(closest_front - min_frontface, length(previous));
+        offset = previous - normalize(previous) * back;
+    }
+    // A move beyond the limit is not made at all (clamping it would slide the probe
+    // along the limit from update to update).
+    if length(offset) > PROBE_MAX_OFFSET * spacing {
+        return previous;
+    }
+    return offset;
+}
+
+// The offset texel of `pixel` below the irradiance tiles (-1: none there).
+fn probe_offset_texel_probe(pixel : vec2<i32>) -> i32 {
+    let width = i32(max(light_probe_grid.atlas.x, 1u) * light_probe_grid.atlas.y);
+    let top = i32(light_probe_tile_rows() * light_probe_grid.atlas.y);
+    if pixel.y < top || pixel.x >= width {
+        return -1;
+    }
+    let probe = (pixel.y - top) * width + pixel.x;
+    return select(-1, probe, probe < i32(probe_count_total()));
+}
+
 @fragment
 fn fs_probe_irradiance(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
+    let offset_probe = probe_offset_texel_probe(pixel);
+    if offset_probe >= 0 {
+        if light_probe_grid.params.w < 0.5 || (probe_update.frame.z & PROBE_FLAG_RESET) != 0u {
+            return vec4<f32>(0.0);
+        }
+        let previous = textureLoad(light_probe_irradiance, pixel, 0);
+        let row = probe_update_row(u32(offset_probe));
+        if row < 0 || (probe_update.frame.z & PROBE_FLAG_RELOCATE) == 0u {
+            return previous;
+        }
+        return vec4<f32>(probe_relocated(previous.xyz, row), 0.0);
+    }
     let texel = probe_texel(pixel, light_probe_grid.atlas.y);
     if !texel.valid {
         return vec4<f32>(0.0);
@@ -202,21 +312,24 @@ fn fs_probe_irradiance(in : VertexOutput) -> @location(0) vec4<f32> {
         return previous;
     }
     let rays = probe_update.frame.w;
-    var sum = vec3<f32>(0.0);
-    var total = 0.0;
+    let fixed = probe_fixed_rays();
     var backfaces = 0u;
-    for (var ray = 0u; ray < rays; ray = ray + 1u) {
-        let sample = textureLoad(probe_rays, vec2<i32>(i32(ray), texel.row), 0);
-        if sample.a < 0.0 {
+    for (var ray = 0u; ray < fixed; ray = ray + 1u) {
+        if textureLoad(probe_rays, vec2<i32>(i32(ray), texel.row), 0).a < 0.0 {
             backfaces += 1u;
         }
-        let weight = max(dot(texel.direction, probe_ray_direction(ray, rays)), 0.0);
+    }
+    var sum = vec3<f32>(0.0);
+    var total = 0.0;
+    for (var ray = fixed; ray < rays; ray = ray + 1u) {
+        let sample = textureLoad(probe_rays, vec2<i32>(i32(ray), texel.row), 0);
+        let weight = max(dot(texel.direction, probe_ray_direction(ray)), 0.0);
         sum += sample.rgb * weight;
         total += weight;
     }
     let light = sum / max(total, 1e-4);
     // A probe seeing mostly backfaces is inside geometry: it gives nothing.
-    let open = select(1.0, 0.0, f32(backfaces) > probe_update.params.w * f32(rays));
+    let open = select(1.0, 0.0, f32(backfaces) > probe_update.params.w * f32(fixed));
     if (probe_update.frame.z & PROBE_FLAG_RESET) != 0u || previous.a != open {
         return vec4<f32>(light, open);
     }
@@ -238,9 +351,9 @@ fn fs_probe_distance(in : VertexOutput) -> @location(0) vec4<f32> {
     let max_distance = probe_update.params.y;
     var sum = vec2<f32>(0.0);
     var total = 0.0;
-    for (var ray = 0u; ray < rays; ray = ray + 1u) {
+    for (var ray = probe_fixed_rays(); ray < rays; ray = ray + 1u) {
         let sample = textureLoad(probe_rays, vec2<i32>(i32(ray), texel.row), 0);
-        let cosine = max(dot(texel.direction, probe_ray_direction(ray, rays)), 0.0);
+        let cosine = max(dot(texel.direction, probe_ray_direction(ray)), 0.0);
         // A sharp lobe: distances change quickly with direction near walls.
         let weight = pow(cosine, 50.0);
         let distance = min(abs(sample.a), max_distance);

@@ -22,15 +22,15 @@ use wgpu_cube::renderer::postprocess::{
     setting_overridden, AntiAliasing, ExposureMode, FocusMode, PostProcessSettings, Tonemapper,
     Upscaler, UpscalingSettings, TRACKBALL_NEUTRAL,
 };
-use wgpu_cube::renderer::Material;
+use wgpu_cube::renderer::{LightProbeBakeProgress, LightProbeDebugView, Material};
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
 use wgpu_cube::scene::{
     BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
-    EnvironmentComponent, MeshComponent, OptimizedBoidsBehaviorConfig, ParticleBehaviorConfig,
-    ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe, ParticleEmissionShape,
-    ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve, ParticleSizeKeyframe,
-    ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig, PointLight,
-    PostProcessVolume, SpotLight, StarfieldBehaviorConfig, Transform, VolumeShape,
+    EnvironmentComponent, LightProbeVolume, MeshComponent, OptimizedBoidsBehaviorConfig,
+    ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe,
+    ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange, ParticleSizeCurve,
+    ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig,
+    PointLight, PostProcessVolume, SpotLight, StarfieldBehaviorConfig, Transform, VolumeShape,
 };
 use wgpu_cube::scripting::{LuaScriptComponent, LuaScriptSource};
 use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInspectorData};
@@ -103,6 +103,12 @@ pub enum InspectorAction {
         entity: Entity,
         component: Box<PostProcessVolume>,
     },
+    UpdateLightProbeVolume {
+        entity: Entity,
+        component: LightProbeVolume,
+    },
+    /// Bake the active light probe volume, or show/hide the probes (renderer state).
+    LightProbes(LightProbeRequest),
     SetCanCastShadow {
         entity: Entity,
         casts_shadow: bool,
@@ -156,6 +162,9 @@ pub enum InspectorAction {
     AddPostProcessVolume {
         entity: Entity,
     },
+    AddLightProbeVolume {
+        entity: Entity,
+    },
     AddParticleSystem {
         entity: Entity,
     },
@@ -163,6 +172,65 @@ pub enum InspectorAction {
         entity: Entity,
         new_name: String,
     },
+}
+
+/// What the light probe section asks of the renderer.
+#[derive(Clone, Copy, Debug)]
+pub enum LightProbeRequest {
+    Bake(BakeQuality),
+    /// Draw the probes as spheres (`None`: don't).
+    SetDebug(Option<LightProbeDebugView>),
+}
+
+/// How long a light probe bake traces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BakeQuality {
+    /// A quick look: 8 warm-up and 32 averaged sweeps at 128 rays.
+    Preview,
+    /// For shipping: 32 warm-up and 256 averaged sweeps at 256 rays (as light_probes.bake).
+    #[default]
+    High,
+}
+
+impl BakeQuality {
+    pub const ALL: [Self; 2] = [Self::Preview, Self::High];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Preview => "Preview",
+            Self::High => "High",
+        }
+    }
+
+    /// Warm-up sweeps, averaged sweeps and rays per probe.
+    pub fn settings(self) -> (u32, u32, u32) {
+        match self {
+            Self::Preview => (8, 32, 128),
+            Self::High => (32, 256, 256),
+        }
+    }
+}
+
+/// The renderer's light probe state the inspector shows, refreshed every frame.
+#[derive(Clone, Debug, Default)]
+pub struct LightProbePanelStatus {
+    /// The volume the renderer uses (the first enabled one), and its grid.
+    pub active: Option<ActiveProbeGrid>,
+    /// Whether the probes can trace here (hardware ray tracing).
+    pub can_trace: bool,
+    /// The `.probes` file the grid shows, if loaded from one.
+    pub showing_bake: Option<String>,
+    pub bake: Option<LightProbeBakeProgress>,
+    pub debug: Option<LightProbeDebugView>,
+    /// Whether a project is open (bakes are saved into it).
+    pub project_open: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ActiveProbeGrid {
+    pub entity: Entity,
+    pub counts: [u32; 3],
+    pub spacing: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -175,6 +243,7 @@ pub fn show_entity_inspector(
     ui: &mut egui::Ui,
     data: &SceneEntityInspectorData,
     content_root: Option<&Path>,
+    light_probes: &LightProbePanelStatus,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
     let entity = data.entity;
@@ -238,6 +307,18 @@ pub fn show_entity_inspector(
         );
     }
 
+    if let Some(volume) = components.light_probe_volume.clone() {
+        let scale = components.transform.map(|t| t.scale).unwrap_or(Vec3::ONE);
+        let header =
+            show_light_probe_volume_section(ui, entity, volume, scale, light_probes, &mut actions);
+        removable(
+            &header,
+            entity,
+            RemovableComponent::LightProbeVolume,
+            &mut actions,
+        );
+    }
+
     if let Some(component) = components.particle_system.clone() {
         let header = show_particle_system_section(
             ui,
@@ -282,6 +363,7 @@ pub enum RemovableComponent {
     SpotLight,
     Environment,
     PostProcessVolume,
+    LightProbeVolume,
     ParticleSystem,
     Script,
 }
@@ -296,6 +378,7 @@ impl RemovableComponent {
             Self::SpotLight => "Spot Light",
             Self::Environment => "Environment",
             Self::PostProcessVolume => "Post Process Volume",
+            Self::LightProbeVolume => "Light Probe Volume",
             Self::ParticleSystem => "Particle System",
             Self::Script => "Script",
         }
@@ -381,6 +464,12 @@ fn add_component_menu(
         components.post_process_volume.is_none(),
         &format!("{}  Post Process Volume", icons::POST_PROCESS),
         InspectorAction::AddPostProcessVolume { entity },
+    );
+    add(
+        ui,
+        components.light_probe_volume.is_none(),
+        &format!("{}  Light Probe Volume", icons::LIGHT_PROBES),
+        InspectorAction::AddLightProbeVolume { entity },
     );
     add(
         ui,
@@ -1903,6 +1992,282 @@ fn show_environment_section(
             });
         }
     })
+}
+
+fn show_light_probe_volume_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    component: LightProbeVolume,
+    scale: Vec3,
+    status: &LightProbePanelStatus,
+    actions: &mut Vec<InspectorAction>,
+) -> egui::Response {
+    theme::section(ui, icons::LIGHT_PROBES, "Light Probe Volume", |ui| {
+        let mut edited = component.clone();
+        let mut changed = false;
+        let active = status.active.filter(|grid| grid.entity == entity);
+
+        Grid::new("light_probe_volume_grid")
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Enabled");
+                changed |= ui.checkbox(&mut edited.enabled, "").changed();
+                ui.end_row();
+
+                let mut size = Vec3::from(edited.size);
+                ui.label("Size");
+                ui.horizontal(|ui| {
+                    for axis in 0..3 {
+                        changed |= ui
+                            .add(
+                                DragValue::new(&mut size[axis])
+                                    .speed(0.05)
+                                    .range(0.1..=500.0)
+                                    .suffix(" m"),
+                            )
+                            .changed();
+                    }
+                });
+                ui.end_row();
+                edited.size = size.to_array();
+
+                changed |= float_drag_value(
+                    ui,
+                    "Spacing (m)",
+                    &mut edited.spacing,
+                    0.01,
+                    Some(0.05..=10.0),
+                );
+
+                // The grid in use, else as this volume would place it.
+                let (counts, spacing) = match active {
+                    Some(grid) => (grid.counts, grid.spacing),
+                    None => {
+                        let scale = scale.to_array();
+                        (edited.probe_counts(scale), edited.effective_spacing(scale))
+                    }
+                };
+                ui.label("Probes");
+                let total = counts[0] * counts[1] * counts[2];
+                let mut text = format!("{} × {} × {} = {total}", counts[0], counts[1], counts[2]);
+                if (spacing - edited.spacing).abs() > 1e-3 {
+                    text.push_str(&format!(
+                        "  (spacing {spacing:.2} m: at most {})",
+                        LightProbeVolume::MAX_PROBES
+                    ));
+                }
+                ui.label(theme::hint(text));
+                ui.end_row();
+
+                changed |= u32_drag_value(
+                    ui,
+                    "Rays per probe",
+                    &mut edited.rays_per_probe,
+                    1.0,
+                    Some(32..=256),
+                );
+                labeled_slider(
+                    ui,
+                    "Hysteresis",
+                    &mut edited.hysteresis,
+                    0.0..=0.995,
+                    0.005,
+                    &mut changed,
+                );
+                labeled_slider(
+                    ui,
+                    "Intensity",
+                    &mut edited.intensity,
+                    0.0..=4.0,
+                    0.01,
+                    &mut changed,
+                );
+
+                ui.label("Relocate probes");
+                changed |= ui
+                    .checkbox(&mut edited.relocate, "")
+                    .on_hover_text(
+                        "Move probes inside or right against geometry out of it (within 0.45 \
+                         spacing), so they light the room instead of giving nothing",
+                    )
+                    .changed();
+                ui.end_row();
+
+                ui.label("Show bake only");
+                changed |= ui
+                    .add_enabled(
+                        edited.baked.is_some(),
+                        egui::Checkbox::without_text(&mut edited.use_baked),
+                    )
+                    .on_hover_text("Light from the baked file even where the probes can trace")
+                    .changed();
+                ui.end_row();
+            });
+
+        if changed && edited != component {
+            actions.push(InspectorAction::UpdateLightProbeVolume {
+                entity,
+                component: edited.clone(),
+            });
+        }
+
+        ui.add_space(4.0);
+        ui.separator();
+        light_probe_bake_controls(ui, &edited, active.is_some(), status, actions);
+        ui.add_space(4.0);
+        ui.separator();
+        light_probe_debug_controls(ui, active.is_some(), status, actions);
+    })
+}
+
+fn light_probe_bake_controls(
+    ui: &mut egui::Ui,
+    volume: &LightProbeVolume,
+    active: bool,
+    status: &LightProbePanelStatus,
+    actions: &mut Vec<InspectorAction>,
+) {
+    let lit_by = if !active {
+        if volume.enabled {
+            "Not in use: another enabled volume comes first"
+        } else {
+            "Disabled"
+        }
+    } else if status.bake.is_some() {
+        "Baking"
+    } else if status.can_trace && !volume.use_baked {
+        "Live: ray traced every frame"
+    } else if status.showing_bake.is_some() {
+        "Lit by the bake"
+    } else if status.can_trace {
+        "No bake to show"
+    } else {
+        "No light: this GPU cannot trace the probes, and there is no bake"
+    };
+    ui.label(theme::hint(lit_by));
+    ui.horizontal(|ui| {
+        ui.label("Baked");
+        match &volume.baked {
+            Some(path) => {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                ui.monospace(name).on_hover_text(path)
+            }
+            None => ui.label(theme::hint("never")),
+        };
+    });
+
+    if let Some(progress) = status.bake.filter(|_| active) {
+        let total = progress.warmup_sweeps + progress.sweeps;
+        let done = progress.sweeps_done.min(total);
+        let text = if done < progress.warmup_sweeps {
+            format!("Warm-up {done}/{}", progress.warmup_sweeps)
+        } else {
+            format!(
+                "Averaging {}/{} ({} rays)",
+                done - progress.warmup_sweeps,
+                progress.sweeps,
+                progress.rays_per_probe
+            )
+        };
+        ui.add(
+            egui::ProgressBar::new(done as f32 / total.max(1) as f32)
+                .text(text)
+                .animate(true),
+        );
+        return;
+    }
+
+    let quality_id = ui.make_persistent_id("light_probe_bake_quality");
+    let mut quality: BakeQuality =
+        ui.data_mut(|data| data.get_temp(quality_id).unwrap_or_default());
+    let blocker = if !active {
+        Some("Only the volume in use can bake")
+    } else if !status.can_trace {
+        Some("Baking traces the probes: it needs hardware ray tracing")
+    } else if !status.project_open {
+        Some("Open a project to save the bake into")
+    } else {
+        None
+    };
+    ui.horizontal(|ui| {
+        ComboBox::from_id_salt("light_probe_bake_quality_combo")
+            .selected_text(quality.label())
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                for option in BakeQuality::ALL {
+                    let (warmup, sweeps, rays) = option.settings();
+                    ui.selectable_value(&mut quality, option, option.label())
+                        .on_hover_text(format!(
+                            "{warmup} warm-up + {sweeps} averaged sweeps, {rays} rays per probe"
+                        ));
+                }
+            });
+        let button = ui
+            .add_enabled(
+                blocker.is_none(),
+                theme::primary_button(format!("{}  Bake", icons::LIGHT_PROBES)),
+            )
+            .on_hover_text(
+                "Trace the probes at bake quality over the next frames and save them to \
+                 content/lighting/<volume>.probes (used where the probes cannot trace, e.g. \
+                 the web); save the project afterwards",
+            );
+        let button = match blocker {
+            Some(reason) => button.on_disabled_hover_text(reason),
+            None => button,
+        };
+        if button.clicked() {
+            actions.push(InspectorAction::LightProbes(LightProbeRequest::Bake(
+                quality,
+            )));
+        }
+    });
+    ui.data_mut(|data| data.insert_temp(quality_id, quality));
+}
+
+fn light_probe_debug_controls(
+    ui: &mut egui::Ui,
+    active: bool,
+    status: &LightProbePanelStatus,
+    actions: &mut Vec<InspectorAction>,
+) {
+    let mut show = status.debug.is_some();
+    let mut view = status.debug.unwrap_or_default();
+    let mut changed = ui
+        .add_enabled(active, egui::Checkbox::new(&mut show, "Show probes"))
+        .on_hover_text(
+            "A sphere per probe, lit by the light it holds from each direction. Dark red: \
+             inside geometry (gives nothing); yellow rim: moved out of geometry",
+        )
+        .changed();
+    if show {
+        Grid::new("light_probe_debug_grid")
+            .num_columns(2)
+            .show(ui, |ui| {
+                labeled_slider(
+                    ui,
+                    "Radius (m)",
+                    &mut view.radius,
+                    0.01..=0.5,
+                    0.005,
+                    &mut changed,
+                );
+                labeled_slider(
+                    ui,
+                    "Exposure",
+                    &mut view.exposure,
+                    0.0..=16.0,
+                    0.05,
+                    &mut changed,
+                );
+            });
+    }
+    if changed {
+        actions.push(InspectorAction::LightProbes(LightProbeRequest::SetDebug(
+            show.then_some(view),
+        )));
+    }
 }
 
 fn show_point_light_section(

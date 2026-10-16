@@ -6,6 +6,7 @@ mod camera_system;
 mod core;
 mod history_system;
 mod input;
+mod light_probe_system;
 mod particle_system;
 mod picking;
 mod project_system;
@@ -74,9 +75,10 @@ use wgpu_cube::scene::components::{
 use wgpu_cube::scene::workspace::SceneDocumentId;
 use wgpu_cube::scene::{
     CameraComponent, CanCastShadow, DirectionalLight, EntityBuilder, EnvironmentComponent,
-    MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, PostProcessVolume, Scene, SceneNodeId, ScenePrefabOverrides, ScenePrefabRef,
-    SceneTreeAsset, SceneTreeAssetNode, SceneWorkspaceSceneMut, SpotLight, Transform,
+    LightProbeVolume, MeshBounds, ParticleBehaviorPreset, ParticleEmitterComponent,
+    ParticleSystemComponent, PointLight, PostProcessVolume, Scene, SceneNodeId,
+    ScenePrefabOverrides, ScenePrefabRef, SceneTreeAsset, SceneTreeAssetNode,
+    SceneWorkspaceSceneMut, SpotLight, Transform,
 };
 use wgpu_cube::scripting::lua::api::ui::{merge_ui_responses, UiCommand, UiResponse};
 use wgpu_cube::scripting::LuaScriptingPlugin;
@@ -467,6 +469,7 @@ impl EditorApplication {
             let scene_viewport = &mut shared.viewports.scene_viewport;
             let game_viewport = &mut shared.viewports.game_viewport;
             let workspace_info = scene_hierarchy_window.workspace_info();
+            let light_probe_status = &shared.light_probe_status;
 
             egui::CentralPanel::default_margins()
                 .frame(transparent_frame)
@@ -475,6 +478,7 @@ impl EditorApplication {
                         crate::layout::show_fullscreen_viewport(ui, game_viewport);
                     } else {
                         let mut behavior = EditorBehavior {
+                            light_probe_status,
                             scene_viewport,
                             game_viewport,
                             scene_hierarchy: scene_hierarchy_window,
@@ -1364,6 +1368,22 @@ impl EditorApplication {
         };
         let entity = EntityBuilder::new(&mut ctx.scene)
             .with_name("Post Process Volume")
+            .with_component(volume)
+            .spawn();
+        Some(entity)
+    }
+
+    /// A volume of the default size, standing on the ground at the origin.
+    pub(super) fn create_light_probe_volume(ctx: &mut GpuUpdateContext) -> Option<Entity> {
+        let volume = LightProbeVolume::default();
+        let transform = Transform::from_trs(
+            Vec3::new(0.0, volume.size[1] * 0.5, 0.0),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        );
+        let entity = EntityBuilder::new(&mut ctx.scene)
+            .with_name("Light Probes")
+            .with_transform(transform)
             .with_component(volume)
             .spawn();
         Some(entity)

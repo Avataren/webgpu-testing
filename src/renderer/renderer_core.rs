@@ -210,6 +210,10 @@ pub struct Renderer {
     gpu_timer: crate::renderer::gpu_timer::GpuTimer,
     /// Screen-space gizmo shapes drawn over the editor overlays.
     gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer,
+    /// The light probe debug view, drawn with the editor overlays.
+    light_probe_debug: crate::renderer::light_probe_debug::LightProbeDebugStage,
+    /// How the last light probe bake ended, as the app reported it.
+    light_probe_bake_outcome: Option<crate::renderer::LightProbeBakeOutcome>,
 
     // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
@@ -390,6 +394,8 @@ impl Renderer {
             lights_group_shared: std::cell::Cell::new(false),
             gpu_timer,
             gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer::new(),
+            light_probe_debug: crate::renderer::light_probe_debug::LightProbeDebugStage::new(),
+            light_probe_bake_outcome: None,
             camera_position: Vec3::ZERO,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
@@ -1694,6 +1700,30 @@ impl Renderer {
         self.light_probes.can_trace()
     }
 
+    /// Record how the last light probe bake ended (the app saves it): the project path of
+    /// the saved file, or what went wrong.
+    pub fn set_light_probe_bake_outcome(&mut self, result: Result<String, String>) {
+        let serial = self
+            .light_probe_bake_outcome
+            .as_ref()
+            .map_or(1, |outcome| outcome.serial + 1);
+        self.light_probe_bake_outcome =
+            Some(crate::renderer::LightProbeBakeOutcome { serial, result });
+    }
+
+    pub fn light_probe_bake_outcome(&self) -> Option<&crate::renderer::LightProbeBakeOutcome> {
+        self.light_probe_bake_outcome.as_ref()
+    }
+
+    /// Draw the light probes as spheres over the image (`None`: don't).
+    pub fn set_light_probe_debug(&mut self, view: Option<crate::renderer::LightProbeDebugView>) {
+        self.light_probe_debug.set_view(view);
+    }
+
+    pub fn light_probe_debug(&self) -> Option<crate::renderer::LightProbeDebugView> {
+        self.light_probe_debug.view()
+    }
+
     fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> TracedLighting {
         let Some(rt_scene) = self.ray_tracing.as_ref() else {
             return TracedLighting::Raster;
@@ -1791,6 +1821,34 @@ impl Renderer {
         );
         frame.stats.overlay_draw_calls += overlay_draw_calls;
 
+        let viewport = match render_region {
+            Some(region) => (
+                region.x() as f32,
+                region.y() as f32,
+                region.width() as f32,
+                region.height() as f32,
+            ),
+            None => (
+                0.0,
+                0.0,
+                self.context.config.width as f32,
+                self.context.config.height as f32,
+            ),
+        };
+        frame.stats.overlay_draw_calls += self.light_probe_debug.render(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            &self.light_probes,
+            &surface_view,
+            surface_format,
+            &depth_view,
+            self.context.depth.format,
+            &self.camera_buffer.bind_layout,
+            &self.camera_buffer.stable_bind_group,
+            viewport,
+        );
+
         let prepared_batches = &frame.prepared_batches;
         let materials = prepared_batches.materials();
         let material_handles = prepared_batches.material_handles();
@@ -1822,20 +1880,6 @@ impl Renderer {
             surface_format,
             "GizmoSolidPass",
         );
-        let viewport = match render_region {
-            Some(region) => (
-                region.x() as f32,
-                region.y() as f32,
-                region.width() as f32,
-                region.height() as f32,
-            ),
-            None => (
-                0.0,
-                0.0,
-                self.context.config.width as f32,
-                self.context.config.height as f32,
-            ),
-        };
         let shape_draws = self.gizmo_shapes.render(
             &self.context.device,
             &self.context.queue,

@@ -243,6 +243,10 @@ pub struct LightProbeVolume {
     pub baked: Option<String>,
     /// Show the baked data even where the probes could trace (to check a bake).
     pub use_baked: bool,
+    /// Move probes that sit inside or right against geometry out of it, within a little
+    /// under half a spacing of their grid positions (they then light the room instead of
+    /// giving nothing or leaking).
+    pub relocate: bool,
 }
 
 impl Default for LightProbeVolume {
@@ -256,6 +260,7 @@ impl Default for LightProbeVolume {
             intensity: 1.0,
             baked: None,
             use_baked: false,
+            relocate: true,
         }
     }
 }

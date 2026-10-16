@@ -6,7 +6,7 @@ use wgpu_cube::renderer::Material;
 use wgpu_cube::scene::components::PrimitiveMeshComponent;
 use wgpu_cube::scene::{
     blend_post_process_volumes, CameraComponent, DirectionalLight, EnvironmentComponent,
-    MaterialComponent, MeshBounds, MeshComponent, ParticleEmitterComponent,
+    LightProbeVolume, MaterialComponent, MeshBounds, MeshComponent, ParticleEmitterComponent,
     ParticleSystemComponent, PointLight, PostProcessVolume, SpotLight,
 };
 use wgpu_cube::scripting::LuaScriptComponent;
@@ -190,6 +190,22 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
     ActionResult::scene_changed()
 }
 
+/// Handle AddLightProbeVolume action: a volume of the default size around the entity.
+pub fn handle_add_light_probe_volume(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
+    let world = ctx.scene.main_world_mut();
+    if world.get::<&LightProbeVolume>(entity).is_ok() {
+        log::warn!("Entity {entity:?} already has a light probe volume");
+        return ActionResult::no_change();
+    }
+    match world.insert_one(entity, LightProbeVolume::default()) {
+        Ok(()) => ActionResult::scene_changed(),
+        Err(err) => {
+            log::warn!("Failed to add a light probe volume to {entity:?}: {err}");
+            ActionResult::no_change()
+        }
+    }
+}
+
 /// Handle AddPostProcessVolume action: an infinite volume holding the settings in effect
 /// now, so the picture does not change until it is edited.
 pub fn handle_add_post_process_volume(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
@@ -270,6 +286,7 @@ pub fn handle_remove_component(
         RemovableComponent::SpotLight => remove::<SpotLight>(world, entity),
         RemovableComponent::Environment => remove::<EnvironmentComponent>(world, entity),
         RemovableComponent::PostProcessVolume => remove::<PostProcessVolume>(world, entity),
+        RemovableComponent::LightProbeVolume => remove::<LightProbeVolume>(world, entity),
         RemovableComponent::ParticleSystem => {
             let removed = remove::<ParticleSystemComponent>(world, entity);
             remove::<ParticleEmitterComponent>(world, entity);

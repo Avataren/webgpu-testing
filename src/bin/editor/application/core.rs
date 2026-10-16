@@ -18,6 +18,7 @@ use wgpu_cube::{
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
+use super::light_probe_system::LightProbeSystem;
 use super::particle_system::EditorParticleSystem;
 use super::project_system::ProjectSystem;
 use super::scene_creation_system::SceneCreationSystem;
@@ -149,6 +150,10 @@ pub struct EditorSharedState {
     pub(super) plugin_window_sizes: HashMap<Entity, (f32, f32, f32)>,
     /// Last known egui pixels-per-point (recorded during UI rendering)
     pub(super) last_pixels_per_point: Option<f32>,
+    /// The renderer's light probe state for the inspector (LightProbeSystem).
+    pub(super) light_probe_status: crate::inspector::LightProbePanelStatus,
+    /// Inspector requests for the renderer's light probes, carried out on the GPU update.
+    pub(super) light_probe_requests: Vec<crate::inspector::LightProbeRequest>,
 }
 
 impl EditorSharedState {
@@ -361,6 +366,7 @@ impl EditorApplicationBuilder {
             index
         };
         systems.push(Box::new(SceneCreationSystem));
+        systems.push(Box::new(LightProbeSystem::default()));
         let particle_system_index = {
             let system = EditorParticleSystem::default();
             let index = systems.len();
@@ -402,6 +408,8 @@ impl EditorApplicationBuilder {
             reload_notifications: Vec::new(),
             last_pixels_per_point: None,
             plugin_window_sizes: HashMap::new(),
+            light_probe_status: Default::default(),
+            light_probe_requests: Vec::new(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -586,6 +594,13 @@ impl EditorApplication {
         let (selected, highlighted) = self.selection_entities();
         self.history_system_mut()
             .initialize_state(scene, selected, highlighted);
+    }
+
+    pub(super) fn queue_light_probe_request(
+        &mut self,
+        request: crate::inspector::LightProbeRequest,
+    ) {
+        self.shared.light_probe_requests.push(request);
     }
 
     pub(super) fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {

@@ -27,7 +27,9 @@ differences; exposure is the study's (auto plus local exposure).
 
 The "Light Probes" volume fills the room with a 0.5 m grid of light probes, which give
 raster lighting its bounced light (live with ray tracing; from
-`content/lighting/light_probes.probes` on the web). Bake that again (`light_probes_bake`)
-after changing the room or its lights.
+`content/lighting/light_probes.probes` on the web). The grid's outer layer sits in the
+walls, floor and ceiling; relocation moves those probes into the room where it can. Bake
+again (the volume's Bake button in the inspector, or `light_probes_bake`) after changing the
+room or its lights; Show probes in the same section draws them.
 
 The room's assets are copies of the study's, so this project can change independently.

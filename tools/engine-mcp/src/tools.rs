@@ -216,7 +216,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "particle_emitter": { "type": ["object", "null"], "description": "Particle emitter settings as entity_get shows them, or null" },
         "environment": { "type": ["object", "null"], "description": "Environment component (see environment_get for fields), or null" },
         "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, overrides: [setting paths] or null for all, settings: {...as postprocess_set}}. A volume spawned into a scene that already has one overrides only the settings given. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
-        "light_probe_volume": { "type": ["object", "null"], "description": "Light probe grid for indirect diffuse light (GI), or null to remove: {enabled, size: [x,y,z] box in metres centred on the entity (scales with it, rotation ignored), spacing (m, default 0.5), rays_per_probe (32-256, default 128), hysteresis (0-0.995, default 0.97), intensity}. Surfaces inside take their diffuse ambient from the probes, which see walls, so sky light enters only through openings. Probes update by ray tracing each frame (needs capabilities.ray_tracing); fit the box to the room or level. Inspect with texture_fetch probes.irradiance / probes.distance. Only given fields change." },
+        "light_probe_volume": { "type": ["object", "null"], "description": "Light probe grid for indirect diffuse light (GI), or null to remove: {enabled, size: [x,y,z] box in metres centred on the entity (scales with it, rotation ignored), spacing (m, default 0.5), rays_per_probe (32-256, default 128), hysteresis (0-0.995, default 0.97), intensity, relocate (default true: probes inside or against geometry move out of it, within 0.45 spacing), use_baked}. Surfaces inside take their diffuse ambient from the probes, which see walls, so sky light enters only through openings. Probes update by ray tracing each frame (needs capabilities.ray_tracing); fit the box to the room or level. Inspect with texture_fetch probes.irradiance / probes.distance. Only given fields change." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -731,6 +731,16 @@ pub fn tools() -> Vec<Tool> {
             description: "The scene's light probe volume (probe counts, spacing, live or baked), whether the probes can trace here, the baked file they show, and a running bake's progress.",
             schema: empty(),
             action: Action::Engine("light_probes.status"),
+        },
+        Tool {
+            name: "light_probes_debug",
+            description: "Show or hide the light probe debug view: a sphere at every probe of the scene's light probe volume (where relocation moved it), lit by the light the probe holds from each direction. Dark red: inside geometry (gives nothing); yellow rim: moved out of geometry. Drawn over the image in the editor and player until hidden; screenshot to see it.",
+            schema: object(json!({
+                "show": { "type": "boolean", "description": "Default true; false hides it" },
+                "radius": { "type": "number", "description": "Sphere radius in meters (default 0.06; kept until changed)" },
+                "exposure": { "type": "number", "description": "Factor on the light shown before a simple tone curve (default 3)" }
+            }), &[]),
+            action: Action::Engine("light_probes.debug"),
         },
         Tool {
             name: "graphics_get",
