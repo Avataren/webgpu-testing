@@ -38,6 +38,8 @@ impl RenderBridge {
             None
         };
         let mut selected_transform: Option<Transform> = None;
+        // Outlines of selected light probe volumes, under the transform gizmo.
+        let mut volume_shapes = Vec::new();
 
         for (node_key, node) in scene.nodes_with_keys() {
             let world = node.instance().world();
@@ -71,6 +73,13 @@ impl RenderBridge {
                 }
             }
 
+            if gizmos_enabled {
+                volume_shapes.extend(crate::scene::light_probes::selected_volume_gizmos(
+                    world,
+                    world_transform,
+                ));
+            }
+
             if gizmos_enabled && selected_transform.is_none() {
                 if let Some((_, (entity_world, _))) = world
                     .query::<(&WorldTransform, &SelectedInEditor)>()
@@ -89,16 +98,16 @@ impl RenderBridge {
 
         // Picking between frames must see the gizmo at the size it was drawn.
         scene.set_gizmo_viewport_height(camera_vectors.viewport_height);
-        let gizmo_shapes = match selected_transform.filter(|_| gizmos_enabled) {
-            Some(selection_transform) => transform_gizmos::build_transform_gizmos(
+        let mut gizmo_shapes = volume_shapes;
+        if let Some(selection_transform) = selected_transform.filter(|_| gizmos_enabled) {
+            gizmo_shapes.extend(transform_gizmos::build_transform_gizmos(
                 camera_vectors,
                 selection_transform,
                 scene.transform_gizmo_mode(),
                 scene.transform_gizmo_space(),
                 scene.transform_gizmo_hover(),
-            ),
-            None => Vec::new(),
-        };
+            ));
+        }
         renderer.set_gizmo_shapes(gizmo_shapes);
 
         let mut lights_data = LightsData::default();
