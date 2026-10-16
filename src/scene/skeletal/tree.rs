@@ -984,6 +984,36 @@ impl LocomotionClips {
             )),
             land: name(find_clip(clips, &["land", "landing"], &["land"], &[])),
         }
+        .with_air_loop(clips)
+    }
+
+    /// Packs without a "fall" clip often loop the air pose as "Jump Loop" or "Jump
+    /// Idle": that one falls, and the jump is the take-off ("Jump Start").
+    fn with_air_loop(mut self, clips: &[ClipInfo]) -> Self {
+        let in_air = |k: &str| ["loop", "air", "idle"].iter().any(|word| k.contains(word));
+        if self.fall.is_none() {
+            self.fall = clips
+                .iter()
+                .find(|clip| {
+                    let k = key(&clip.name);
+                    k.contains("jump") && in_air(&k)
+                })
+                .map(|clip| clip.name.clone());
+        }
+        if self.jump.is_some() && self.jump == self.fall {
+            self.jump = clips
+                .iter()
+                .find(|clip| {
+                    let k = key(&clip.name);
+                    k.contains("jump")
+                        && !in_air(&k)
+                        && !["land", "fall", "run", "down", "over"]
+                            .iter()
+                            .any(|word| k.contains(word))
+                })
+                .map(|clip| clip.name.clone());
+        }
+        self
     }
 }
 
@@ -1312,6 +1342,24 @@ mod tests {
         let walk = points.iter().find(|p| p.clip == "Walking").unwrap();
         assert!((walk.at[1] - 1.35).abs() < 1e-5);
         assert_eq!(points.len(), 6);
+    }
+
+    #[test]
+    fn an_air_loop_falls_and_the_take_off_jumps() {
+        let clips: Vec<ClipInfo> = [
+            "Idle Loop",
+            "Jump Land",
+            "Jump Loop",
+            "Jump Start",
+            "Walk Loop",
+        ]
+        .iter()
+        .map(|name| info(name, 1.0, 0.0))
+        .collect();
+        let found = LocomotionClips::find(&clips);
+        assert_eq!(found.jump.as_deref(), Some("Jump Start"));
+        assert_eq!(found.fall.as_deref(), Some("Jump Loop"));
+        assert_eq!(found.land.as_deref(), Some("Jump Land"));
     }
 
     #[test]

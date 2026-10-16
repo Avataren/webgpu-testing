@@ -20,7 +20,8 @@ pub use animator::{
     MAX_LAYERS,
 };
 pub use clip::{
-    node_name, normalize_bone_name, skeleton_facing, BoneRest, BoneTrack, ClipLibrary, SkeletalClip,
+    humanoid_key, node_name, normalize_bone_name, skeleton_facing, BoneRest, BoneTrack,
+    ClipLibrary, SkeletalClip,
 };
 pub use skin::{skeleton_segments, SkinnedMesh, MAX_JOINTS};
 pub use tree::{

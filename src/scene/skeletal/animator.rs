@@ -36,7 +36,7 @@ use glam::{Mat4, Quat, Vec3};
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 
-use super::clip::{normalize_bone_name, skeleton_facing, ClipLibrary, SkeletalClip};
+use super::clip::{humanoid_key, normalize_bone_name, skeleton_facing, ClipLibrary, SkeletalClip};
 use crate::asset::Assets;
 use crate::scene::components::{
     Children, GltfSource, Name, Parent, TransformComponent, WorldTransform,
@@ -836,6 +836,17 @@ impl Binding {
             })
             .unwrap_or_default();
 
+        // The skeleton's bones by humanoid role, for clips from rigs named otherwise.
+        let mut roles: HashMap<String, (Entity, u32)> = HashMap::new();
+        for (key, &(bone, depth)) in &skeleton {
+            if let Some(role) = humanoid_key(key) {
+                let entry = roles.entry(role).or_insert((bone, depth));
+                if depth < entry.1 {
+                    *entry = (bone, depth);
+                }
+            }
+        }
+
         let libraries: Vec<(PathBuf, Arc<ClipLibrary>)> = animator
             .libraries
             .iter()
@@ -867,7 +878,12 @@ impl Binding {
         // Which way the skeleton faces in its file, to line clips from files facing
         // elsewhere up with it.
         let facing = match &model {
-            Some(model) => skeleton_facing(|key| model.rest.get(key).map(|rest| rest.position)),
+            Some(model) => skeleton_facing(
+                model
+                    .rest
+                    .iter()
+                    .map(|(key, rest)| (key.clone(), rest.position)),
+            ),
             None => {
                 let frame = file_frame(world, entity);
                 let rest_of = |bone: Entity| {
@@ -878,23 +894,32 @@ impl Binding {
                             .unwrap_or_default()
                     })
                 };
-                skeleton_facing(|key| {
-                    let &(bone, _) = skeleton.get(key)?;
-                    Some(frame.transform_point3(rest_position(world, bone, entity, &rest_of)))
-                })
+                skeleton_facing(skeleton.iter().map(|(key, &(bone, _))| {
+                    let position = rest_position(world, bone, entity, &rest_of);
+                    (key.clone(), frame.transform_point3(position))
+                }))
             }
         };
 
         for (path, library) in &libraries {
             let align = align_facing(
                 facing,
-                skeleton_facing(|key| library.rest.get(key).map(|rest| rest.position)),
+                skeleton_facing(
+                    library
+                        .rest
+                        .iter()
+                        .map(|(key, rest)| (key.clone(), rest.position)),
+                ),
             );
             for clip in &library.clips {
                 let mut tracks = Vec::new();
                 let mut missing = Vec::new();
                 for (track_index, track) in clip.tracks.iter().enumerate() {
-                    let Some(&(bone, depth)) = skeleton.get(&track.key) else {
+                    // By name, else by humanoid role (another rig's naming).
+                    let found = skeleton
+                        .get(&track.key)
+                        .or_else(|| humanoid_key(&track.key).and_then(|role| roles.get(&role)));
+                    let Some(&(bone, depth)) = found else {
                         missing.push(track.bone.clone());
                         continue;
                     };
@@ -1053,16 +1078,17 @@ impl Binding {
                 let Some((source_parent, source_rest)) = bound.source_rest else {
                     continue;
                 };
-                let key = &clip.clip.tracks[bound.track].key;
-                let (target_parent, target_rest) = match model.and_then(|model| model.rest.get(key))
-                {
-                    Some(rest) => (rest.parent_rotation, rest.transform.rotation),
-                    None => {
-                        let (_, chain, _) =
-                            self.parent_to_animator[bound.slot].to_scale_rotation_translation();
-                        ((above * chain).normalize(), self.rest[bound.slot].rotation)
-                    }
-                };
+                // The skeleton's rest, under the skeleton's own name for the bone.
+                let key = name_key(world, self.bones[bound.slot]).unwrap_or_default();
+                let (target_parent, target_rest) =
+                    match model.and_then(|model| model.rest.get(&key)) {
+                        Some(rest) => (rest.parent_rotation, rest.transform.rotation),
+                        None => {
+                            let (_, chain, _) =
+                                self.parent_to_animator[bound.slot].to_scale_rotation_translation();
+                            ((above * chain).normalize(), self.rest[bound.slot].rotation)
+                        }
+                    };
                 let pre = (target_parent.inverse() * align.inverse() * source_parent).normalize();
                 let post = ((source_parent * source_rest).inverse()
                     * align
@@ -1909,6 +1935,42 @@ mod tests {
             hips.rotation.abs_diff_eq(lean.inverse(), 1e-4),
             "{:?}",
             hips.rotation
+        );
+    }
+
+    #[test]
+    fn clips_from_rigs_named_otherwise_bind_by_humanoid_role() {
+        // An Unreal-style clip (pelvis, spine_01, upperarm_l) on the Mixamo-named rig.
+        let key = Quat::from_rotation_y(0.4);
+        let mut pelvis = BoneTrack::new("pelvis");
+        pelvis.rotation = Some(linear_quat(&[0.0, 1.0], &[key, key]));
+        let mut spine = BoneTrack::new("spine_01");
+        spine.rotation = Some(linear_quat(&[0.0, 1.0], &[key, key]));
+        let root = BoneTrack::new("root");
+        let library = ClipLibrary {
+            source: PathBuf::from("ue.glb"),
+            clips: vec![Arc::new(SkeletalClip::new(
+                "Turn",
+                vec![pelvis, spine, root],
+            ))],
+            rest: HashMap::new(),
+        };
+        let mut assets = Assets::new();
+        assets.insert_clip_library("ue.glb", library);
+        let mut rig = rig(1.0);
+        let animator = Animator {
+            default_clip: Some("Turn".into()),
+            ..Animator::with_library("ue.glb")
+        };
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        assert!(local(&rig.world, rig.hips).rotation.abs_diff_eq(key, 1e-4));
+        assert!(local(&rig.world, rig.spine).rotation.abs_diff_eq(key, 1e-4));
+        let animator = rig.world.get::<&Animator>(rig.root).unwrap();
+        let clip = &animator.clips()[0];
+        assert_eq!(
+            (clip.bound, clip.missing.clone()),
+            (2, vec!["root".to_string()])
         );
     }
 

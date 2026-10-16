@@ -97,26 +97,114 @@ pub struct BoneRest {
 }
 
 /// Which way a skeleton faces at rest (a horizontal unit vector, Y up), from where its
-/// left and right legs (or shoulders, arms, feet) sit; `position` gives a bone's rest
-/// position by normalized name. `None` without such a pair.
-pub fn skeleton_facing(position: impl Fn(&str) -> Option<Vec3>) -> Option<Vec3> {
-    const PAIRS: [(&str, &str); 8] = [
+/// left and right legs (or shoulders, arms, feet) sit. `positions` gives the rest position
+/// of bones by normalized name; any naming [`humanoid_key`] knows works. `None` without
+/// such a pair.
+pub fn skeleton_facing(positions: impl IntoIterator<Item = (String, Vec3)>) -> Option<Vec3> {
+    let by_role: HashMap<String, Vec3> = positions
+        .into_iter()
+        .filter_map(|(name, position)| Some((humanoid_key(&name)?, position)))
+        .collect();
+    const PAIRS: [(&str, &str); 4] = [
         ("leftupleg", "rightupleg"),
-        ("leftthigh", "rightthigh"),
-        ("thigh.l", "thigh.r"),
-        ("thigh_l", "thigh_r"),
         ("leftshoulder", "rightshoulder"),
         ("leftarm", "rightarm"),
-        ("upperarm.l", "upperarm.r"),
         ("leftfoot", "rightfoot"),
     ];
     PAIRS.iter().find_map(|(left, right)| {
-        let lateral = position(left)? - position(right)?;
+        let lateral = *by_role.get(*left)? - *by_role.get(*right)?;
         // Facing +Z with Y up, the left side is +X.
         let forward = lateral.cross(Vec3::Y);
         let forward = Vec3::new(forward.x, 0.0, forward.z);
         (forward.length() > 1e-5).then(|| forward.normalize())
     })
+}
+
+/// The humanoid role of a bone (Mixamo's names, normalized: `hips`, `spine2`, `leftarm`,
+/// `rightupleg`, `lefthandindex1`, ...) from the names other rigs give it: Unreal's
+/// mannequin (`pelvis`, `spine_01`, `upperarm_l`, `calf_r`, `index_01_l`), Rigify
+/// (`DEF-hips`, `DEF-spine.003`, `DEF-upper_arm.L`, `DEF-f_index.01.L`) and Blender's
+/// `.L`/`_L` conventions. `name` is already [`normalize_bone_name`]d. `None` for bones
+/// without a humanoid role (Unreal's `root`, twist and IK bones, props).
+///
+/// Clips bind by name first; a track whose name the skeleton lacks binds to the bone
+/// with the same role, so Quaternius or Unreal-style clips drive Mixamo characters and
+/// the other way round.
+///
+/// ```
+/// use wgpu_cube::scene::skeletal::humanoid_key;
+/// assert_eq!(humanoid_key("upperarm_l").as_deref(), Some("leftarm"));
+/// assert_eq!(humanoid_key("def-shin.r").as_deref(), Some("rightleg"));
+/// assert_eq!(humanoid_key("leftforearm").as_deref(), Some("leftforearm"));
+/// assert_eq!(humanoid_key("root"), None);
+/// ```
+pub fn humanoid_key(name: &str) -> Option<String> {
+    const CENTRE: [&str; 6] = ["hips", "spine", "spine1", "spine2", "neck", "head"];
+    const LIMBS: [&str; 8] = [
+        "shoulder", "arm", "forearm", "hand", "upleg", "leg", "foot", "toebase",
+    ];
+    const FINGERS: [&str; 5] = ["thumb", "index", "middle", "ring", "pinky"];
+    let name = name.strip_prefix("def-").unwrap_or(name);
+    if CENTRE.contains(&name) {
+        return Some(name.to_string());
+    }
+    // Already Mixamo-style ("leftarm", "righthandindex2").
+    for side in ["left", "right"] {
+        if let Some(rest) = name.strip_prefix(side) {
+            let finger = rest.strip_prefix("hand").and_then(|finger| {
+                let digits = finger.trim_start_matches(|c: char| c.is_ascii_alphabetic());
+                let base = &finger[..finger.len() - digits.len()];
+                (FINGERS.contains(&base) && digits.len() == 1).then_some(())
+            });
+            if LIMBS.contains(&rest) || finger.is_some() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    let centre = match name {
+        "pelvis" => Some("hips"),
+        "spine_01" | "spine.001" => Some("spine"),
+        "spine_02" | "spine.002" => Some("spine1"),
+        "spine_03" | "spine.003" => Some("spine2"),
+        "neck_01" => Some("neck"),
+        _ => None,
+    };
+    if let Some(centre) = centre {
+        return Some(centre.to_string());
+    }
+    // A side marker at the end: ".l", "_l", ".left", "_left".
+    let (base, side) = [
+        (".l", "left"),
+        ("_l", "left"),
+        (".r", "right"),
+        ("_r", "right"),
+        (".left", "left"),
+        ("_left", "left"),
+        (".right", "right"),
+        ("_right", "right"),
+    ]
+    .iter()
+    .find_map(|(suffix, side)| Some((name.strip_suffix(suffix)?, *side)))?;
+    let limb = match base {
+        "shoulder" | "clavicle" => Some("shoulder"),
+        "upper_arm" | "upperarm" | "arm" => Some("arm"),
+        "forearm" | "lowerarm" | "lower_arm" => Some("forearm"),
+        "hand" => Some("hand"),
+        "thigh" | "upleg" | "upper_leg" => Some("upleg"),
+        "shin" | "calf" | "lowerleg" | "lower_leg" | "leg" => Some("leg"),
+        "foot" => Some("foot"),
+        "toe" | "toes" | "ball" | "toebase" => Some("toebase"),
+        _ => None,
+    };
+    if let Some(limb) = limb {
+        return Some(format!("{side}{limb}"));
+    }
+    // Fingers: "index_01", "f_index.01", "thumb.02" -> "handindex1".
+    let finger = base.strip_prefix("f_").unwrap_or(base);
+    let (finger, number) = finger.rsplit_once(['_', '.'])?;
+    let number: u32 = number.parse().ok()?;
+    (FINGERS.contains(&finger) && (1..=3).contains(&number))
+        .then(|| format!("{side}hand{finger}{number}"))
 }
 
 /// The clips of one glTF/GLB file, and the rest pose of that file's nodes (used to
