@@ -1,4 +1,4 @@
-use crate::project::{normalize_absolute_path, resolve_project_path};
+use crate::project::normalize_absolute_path;
 use crate::scene::assets::{SceneAsset, SceneMaterialHandle};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -98,14 +98,32 @@ impl GltfMaterialRegistry {
     }
 }
 
+/// The absolute path of a glTF source, relative ones taken from `project_root`: the
+/// project the asset belongs to, which need not be the active one (opening a project
+/// persists its scenes before the active root moves to it, and the global root then
+/// sent their import metadata into the previous project).
 fn normalize_gltf_source(source: &Path, project_root: &Path) -> PathBuf {
-    let resolved = resolve_project_path(source);
-    let canonical = if resolved.is_absolute() {
-        std::fs::canonicalize(&resolved).unwrap_or(resolved)
+    let combined = if source.is_absolute() {
+        source.to_path_buf()
     } else {
-        let combined = project_root.join(&resolved);
-        std::fs::canonicalize(&combined).unwrap_or(combined)
+        project_root.join(source)
     };
-
+    let canonical = std::fs::canonicalize(&combined).unwrap_or(combined);
     normalize_absolute_path(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sources_resolve_against_the_assets_own_project() {
+        let root = Path::new("/projects/character-test");
+        assert_eq!(
+            normalize_gltf_source(Path::new("content/gltf/Soldier/Soldier.glb.import"), root),
+            PathBuf::from("/projects/character-test/content/gltf/Soldier/Soldier.glb.import")
+        );
+        let absolute = Path::new("/elsewhere/robot.glb");
+        assert_eq!(normalize_gltf_source(absolute, root), absolute);
+    }
 }
