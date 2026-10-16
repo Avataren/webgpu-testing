@@ -237,7 +237,25 @@ to flicker, especially at a distant horizon.
   <project>/content/environment/*.hdr
   ```
 - **Active project root**: `project::set_active_project_root` stores it in a global, and
-  `resolve_project_path` resolves relative asset paths against it.
+  `resolve_project_path` resolves relative asset paths against it. Code handed a project
+  root (saving a scene's materials) must resolve against that root, not the global: the
+  global still names the previous project while another one opens.
+- **Exports carry only used content** (`src/export.rs`): `used_content` follows
+  references from the main scene (the first in `project.json`): prefab `scene_ref`s,
+  every string in scene/material/glTF/import JSON that names a project file, a model
+  import's whole package folder, and Lua string literals (files, `require` modules, and
+  folders named as literals, for run-time paths). `export_content` copies them with a
+  `project.json` trimmed to the used scenes. The editor's Build menu (after saving),
+  `build_web.sh --project` (through `player --export-content`) and MCP `web_build` use
+  it; remote `project.content` reports it.
+- **Asset library** (`src/library.rs`, `tools/library/`, `docs/asset_library.md`):
+  characters, animations and models shared by all projects in
+  `<user data dir>/wgpu-cube/library` (outside git; Mixamo files must not be
+  redistributed). `library.py` fills it (CC0 packs, the Mixamo web API with the user's
+  token, own files) through Blender (`blender_ingest.py`: one asset per animation,
+  measured, with a Workbench thumbnail). The editor's Library pane and remote
+  `library.search/info/add` read `library.json`; adding copies an animation into
+  `content/animations/<name>.glb` (onto a character's animator) or imports a model.
 - **glTF**: `SceneLoader` / `src/scene/loader/` import glTF. Animation (`scene/animation.rs`)
   drives node transforms and material properties with step, linear or cubic-spline
   keyframes, bound to the entities a file was imported with.
@@ -260,8 +278,10 @@ to flicker, especially at a distant horizon.
   - Skinned imports get an `Animator` on their root (also files without animations, so
     a T-pose download can take clips from others; its own file stays the first library).
     It plays `SkeletalClip`s read from glTF/GLB files (`ClipLibrary`, cached in
-    `Assets::clip_library`), bound to bones by normalized name, so animation-only files
-    drive any rig with matching names. Layers with bone masks, cross-fades, per-bone
+    `Assets::clip_library`), bound to bones by normalized name, or failing that by
+    humanoid role (`humanoid_key`: Mixamo, Unreal-mannequin and Rigify names map to one
+    set of roles), so animation-only files drive any humanoid rig. Layers with bone masks,
+    cross-fades, per-bone
     translation retargeting by rest-length ratio and root motion
     (`keep`/`in_place`/`apply`). Animators run only while
     `Scene::set_animation_playback(true)` (play mode), so the editor saves rest poses.

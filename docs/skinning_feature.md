@@ -137,10 +137,10 @@ merge; a Lua regression test covers the script functions.
 
 ### Animation
 
-- **Humanoid retargeting.** Rest-relative rotation transfer is done (other bone axes and
-  armature turns, e.g. a Blender-converted Mixamo FBX on a three.js Mixamo GLB). Rigs with
-  different rest postures (T-pose versus A-pose) or other bone names still need a humanoid
-  bone map and a pose-matching step.
+- **Humanoid retargeting.** Rest-relative rotation transfer (other bone axes, armature
+  turns, files facing other ways) and a humanoid bone map (Mixamo, Unreal mannequin and
+  Rigify names) are done. Rigs with different rest postures (T-pose versus A-pose) still
+  need a pose-matching step.
 - **Root rotation** (turning on the spot in root motion) is not extracted; only translation.
 - **Blend trees and state machines**: done as `AnimationTree` (states, 1D/2D blend
   spaces, transitions; see `docs/characters.md`). Not done: nested state machines, sync
@@ -162,6 +162,9 @@ viewport, a timeline and clip preview while editing.
 
 ### Asset sources
 
+- **The asset library** (`docs/asset_library.md`) now holds Quaternius's CC0 Universal
+  Animation Libraries 1 and 2 (89 clips, three mannequins) and fetches Mixamo with the
+  user's token; the notes below are kept for reference.
 - **CC0 glTF packs first.** Quaternius's
   [Universal Animation Library](https://quaternius.com/packs/universalanimationlibrary.html)
   (CC0, 120+ animations on one humanoid rig, glTF, described as Mixamo-compatible) works

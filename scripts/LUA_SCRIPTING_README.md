@@ -405,10 +405,12 @@ names (Mixamo-style packs). Bone names match without case or a namespace prefix:
 `"Hips"` finds `mixamorig:Hips`. Translations are rescaled to the skeleton's proportions.
 Every function takes the character root or any entity below it (its mesh, a bone): the
 nearest animator up the hierarchy is used, else the nearest below (a character made with
-the editor's "Make Character" has its model below the root). Clips made for another export
-of the same rig (a Mixamo FBX converted by Blender on a Mixamo GLB) are retargeted: each
-bone turns away from its rest pose as it does in the clip, so both rigs need the same rest
-posture (T-pose for Mixamo). Animators run in play mode only; while editing, characters
+the editor's "Make Character" has its model below the root). Bones the clip names that the
+skeleton lacks bind by humanoid role (Mixamo `LeftArm`, Unreal `upperarm_l` and Rigify
+`DEF-upper_arm.L` are the same bone), and clips from another rig or export are retargeted:
+each bone turns away from its rest pose as it does in the clip, so both rigs need the same
+rest posture (T-pose). The asset library (`docs/asset_library.md`) has clips for all of
+them. Animators run in play mode only; while editing, characters
 keep their rest pose.
 
 - `animator_play(entity, clip[, options])` - Cross-fade to `clip`. Options: `fade` (seconds,
@@ -618,6 +620,15 @@ function on_destroyed(self, reason) if controls then controls:release() end end
 To change it beyond that, copy `engine/third_person.lua` from the engine
 (`src/scripting/lua/modules/`) into your scripts folder as `engine/third_person.lua`: a
 project's own file takes its place.
+
+### Files a game ships
+
+A game's export (the editor's Build menu, web builds) carries only the content it uses,
+found by following the scenes, materials and scripts. In scripts that means string
+literals naming project files (`play_sound("content/audio/jump.wav")`) and the modules
+they `require`. A path built at run time (`"content/audio/step" .. n .. ".wav"`) is not
+seen: name its folder as a literal (`local STEPS = "content/audio/steps/"`) and the whole
+folder ships.
 
 ### Saving data
 - `save_data(key, text)` - Keep a small text value between runs (a high score, settings);

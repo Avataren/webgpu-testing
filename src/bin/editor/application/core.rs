@@ -159,6 +159,8 @@ pub struct EditorSharedState {
     /// The selected entity's clips and animation state for the inspector
     /// (AnimationPanelSystem).
     pub(super) animation_status: crate::inspector::AnimationPanelStatus,
+    /// The Library pane (the asset library shared by every project).
+    pub(super) library_panel: crate::library_panel::LibraryPanelState,
     /// Inspector requests for the renderer's light probes, carried out on the GPU update.
     pub(super) light_probe_requests: Vec<crate::inspector::LightProbeRequest>,
 }
@@ -420,6 +422,7 @@ impl EditorApplicationBuilder {
             plugin_window_sizes: HashMap::new(),
             light_probe_status: Default::default(),
             animation_status: Default::default(),
+            library_panel: Default::default(),
             light_probe_requests: Vec::new(),
         };
 
@@ -1039,6 +1042,85 @@ impl EditorApplication {
                         .push(ReloadNotification::error(err));
                 }
             }
+        }
+    }
+
+    /// Take the library asset `id` into the open project: an animation is copied into
+    /// content/animations (and added to `attach`'s animator), a character or model is
+    /// imported into the project and the scene like any model.
+    pub(super) fn add_from_library(
+        &mut self,
+        id: &str,
+        attach: Option<Entity>,
+    ) -> Result<serde_json::Value, String> {
+        let project = self
+            .project_system()
+            .controller()
+            .current_dir()
+            .cloned()
+            .ok_or("open a project before adding library assets")?;
+        let panel = &mut self.shared.library_panel;
+        if panel
+            .library()
+            .is_none_or(|library| library.get(id).is_none())
+        {
+            panel.reload();
+        }
+        let library = panel
+            .library()
+            .cloned()
+            .ok_or("the asset library could not be read")?;
+        let asset = library
+            .get(id)
+            .cloned()
+            .ok_or_else(|| format!("the library has no asset {id:?}"))?;
+        if asset.kind == "animation" {
+            let path = library.copy_into_project(&asset, &project)?;
+            if let Some(entity) = attach {
+                self.enqueue_command(EditorCommand::Inspector(
+                    crate::inspector::InspectorAction::AddAnimationLibrary {
+                        entity,
+                        path: path.clone(),
+                    },
+                ));
+            }
+            let message = format!("Added {} ({})", asset.name, path.display());
+            log::info!("{message}");
+            self.shared
+                .reload_notifications
+                .push(ReloadNotification::success(message));
+            let clip = asset.clips.first();
+            Ok(serde_json::json!({
+                "id": asset.id,
+                "kind": asset.kind,
+                "project_path": path.to_string_lossy(),
+                "clip": clip.map(|clip| clip.name.clone()),
+                "plays_as": path.file_stem().map(|stem| stem.to_string_lossy().into_owned()),
+                "attached": attach.is_some(),
+            }))
+        } else {
+            let unique = format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|time| time.as_nanos())
+                    .unwrap_or_default()
+            );
+            let dir = std::env::temp_dir().join("wgpu-cube-library").join(unique);
+            let staged = library.staged_copy(&asset, &dir)?;
+            self.enqueue_command(EditorCommand::ImportPath(staged.clone()));
+            let message = format!("Importing {} from the library", asset.name);
+            log::info!("{message}");
+            self.shared
+                .reload_notifications
+                .push(ReloadNotification::success(message));
+            Ok(serde_json::json!({
+                "id": asset.id,
+                "kind": asset.kind,
+                "importing": staged.to_string_lossy(),
+                "note": "The model imports next frame as '<name> (Instance)' in the active scene, like asset_import.",
+            }))
         }
     }
 

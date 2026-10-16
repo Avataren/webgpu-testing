@@ -33,6 +33,10 @@ pub(super) const EDITOR_METHODS: &[&str] = &[
     "prefab.create",
     "prefab.inspect",
     "prefab.update",
+    "editor.show_pane",
+    "library.search",
+    "library.info",
+    "library.add",
 ];
 
 fn gizmo_mode_name(mode: TransformGizmoMode) -> &'static str {
@@ -48,6 +52,23 @@ fn gizmo_space_name(space: TransformGizmoSpace) -> &'static str {
         TransformGizmoSpace::Local => "local",
         TransformGizmoSpace::World => "world",
     }
+}
+
+/// `id` (a string) or `ids` (a list) from library calls.
+fn library_ids(params: &Value) -> Result<Vec<String>, String> {
+    if let Some(id) = params.get("id").and_then(Value::as_str) {
+        return Ok(vec![id.to_string()]);
+    }
+    params
+        .get("ids")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .filter(|ids| !ids.is_empty())
+        .ok_or_else(|| "pass id or ids (library_search lists them)".to_string())
 }
 
 fn str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -233,7 +254,132 @@ fn import_file(
     Ok(result)
 }
 
+/// A library asset as search results show it.
+fn library_row(
+    library: &wgpu_cube::library::Library,
+    asset: &wgpu_cube::library::LibraryAsset,
+) -> Value {
+    let mut row = json!({
+        "id": asset.id,
+        "kind": asset.kind,
+        "name": asset.name,
+        "tags": asset.tags,
+        "skeleton": asset.skeleton,
+        "provider": asset.source.provider,
+    });
+    if let Some(clip) = asset.clips.first() {
+        row["duration"] = json!(clip.duration);
+        row["root_speed"] = json!(clip.root_speed);
+        row["in_place"] = json!(clip.in_place);
+    }
+    if let Some(height) = asset.height {
+        row["height"] = json!(height);
+    }
+    if let Some(thumbnail) = library.thumbnail_path(asset) {
+        row["thumbnail"] = json!(thumbnail.to_string_lossy());
+    }
+    row
+}
+
 impl EditorApplication {
+    /// `library.search {query, kind, tags, skeleton, limit, offset}`.
+    fn remote_library_search(&mut self, params: &Value) -> RemoteResult {
+        let panel = &mut self.shared.library_panel;
+        panel.reload();
+        let library = panel
+            .library()
+            .ok_or("the asset library could not be read")?;
+        let query = wgpu_cube::library::LibraryQuery {
+            text: params
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            kind: params
+                .get("kind")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            tags: params
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(|tag| tag.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            skeleton: params
+                .get("skeleton")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        };
+        let found = library.search(&query);
+        let offset = params.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .min(500) as usize;
+        let mut kinds = std::collections::BTreeMap::<&str, usize>::new();
+        for asset in &library.assets {
+            *kinds.entry(asset.kind.as_str()).or_default() += 1;
+        }
+        Ok(json!({
+            "root": library.root.to_string_lossy(),
+            "library_size": kinds,
+            "total": found.len(),
+            "offset": offset,
+            "assets": found
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|asset| library_row(library, asset))
+                .collect::<Vec<_>>(),
+        }))
+    }
+
+    /// `library.info {id}` or `{ids}`: the whole catalog entries.
+    fn remote_library_info(&mut self, params: &Value) -> RemoteResult {
+        let panel = &mut self.shared.library_panel;
+        panel.reload();
+        let library = panel
+            .library()
+            .ok_or("the asset library could not be read")?;
+        let ids = library_ids(params)?;
+        let mut out = Vec::new();
+        for id in ids {
+            let asset = library
+                .get(&id)
+                .ok_or_else(|| format!("the library has no asset {id:?}"))?;
+            let mut entry = serde_json::to_value(asset).map_err(|err| err.to_string())?;
+            entry["path"] = json!(library.file_path(asset).to_string_lossy());
+            out.push(entry);
+        }
+        Ok(json!({ "assets": out }))
+    }
+
+    /// `library.add {id | ids, entity}`: animations into content/animations (onto
+    /// `entity`'s animator), characters and models imported into the scene.
+    fn remote_library_add(
+        &mut self,
+        params: &Value,
+        ctx: &mut RemoteContext<'_, '_>,
+    ) -> RemoteResult {
+        let attach = params
+            .get("entity")
+            .map(|value| entity_from_json(ctx.gpu.scene.main_world(), value))
+            .transpose()?;
+        let mut added = Vec::new();
+        for id in library_ids(params)? {
+            added.push(self.add_from_library(&id, attach)?);
+        }
+        Ok(json!({
+            "added": added,
+            "note": "Animations are playable under their file name (plays_as) once the animator \
+                     rebinds; imported models appear next frame. Save with project_save.",
+        }))
+    }
+
     pub(super) fn handle_remote_command(
         &mut self,
         method: &str,
@@ -241,9 +387,36 @@ impl EditorApplication {
         ctx: &mut RemoteContext<'_, '_>,
     ) -> Option<RemoteResult> {
         let result = match method {
+            "library.search" => self.remote_library_search(params),
+            "library.info" => self.remote_library_info(params),
+            "library.add" => self.remote_library_add(params, ctx),
             "prefab.create" | "prefab.update" => self.remote_save_prefab(method, params, ctx),
             "prefab.inspect" => self.remote_inspect_prefab(params, ctx),
             "editor.state" => Ok(self.remote_editor_state(ctx)),
+            "editor.show_pane" => (|| {
+                use crate::layout::EditorPane;
+                let name = str_param(params, "pane")?;
+                let pane = match name {
+                    "hierarchy" => EditorPane::SceneHierarchy,
+                    "scene" => EditorPane::SceneViewport,
+                    "game" => EditorPane::GameViewport,
+                    "inspector" => EditorPane::Inspector,
+                    "assets" => EditorPane::AssetBrowser,
+                    "library" => EditorPane::Library,
+                    "console" => EditorPane::Log,
+                    other => {
+                        return Err(format!(
+                            "unknown pane {other:?}; use hierarchy, scene, game, inspector, \
+                             assets, library or console"
+                        ))
+                    }
+                };
+                let shown = self
+                    .shared
+                    .dock_tree
+                    .make_active(|_, tile| matches!(tile, egui_tiles::Tile::Pane(p) if *p == pane));
+                Ok(json!({ "pane": name, "shown": shown }))
+            })(),
             "editor.undo" | "editor.redo" => {
                 let history = self.history();
                 let possible = if method == "editor.undo" {

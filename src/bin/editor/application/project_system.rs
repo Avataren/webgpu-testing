@@ -378,16 +378,17 @@ impl ProjectSystem {
         }
     }
 
+    /// Save the project to `dir`; returns whether it worked.
     fn handle_project_save(
         &mut self,
         ctx: &mut EditorContext<'_, '_, '_>,
         dir: PathBuf,
         layout: JsonLayout,
-    ) {
+    ) -> bool {
         let Some(gpu_ctx) = ctx.gpu_context_mut() else {
             self.controller
                 .record_save(dir, Some("the renderer is not ready".into()));
-            return;
+            return false;
         };
 
         // New scene tabs need their own document, rather than overwriting scene one.
@@ -461,8 +462,10 @@ impl ProjectSystem {
                 notification = ReloadNotification::error(format!("Failed to save project: {err}"));
             }
         }
+        let saved = save_error.is_none();
         self.controller.record_save(dir, save_error);
         ctx.notify(notification);
+        saved
     }
 
     fn handle_project_load(&mut self, ctx: &mut EditorContext<'_, '_, '_>, dir: PathBuf) {
@@ -569,6 +572,16 @@ impl ProjectSystem {
                 return;
             }
 
+            let Some(project_dir) = self.controller.current_dir().cloned() else {
+                error!("Open a project before building it");
+                return;
+            };
+            // A build is made from the saved project, like File > Save first.
+            if !self.handle_project_save(ctx, project_dir.clone(), JsonLayout::Preserve) {
+                error!("The project could not be saved, so it was not built");
+                return;
+            }
+
             let content_dir = request.output_dir.join("content");
             if content_dir.exists() {
                 if let Err(err) = std::fs::remove_dir_all(&content_dir) {
@@ -580,50 +593,45 @@ impl ProjectSystem {
                 }
             }
 
-            let Some(()) = ctx.with_gpu_app(|_app, gpu_ctx| {
-                let existing_document = self.controller.primary_scene_document();
-                match ProjectManifest::capture(
-                    &gpu_ctx.scene,
-                    self.controller.metadata().clone(),
-                    existing_document,
-                ) {
-                    Ok(manifest) => {
-                        if let Err(err) = manifest.save_to_dir(&request.output_dir) {
-                            error!(
-                                "Failed to save project manifest to {:?}: {err}",
-                                request.output_dir
-                            );
-                            return;
-                        }
-
-                        let build_result = match request.platform {
-                            BuildPlatform::Desktop => {
-                                native::build_desktop_artifacts(&manifest, &request.output_dir)
-                            }
-                            BuildPlatform::Web => {
-                                native::build_web_artifacts(&manifest, &request.output_dir)
-                            }
-                        };
-
-                        match build_result {
-                            Ok(()) => {
-                                info!(
-                                    "Project build for {:?} completed at {:?}",
-                                    request.platform, request.output_dir
-                                );
-                            }
-                            Err(err) => {
-                                error!("Failed to build project for {:?}: {err}", request.platform);
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        error!("Failed to prepare project for building: {err}");
-                    }
+            let name = self.controller.metadata().name.clone();
+            let build_result = match request.platform {
+                BuildPlatform::Desktop => {
+                    native::build_desktop_artifacts(&name, &request.output_dir)
                 }
-            }) else {
-                return;
+                BuildPlatform::Web => native::build_web_artifacts(&name, &request.output_dir),
             };
+            if let Err(err) = build_result {
+                error!("Failed to build project for {:?}: {err}", request.platform);
+                ctx.notify(ReloadNotification::error(format!("Build failed: {err}")));
+                return;
+            }
+
+            // Only the content the game uses goes along.
+            match wgpu_cube::export::export_content(&project_dir, &request.output_dir) {
+                Ok(used) => {
+                    let message = format!(
+                        "Built for {:?} in {}: {} content files ({:.1} MB); {} unused files \
+                         ({:.1} MB) left out",
+                        request.platform,
+                        request.output_dir.display(),
+                        used.files.len(),
+                        used.bytes as f64 / 1e6,
+                        used.unused.len(),
+                        used.unused_bytes as f64 / 1e6,
+                    );
+                    info!("{message}");
+                    for problem in &used.problems {
+                        log::warn!("Build: {problem}");
+                    }
+                    ctx.notify(ReloadNotification::success(message));
+                }
+                Err(err) => {
+                    error!("Failed to export the project's content: {err}");
+                    ctx.notify(ReloadNotification::error(format!(
+                        "Build: cannot export content: {err}"
+                    )));
+                }
+            }
         }
     }
 }
@@ -641,7 +649,7 @@ impl EditorSystem for ProjectSystem {
         }
 
         if let Some((dir, layout)) = self.controller_mut().take_pending_save() {
-            self.handle_project_save(ctx, dir, layout);
+            let _ = self.handle_project_save(ctx, dir, layout);
         }
 
         if let Some(request) = self.controller_mut().take_pending_build() {
@@ -682,7 +690,7 @@ mod native {
     use std::thread;
 
     use gltf::{buffer::Source as BufferSource, image::Source as ImageSource, Gltf};
-    use log::{info, warn};
+    use log::info;
     use thiserror::Error;
     use wgpu_cube::asset::MaterialTextureSlot;
     use wgpu_cube::io::percent_decode_uri;
@@ -692,7 +700,7 @@ mod native {
             PackagedGltfDescriptor, PackagedMesh, PackagedScene, PackagedTexture,
             PACKAGED_GLTF_VERSION,
         },
-        SceneImportDevice, SceneLoader, SerializedLuaScriptSource, SerializedMaterial,
+        SceneImportDevice, SceneLoader, SerializedMaterial,
     };
 
     use crate::project::NewProjectRequest;
@@ -1622,7 +1630,7 @@ mod native {
     }
 
     pub(super) fn build_desktop_artifacts(
-        manifest: &ProjectManifest,
+        name: &str,
         output_dir: &Path,
     ) -> Result<(), BuildCommandError> {
         let mut command = Command::new("cargo");
@@ -1641,20 +1649,17 @@ mod native {
 
         let target_name = format!(
             "{}{}",
-            sanitize_project_stem(&manifest.metadata.name),
+            sanitize_project_stem(name),
             std::env::consts::EXE_SUFFIX
         );
         let target_path = output_dir.join(target_name);
         fs::copy(&source_path, &target_path)?;
         info!("Copied desktop binary to {:?}", target_path);
-
-        copy_required_scripts(manifest, output_dir)?;
-
         Ok(())
     }
 
     pub(super) fn build_web_artifacts(
-        manifest: &ProjectManifest,
+        name: &str,
         output_dir: &Path,
     ) -> Result<(), BuildCommandError> {
         let mut cargo_cmd = Command::new("cargo");
@@ -1692,11 +1697,8 @@ mod native {
         run_command_with_logging("wasm-bindgen", bindgen_cmd)?;
 
         let index_path = output_dir.join("index.html");
-        fs::write(&index_path, build_web_index(&manifest.metadata.name))?;
+        fs::write(&index_path, build_web_index(name))?;
         info!("Wrote web entry point to {:?}", index_path);
-
-        copy_required_scripts(manifest, output_dir)?;
-
         Ok(())
     }
 
@@ -1722,49 +1724,6 @@ mod native {
         } else {
             trimmed.to_string()
         }
-    }
-
-    fn copy_required_scripts(
-        manifest: &ProjectManifest,
-        output_dir: &Path,
-    ) -> Result<(), std::io::Error> {
-        let mut scripts = BTreeSet::new();
-
-        for document in manifest.scenes() {
-            let Some(asset) = manifest.scene_asset(&document.id) else {
-                warn!(
-                    "Skipping script collection for scene {}: asset payload unavailable",
-                    document.id
-                );
-                continue;
-            };
-
-            for entity in &asset.entities {
-                if let Some(script) = &entity.script {
-                    if let SerializedLuaScriptSource::File { path } = &script.source {
-                        scripts.insert(path.clone());
-                    }
-                }
-            }
-        }
-
-        for script_path in scripts {
-            let source = if script_path.is_absolute() {
-                script_path.clone()
-            } else {
-                PathBuf::from(&script_path)
-            };
-
-            let destination = output_dir.join(&script_path);
-            if let Some(parent) = destination.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            fs::copy(&source, &destination)?;
-            info!("Copied script {:?} -> {:?}", source, destination);
-        }
-
-        Ok(())
     }
 
     fn run_command_with_logging(

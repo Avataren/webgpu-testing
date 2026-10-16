@@ -377,6 +377,38 @@ impl Server {
         Ok(Output::Json(report))
     }
 
+    /// Run tools/library/library.py with `args` (low priority) and return its JSON.
+    fn run_library(&self, args: &[String]) -> Result<Value, String> {
+        let script = self.engine.repo.join("tools/library/library.py");
+        let output = std::process::Command::new("nice")
+            .args(["-n", "10", "python3", "-I"])
+            .arg(&script)
+            .arg("--json")
+            .args(args)
+            .current_dir(&self.engine.repo)
+            .output()
+            .map_err(|err| format!("cannot run {}: {err}", script.display()))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let log: Vec<&str> = stderr.lines().rev().take(20).collect();
+        let log: Vec<&str> = log.into_iter().rev().collect();
+        match serde_json::from_str::<Value>(stdout.trim()) {
+            Ok(mut result) if output.status.success() => {
+                if !log.is_empty() {
+                    result = json!({ "result": result, "log": log });
+                }
+                Ok(result)
+            }
+            _ => Err(format!(
+                "library.py {} failed ({}): {}{}",
+                args.first().map(String::as_str).unwrap_or_default(),
+                output.status,
+                stdout.trim(),
+                log.join("\n")
+            )),
+        }
+    }
+
     fn local_tool(&mut self, name: &str, args: &Value) -> Result<Output, String> {
         match name {
             "web_build" => {
@@ -409,6 +441,56 @@ impl Server {
                 Ok(Output::Json(result))
             }
             "web_playtest" => self.web_playtest(args),
+            "library_fetch" => {
+                let source = args["source"].as_str().ok_or("source required")?;
+                let names: Vec<String> = args["names"]
+                    .as_array()
+                    .map(|names| {
+                        names
+                            .iter()
+                            .filter_map(|name| name.as_str().map(str::to_owned))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mut command = vec![];
+                if source == "mixamo" {
+                    command.push("fetch-mixamo".to_string());
+                    if args["characters"].as_bool() == Some(true) {
+                        command.push("--characters".into());
+                    } else {
+                        command.push("--animations".into());
+                    }
+                    if !names.is_empty() {
+                        // Names outside the curated set are searched for as they are.
+                        command.push("--query".into());
+                        command.extend(names.iter().cloned());
+                        command.push("--only".into());
+                        command.extend(names);
+                    }
+                } else {
+                    command.push("fetch-pack".into());
+                    command.push(source.to_string());
+                }
+                self.run_library(&command).map(Output::Json)
+            }
+            "library_ingest" => {
+                let mut command = vec!["ingest".to_string()];
+                for path in args["paths"].as_array().ok_or("paths required")? {
+                    command.push(path.as_str().ok_or("paths are strings")?.to_string());
+                }
+                for key in ["name", "provider", "license", "author", "url"] {
+                    if let Some(value) = args[key].as_str() {
+                        command.push(format!("--{key}"));
+                        command.push(value.to_string());
+                    }
+                }
+                if let Some(tags) = args["tags"].as_array() {
+                    let tags: Vec<&str> = tags.iter().filter_map(Value::as_str).collect();
+                    command.push("--tags".into());
+                    command.push(tags.join(","));
+                }
+                self.run_library(&command).map(Output::Json)
+            }
             "batch" => self.batch(args),
             "engine_launch" => self.launch(args).map(Output::Json),
             "engine_profile_cpu" => self.profile_cpu(args).map(Output::Json),

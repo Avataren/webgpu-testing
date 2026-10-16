@@ -41,6 +41,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ("profile.capture", "Capture frame percentiles, stage timings and asset growth"),
     ("project.validate", "Read-only saved-project asset, camera and Lua syntax validation"),
     (
+        "project.content",
+        "What an export of a saved project carries (the files its main scene, prefabs, materials and scripts use) and what it leaves out ({path, list_unused})",
+    ),
+    (
         "engine.info",
         "Frame, runtime mode, active scene, surface size, project root",
     ),
@@ -283,6 +287,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
 
     match method {
         "project.validate" => validate_project(params),
+        "project.content" => project_content(params),
         "engine.info" => info::engine_info(ctx),
         "engine.methods" => Ok(methods(ctx)),
         "stats" => info::stats_with(params, ctx),
@@ -370,6 +375,40 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
             "unknown method {method:?}; call engine.methods for the list"
         )),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn project_content(params: &Value) -> RemoteResult {
+    let path = super::json::opt_str(params, "path")
+        .map(std::path::PathBuf::from)
+        .or_else(crate::project::active_project_root)
+        .ok_or("give path or open a project")?;
+    let used = crate::export::used_content(&path)?;
+    let list_unused = super::json::opt_bool(params, "list_unused").unwrap_or(true);
+    let paths = |files: &mut dyn Iterator<Item = &std::path::PathBuf>| -> Vec<String> {
+        files
+            .map(|file| file.to_string_lossy().into_owned())
+            .collect()
+    };
+    let mut out = json!({
+        "project": path.to_string_lossy(),
+        "scenes": used.scenes,
+        "files": paths(&mut used.files.iter()),
+        "file_count": used.files.len(),
+        "bytes": used.bytes,
+        "unused_count": used.unused.len(),
+        "unused_bytes": used.unused_bytes,
+        "problems": used.problems,
+        "note": "Exports (the editor's Build menu, web_build, build_web.sh) copy only `files`, with a project.json listing only `scenes`. A script building a path at run time is covered when it names the folder as a literal (\"content/audio/\").",
+    });
+    if list_unused {
+        out["unused"] = json!(paths(&mut used.unused.iter()));
+    }
+    Ok(out)
+}
+#[cfg(target_arch = "wasm32")]
+fn project_content(_: &Value) -> RemoteResult {
+    Err("project content analysis requires native authoring".into())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

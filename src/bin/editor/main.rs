@@ -6,6 +6,7 @@ mod camera;
 mod history;
 mod inspector;
 mod layout;
+mod library_panel;
 mod postprocess;
 mod project;
 mod script_editor;

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: ./build_web.sh [example]           build an example (default: minimal), serve web/
 #        ./build_web.sh --project <dir>     build the player, stage <dir> as a web game
-#                                           in target/web/<name>/ and serve that
+#                                           in target/web/<name>/ and serve that (only
+#                                           the content the game uses is staged)
 # Serves on $PORT (default 8080).
 set -euo pipefail
 
@@ -43,9 +44,12 @@ if [ "${1:-}" = "--project" ]; then
     wasm-bindgen --target web --out-dir "$OUT/pkg" \
         "$BUILD_DIR/wasm32-unknown-unknown/web/player.wasm"
     optimize_wasm "$OUT/pkg/player_bg.wasm"
-    # The player loads project.json and content/ relative to the page.
-    cp web/index.html "$PROJECT/project.json" "$OUT/"
-    cp -r "$PROJECT/content" "$OUT/"
+    # The player loads project.json and content/ relative to the page. Only the content
+    # the game uses goes along (and a project.json listing only its scenes): the native
+    # player works that out (built like the editor, so its build is reused).
+    cp web/index.html "$OUT/"
+    env -u RUSTFLAGS cargo run --quiet --release --all-features --bin player -- \
+        --export-content "$PROJECT" "$OUT"
 
     echo "Staged $OUT; open http://localhost:$PORT/?example=player"
     if [ "$NO_SERVE" = 1 ]; then exit 0; fi

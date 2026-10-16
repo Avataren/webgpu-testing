@@ -309,10 +309,30 @@ impl RenderApplication for ProjectPlayer {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let project_dir = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or(std::env::current_dir()?);
+    let mut args = std::env::args().skip(1);
+    let first = args.next();
+    if first.as_deref() == Some("--export-content") {
+        // `player --export-content <project> <output>`: stage the content a build of the
+        // project carries (build_web.sh uses it), without opening a window.
+        let usage = "usage: player --export-content <project> <output>";
+        let project = PathBuf::from(args.next().ok_or(usage)?);
+        let output = PathBuf::from(args.next().ok_or(usage)?);
+        let used = wgpu_cube::export::export_content(&project, &output)?;
+        println!(
+            "Staged {} content files ({:.1} MB) and project.json ({} scenes); left out {} \
+             unused files ({:.1} MB)",
+            used.files.len(),
+            used.bytes as f64 / 1e6,
+            used.scenes.len(),
+            used.unused.len(),
+            used.unused_bytes as f64 / 1e6,
+        );
+        for problem in &used.problems {
+            eprintln!("warning: {problem}");
+        }
+        return Ok(());
+    }
+    let project_dir = first.map(PathBuf::from).unwrap_or(std::env::current_dir()?);
 
     let manifest = ProjectManifest::load_from_dir(&project_dir)?;
     run_application(ProjectPlayer::new(manifest, project_dir))?;

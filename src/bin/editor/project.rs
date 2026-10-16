@@ -88,10 +88,6 @@ impl ProjectController {
         self.scene_documents = documents;
     }
 
-    pub fn primary_scene_document(&self) -> Option<&SceneDocument> {
-        self.scene_documents.first()
-    }
-
     pub fn set_current_dir(&mut self, dir: PathBuf) {
         // Project scripts may read and write files inside their own project.
         wgpu_cube::scripting::lua::api::grant_path_access(&dir);

@@ -464,6 +464,10 @@ impl EditorApplication {
         let mut inspector_actions = Vec::new();
         let mut hierarchy_events = Vec::new();
         let mut asset_actions = Vec::new();
+        let mut library_actions = Vec::new();
+        let library_target = scene_hierarchy_window
+            .selected_entity_data()
+            .map(|data| (data.entity, data.name));
         let transparent_frame =
             egui::Frame::central_panel(ui.style()).fill(egui::Color32::TRANSPARENT);
         {
@@ -474,6 +478,7 @@ impl EditorApplication {
             let workspace_info = scene_hierarchy_window.workspace_info();
             let light_probe_status = &shared.light_probe_status;
             let animation_status = &shared.animation_status;
+            let library = &mut shared.library_panel;
 
             egui::CentralPanel::default_margins()
                 .frame(transparent_frame)
@@ -484,6 +489,9 @@ impl EditorApplication {
                         let mut behavior = EditorBehavior {
                             light_probe_status,
                             animation_status,
+                            library,
+                            library_actions: &mut library_actions,
+                            library_target,
                             scene_viewport,
                             game_viewport,
                             scene_hierarchy: scene_hierarchy_window,
@@ -580,6 +588,19 @@ impl EditorApplication {
                 },
                 AssetBrowserAction::Import(path) => {
                     self.enqueue_command(EditorCommand::ImportPath(path));
+                }
+            }
+        }
+
+        for action in library_actions {
+            match action {
+                crate::library_panel::LibraryAction::Add { id, attach } => {
+                    if let Err(err) = self.add_from_library(&id, attach) {
+                        log::error!("Library: {err}");
+                        self.shared
+                            .reload_notifications
+                            .push(core::ReloadNotification::error(format!("Library: {err}")));
+                    }
                 }
             }
         }

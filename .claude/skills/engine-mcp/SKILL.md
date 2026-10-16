@@ -199,6 +199,19 @@ engine you launched; save first).
   true}` draws bones over the mesh in screenshots. Lua: `animator_play`, `animator_state`,
   `find_bone` (attach props to hands). Verify motion with `runtime_set {mode: "play",
   manual: true}` + `runtime_step` + `screenshot`.
+- Asset library (`docs/asset_library.md`): characters, animations and models shared by
+  every project (Quaternius CC0 packs, Mixamo, the user's own), outside projects and git.
+  `library_search {query, kind: "animation"|"character"|"model", tags}` finds them (with
+  duration, root_speed, in_place, skeleton and a thumbnail path you can Read);
+  `library_add {ids, entity}` copies animations into `content/animations` onto that
+  character's animator, or imports characters/models into the scene. Clips work across
+  rigs (Mixamo, Unreal-mannequin and Rigify names bind by humanoid role; both rigs in
+  T-pose). `library_fetch {source: "mixamo", names}` downloads named Mixamo animations
+  (the user's token; files never committed), `library_ingest {paths}` adds files.
+  Prefer the library over generating or importing animations by hand.
+- Exports carry only what the game uses: `project_content` shows the files a build takes
+  (from the main scene's references and scripts' string literals) and what it leaves
+  out. A script building asset paths at run time must name the folder as a literal.
 - Playable characters (`docs/characters.md` is the full guide): FBX/.blend/OBJ files
   import through Blender (`asset_import` returns `converting: true`; watch `logs`), so a
   Mixamo character FBX imports as a model and its "Without Skin" animation FBXs as clips:

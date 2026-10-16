@@ -1201,7 +1201,72 @@ fn additional_tools() -> Vec<Tool> {
         Tool{name:"mesh_sweep",description:"Sweep a circular or polygon cross-section along an open 3D polyline, with transported frames, UVs, normals, tangents and caps. Sharp bends may self-intersect. Geometry is persisted by project_save.",schema:object(Value::Object(sweep),&["path"]),action:Action::Engine("mesh.sweep")},
         Tool{name:"mesh_heightfield",description:"Generate XZ terrain with upward slope normals from explicit heights, an image or seeded fractal noise. UVs/tangents and embedded geometry persist with project_save. Shares the procedural vertex budget.",schema:object(Value::Object(terrain),&[]),action:Action::Engine("mesh.heightfield")},
         Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files. The browser block is a preflight for web builds: assets web_build would not serve (only project.json and content/ are staged), files differing only in case, and Lua calls that need a file system.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},
-        Tool{name:"web_build",description:"Validate and package a saved project using the existing wasm build pipeline. Returns its output directory. Stops before building when the browser preflight finds errors (see project_validate) unless ignore_browser_issues is true. Does not launch a server or publish. Existing artifacts require overwrite true.",schema:object(json!({"project":{"type":"string"},"overwrite":{"type":"boolean","default":false},"ignore_browser_issues":{"type":"boolean","default":false,"description":"Package even when the browser preflight (validation.browser) reports errors, such as assets outside content/"}}),&["project"]),action:Action::Local},
+        Tool {
+            name: "project_content",
+            description: "What a build of a saved project carries: the files its main scene (the first in project.json), the prefabs it instances, their materials, model packages and scripts use, followed through scripts' string literals (play_sound(\"content/audio/x.wav\"), require modules; a literal naming a folder such as \"content/audio/\" keeps the whole folder, for paths built at run time). Lists files, scenes, bytes, what is left out (unused) and problems (missing files, files outside the project). The editor's Build menu, web_build and build_web.sh copy only these.",
+            schema: object(json!({
+                "path": { "type": "string", "description": "Project directory; default the open project" },
+                "list_unused": { "type": "boolean", "description": "List the unused files too (default true)" }
+            }), &[]),
+            action: Action::Engine("project.content"),
+        },
+        Tool{name:"web_build",description:"Validate and package a saved project using the existing wasm build pipeline; only the content the game uses is staged (see project_content). Returns its output directory. Stops before building when the browser preflight finds errors (see project_validate) unless ignore_browser_issues is true. Does not launch a server or publish. Existing artifacts require overwrite true.",schema:object(json!({"project":{"type":"string"},"overwrite":{"type":"boolean","default":false},"ignore_browser_issues":{"type":"boolean","default":false,"description":"Package even when the browser preflight (validation.browser) reports errors, such as assets outside content/"}}),&["project"]),action:Action::Local},
+        Tool {
+            name: "library_search",
+            description: "Editor only: search the asset library, the characters, animations and models shared by every project (Mixamo, Quaternius CC0, your own; in ~/.local/share/wgpu-cube/library). Words must all appear in the id, name or tags (categories: locomotion, idle, combat, hit, emote, interaction, loop, root-motion). Rows give id, kind, name, tags, skeleton (bone naming: mixamo, unreal, rigify; clips work on any humanoid rig, they bind by role), duration, root_speed (m/s over the ground), in_place, height and a thumbnail path. Then library_add takes what a game needs into its project.",
+            schema: object(json!({
+                "query": { "type": "string", "description": "e.g. \"sword attack\", \"walk\", \"idle\"" },
+                "kind": { "type": "string", "enum": ["character", "animation", "model"] },
+                "tags": { "type": "array", "items": { "type": "string" } },
+                "skeleton": { "type": "string", "enum": ["mixamo", "unreal", "rigify", "custom"] },
+                "limit": { "type": "integer", "description": "Default 50" },
+                "offset": { "type": "integer" }
+            }), &[]),
+            action: Action::Engine("library.search"),
+        },
+        Tool {
+            name: "library_info",
+            description: "Editor only: the full catalog entries of library assets (clips with duration and ground speed, height, triangles, bones, source, license, file path).",
+            schema: object(json!({
+                "id": { "type": "string" },
+                "ids": { "type": "array", "items": { "type": "string" } }
+            }), &[]),
+            action: Action::Engine("library.info"),
+        },
+        Tool {
+            name: "library_add",
+            description: "Editor only: take library assets into the open project. An animation is copied to content/animations/<name>.glb and, with entity, added to that character's animator (its root, model or the entity its AnimationTree is on), playable under that name; a character or model is imported into the project and the active scene like asset_import ('<name> (Instance)'). Only what is added becomes part of the game, so its export carries only those. Then animation_tree {generate: true} or character_make use the clips.",
+            schema: object(json!({
+                "id": { "type": "string" },
+                "ids": { "type": "array", "items": { "type": "string" } },
+                "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Character to add animations to" }
+            }), &[]),
+            action: Action::Engine("library.add"),
+        },
+        Tool {
+            name: "library_fetch",
+            description: "Download assets into the library (no editor needed; Blender required). source mixamo fetches named Mixamo animations (or characters with characters: true) with the user's own token from ~/.config/wgpu-cube/mixamo-token, measuring and thumbnailing each; Mixamo files are for the user's projects only (never commit or redistribute them). source quaternius-ual1 / quaternius-ual2 fetch Quaternius's CC0 animation libraries. A long list takes about 10 s per animation; already-present assets are skipped.",
+            schema: object(json!({
+                "source": { "type": "string", "enum": ["mixamo", "quaternius-ual1", "quaternius-ual2"] },
+                "names": { "type": "array", "items": { "type": "string" }, "description": "Mixamo: animation (or character) names as Mixamo lists them, e.g. \"Walking\", \"Sword And Shield Slash\". Without names, the curated set in tools/library/mixamo_set.json" },
+                "characters": { "type": "boolean", "description": "Mixamo: fetch characters (rigged, T-pose) instead of animations" }
+            }), &["source"]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "library_ingest",
+            description: "Add your own files to the library (no editor needed; Blender required): FBX, glTF/GLB, .blend or OBJ. Each animation becomes its own asset (measured, thumbnailed on a library character with the same rig), meshes become a character (rigged) or model asset.",
+            schema: object(json!({
+                "paths": { "type": "array", "items": { "type": "string" } },
+                "name": { "type": "string", "description": "Name for a file's single animation or its character" },
+                "provider": { "type": "string", "description": "Where it came from (default local)" },
+                "license": { "type": "string" },
+                "author": { "type": "string" },
+                "url": { "type": "string" },
+                "tags": { "type": "array", "items": { "type": "string" } }
+            }), &["paths"]),
+            action: Action::Local,
+        },
         Tool{name:"web_playtest",description:"Browser smoke test of a web_build artifact using Node 22+ and Chromium's DevTools protocol, with no npm dependencies. Returns console/page/network failures and a screenshot; sends input to unlock audio. No deployment.",schema:object(json!({"directory":{"type":"string"},"seconds":{"type":"number","minimum":0,"maximum":60,"default":3},"viewport_size":{"type":"array","items":{"type":"integer","minimum":64,"maximum":4096},"minItems":2,"maxItems":2},"browser":{"type":"string","description":"Chromium/Brave executable, or ENGINE_BROWSER"},"save_path":{"type":"string","description":"Optional screenshot file; otherwise returned inline"}}),&["directory"]),action:Action::Local},
     ]
 }

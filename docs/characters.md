@@ -17,6 +17,16 @@ script); the imported model is its child, with the `Animator` on the model's ske
 The script only moves the character. The tree sees how it moves (speed, falling, landing)
 and plays the clips, so scripts never name a clip to walk.
 
+## The quickest start: the asset library
+
+The engine's asset library (`docs/asset_library.md`) holds characters and animations ready
+to use: the editor's **Library** tab (next to Assets) shows them with thumbnails. Pick a
+character and **Add to scene**, select it and **Make Character**, then select the new
+`Player` and add animations from the library (**Add to Player**, or double-click):
+idle, walk, run, jump... Its Animation Tree section's **Generate from clips** builds the
+locomotion. The clips can come from another rig than the character's (Mixamo, Unreal
+mannequin or Rigify names): they bind by humanoid role.
+
 ## Quick start: a Mixamo character
 
 You need Blender installed (from blender.org, Steam, a package manager or flatpak). The
@@ -169,11 +179,13 @@ body moves (walk and run speed, jump height, slopes, steps, double jumps) belong
 ## Other models
 
 Any rigged glTF/GLB, FBX or .blend works the same way. Clips bind to bones by name
-(without case or a `mixamorig:` style prefix), so clip files work on any skeleton with the
-same bone names. Clips exported from another program than the model (a Mixamo FBX through
-Blender on a Mixamo GLB from elsewhere) are retargeted: each bone turns away from its rest
-pose as it does in the clip. That needs both skeletons to rest in the same posture (both
-in T-pose); a T-pose clip file on an A-pose model bends the arms.
+(without case or a `mixamorig:` style prefix) and, when a name is missing, by humanoid
+role: Mixamo (`LeftArm`), Unreal mannequin (`upperarm_l`) and Rigify (`DEF-upper_arm.L`)
+names all mean the same upper arm. Clips exported from another program or rig than the
+model are retargeted: each bone turns away from its rest pose as it does in the clip,
+measured in the character's own frame (a model facing -Z in its file takes clips from one
+facing +Z). That needs both skeletons to rest in the same posture (both in T-pose); a
+T-pose clip on an A-pose model bends the arms.
 
 ## Over MCP
 

@@ -4,9 +4,11 @@ pub mod audio;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod audio_inspect;
 pub mod environment;
+pub mod export;
 pub mod gpu_particles;
 pub mod graphics_settings;
 pub mod io;
+pub mod library;
 pub mod physics;
 pub mod process;
 pub mod procgen;
