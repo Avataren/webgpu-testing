@@ -10,6 +10,7 @@ mod geometry;
 mod graphics;
 mod info;
 mod input;
+mod light_probes;
 mod procedural;
 mod rendering;
 mod scripting;
@@ -130,6 +131,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     (
         "graphics.get",
         "The player's graphics settings (display, AA, upscaling, ray tracing, FPS readout)",
+    ),
+    (
+        "light_probes.bake",
+        "Bake the scene's light probe volume at high quality into content/lighting/",
+    ),
+    (
+        "light_probes.status",
+        "The light probe volume, bake progress and the baked data it shows",
     ),
     (
         "graphics.set",
@@ -294,6 +303,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "texture.fetch" => crate::remote::texture_fetch::fetch(params, ctx.gpu.renderer),
         "shader.reload" => shader_reload(ctx),
         "graphics.get" => graphics::get(),
+        "light_probes.bake" => light_probes::bake(params, ctx),
+        "light_probes.status" => light_probes::status(ctx),
         "graphics.set" => graphics::set(params),
         "postprocess.set" => rendering::postprocess_set(params, ctx),
         "asset.reload" => rendering::asset_reload(params, ctx),

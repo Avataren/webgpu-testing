@@ -208,7 +208,9 @@ impl PostProcessVolume {
 ///
 /// The box is centred on the entity and axis aligned: its size scales with the entity,
 /// its rotation is ignored. With hardware ray tracing the probes trace the scene every
-/// frame, so their light follows moving lights and geometry. The renderer uses the first
+/// frame, so their light follows moving lights and geometry. Without it (the web, older
+/// GPUs) they show `baked`: light traced once in the editor (`light_probes.bake`) and
+/// saved with the project, which stays as it was baked. The renderer uses the first
 /// enabled volume it finds.
 ///
 /// # Examples
@@ -235,6 +237,12 @@ pub struct LightProbeVolume {
     pub hysteresis: f32,
     /// Scales the indirect light the probes give.
     pub intensity: f32,
+    /// Project path of the baked probe data (`content/lighting/*.probes`), shown where the
+    /// probes cannot trace, and the starting point where they can.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baked: Option<String>,
+    /// Show the baked data even where the probes could trace (to check a bake).
+    pub use_baked: bool,
 }
 
 impl Default for LightProbeVolume {
@@ -246,6 +254,8 @@ impl Default for LightProbeVolume {
             rays_per_probe: 128,
             hysteresis: 0.97,
             intensity: 1.0,
+            baked: None,
+            use_baked: false,
         }
     }
 }

@@ -1,20 +1,35 @@
 //! The light probe grid a scene's [`LightProbeVolume`] asks the renderer for.
 
 use glam::Mat4;
-use hecs::World;
+use hecs::{Entity, World};
 
 use crate::renderer::LightProbeGrid;
 use crate::scene::components::{LightProbeVolume, TransformComponent, WorldTransform};
 
+/// The light probe volume the renderer uses, as [`active_light_probe_volume`] finds it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveLightProbeVolume {
+    pub entity: Entity,
+    pub grid: LightProbeGrid,
+    /// Project path of its baked data.
+    pub baked: Option<String>,
+}
+
 /// The grid of the first enabled light probe volume in `world` (lowest entity id first,
 /// so the choice is stable), placed at its entity: centred on it, sized by its scale.
 pub fn light_probe_grid(world: &World) -> Option<LightProbeGrid> {
+    active_light_probe_volume(world).map(|volume| volume.grid)
+}
+
+/// The first enabled light probe volume in `world` (lowest entity id first), with the
+/// grid it asks for and its baked data.
+pub fn active_light_probe_volume(world: &World) -> Option<ActiveLightProbeVolume> {
     let mut query = world.query::<(
         &LightProbeVolume,
         Option<&WorldTransform>,
         Option<&TransformComponent>,
     )>();
-    let (_, volume, transform) = query
+    let (entity, volume, transform) = query
         .iter()
         .filter(|(_, (volume, _, _))| volume.enabled)
         .map(|(entity, (volume, world_transform, local))| {
@@ -22,19 +37,25 @@ pub fn light_probe_grid(world: &World) -> Option<LightProbeGrid> {
                 .map(|t| t.0.matrix())
                 .or_else(|| local.map(|t| t.0.matrix()))
                 .unwrap_or(Mat4::IDENTITY);
-            (entity.to_bits(), volume, transform)
+            (entity, volume, transform)
         })
-        .min_by_key(|(id, _, _)| *id)?;
+        .min_by_key(|(entity, _, _)| entity.to_bits())?;
     let (scale, _, center) = transform.to_scale_rotation_translation();
     let scale = scale.abs().to_array();
-    Some(LightProbeGrid::centered(
+    let mut grid = LightProbeGrid::centered(
         center,
         volume.effective_spacing(scale),
         volume.probe_counts(scale),
         volume.rays_per_probe,
         volume.hysteresis,
         volume.intensity,
-    ))
+    );
+    grid.live = !volume.use_baked;
+    Some(ActiveLightProbeVolume {
+        entity,
+        grid,
+        baked: volume.baked.clone(),
+    })
 }
 
 #[cfg(test)]

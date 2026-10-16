@@ -732,6 +732,8 @@ impl ProjectManifest {
     ) -> Result<(SceneWorkspace, bool), ProjectError> {
         set_active_project_root(Some(project_root.to_path_buf()));
 
+        // The web cannot ask whether a file exists.
+        #[cfg(not(target_arch = "wasm32"))]
         for import in &self.imports {
             for meta in &import.metadata {
                 let path = if meta.is_absolute() {
@@ -910,6 +912,8 @@ impl SerializedEnvironment {
                 .source_path
                 .or_else(|| hdr.image_path.map(|p| project_root.join(p)))
             {
+                // The web cannot ask whether a file exists; loading the sky reports it.
+                #[cfg(not(target_arch = "wasm32"))]
                 if !path.exists() {
                     return Err(ProjectError::MissingEnvironmentFile(path));
                 }

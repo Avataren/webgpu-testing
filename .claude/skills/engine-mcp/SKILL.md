@@ -122,6 +122,18 @@ engine you launched; save first).
   about 1045x687 it costs about 1.1 ms against path tracing's 6.5 ms, and the image comes out
   close to the path-traced one. Like path tracing, its bounce rays reuse last frame's image,
   so let a still view settle for a second before judging; switch it off when done.
+- Light probes give raster lighting bounced light and keep the sky out of interiors (works
+  on the web): `entity_spawn {kind: "light_probe_volume", position, light_probe_volume: {size:
+  [x, y, z], spacing}}` with the box fitted inside the room or level (centred on the entity,
+  axis aligned; 0.5 m spacing suits rooms). Surfaces inside take diffuse and rough specular
+  environment light from the probes, which see walls. With ray tracing the probes update live
+  (`engine_stats` `renderer.gpu` `light_probes`, about 0.6 ms for 850 probes); for web builds
+  and GPUs without it, `light_probes_bake` (high quality, a few seconds; then `wait` the frames
+  it reports) saves `content/lighting/<volume>.probes` and sets the volume's `baked` path:
+  `project_save` keeps it. Bake again after moving the volume or changing the room's lighting.
+  `light_probes_status` shows the volume, bake progress and what is shown; `use_baked: true`
+  previews the bake in the editor; `texture_fetch probes.irradiance` / `probes.distance` show the
+  probes' data.
 - Path tracing (`graphics_set {path_tracing: true, path_tracing_bounces, path_tracing_samples,
   path_tracing_denoiser}`, or a volume's `path_tracing` group) replaces the raster lighting of
   opaque surfaces with denoised path-traced light; it needs `engine_info`

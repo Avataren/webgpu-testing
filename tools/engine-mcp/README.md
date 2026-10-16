@@ -69,6 +69,7 @@ Options and environment:
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot`, `visual_capture`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Render debugging | `texture_fetch`, `shader_reload` |
+| Global illumination | `entity_spawn {kind: "light_probe_volume"}`, `light_probes_bake`, `light_probes_status` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 | Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
 | Prefabs | `prefab_create`, `prefab_inspect`, `prefab_update` (instances use `scene_instance`) |

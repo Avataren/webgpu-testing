@@ -1,4 +1,5 @@
 pub mod frame_timings;
+mod light_probes;
 mod render_hooks;
 mod runtime;
 mod scheduler;
@@ -153,6 +154,7 @@ impl AppBuilder {
             exit_on_escape,
             exit_requested: false,
             remote,
+            light_probe_load_failed: None,
         }
     }
 }
@@ -167,6 +169,8 @@ pub struct AppCore {
     exit_on_escape: bool,
     exit_requested: bool,
     remote: Option<RemoteHubHandle>,
+    /// The baked light probe file that last failed to load.
+    light_probe_load_failed: Option<String>,
 }
 
 impl AppCore {
@@ -404,7 +408,7 @@ impl AppCore {
             None => post_settings,
         };
         renderer.set_postprocess_settings(&post_settings);
-        renderer.set_light_probe_grid(crate::scene::light_probe_grid(scene.main_world()));
+        light_probes::sync(renderer, &mut scene, &mut self.light_probe_load_failed);
         renderer.set_camera(&camera, aspect);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.

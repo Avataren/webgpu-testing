@@ -72,6 +72,7 @@ impl Tool {
                 | "environment_get"
                 | "postprocess_get"
                 | "texture_fetch"
+                | "light_probes_status"
                 | "logs"
                 | "editor_state"
                 | "audio_status"
@@ -714,6 +715,22 @@ pub fn tools() -> Vec<Tool> {
                 }}
             }), &[]),
             action: Action::Engine("environment.set"),
+        },
+        Tool {
+            name: "light_probes_bake",
+            description: "Bake the scene's light probe volume (light_probe_volume) at high quality: warm-up sweeps for the bounced light to build up, then the exact mean of many sweeps with up to 256 rays per probe (about 65k rays per probe by default). Runs over the next frames (one update per frame; the result says how many): wait that long, then light_probes_status. The bake is saved as content/lighting/<volume name>.probes and the volume's baked path is set; project_save keeps it. Baked probes light the scene where the probes cannot trace (web builds, GPUs without ray tracing) and stay as baked; with ray tracing they are the starting point (use_baked: true shows only the bake). Needs hardware ray tracing.",
+            schema: object(json!({
+                "warmup_sweeps": { "type": "integer", "description": "Sweeps before averaging, for the bounces to build up (default 32)" },
+                "sweeps": { "type": "integer", "description": "Sweeps averaged (default 256)" },
+                "rays_per_probe": { "type": "integer", "description": "Rays per probe per sweep, 32-256 (default 256)" }
+            }), &[]),
+            action: Action::Engine("light_probes.bake"),
+        },
+        Tool {
+            name: "light_probes_status",
+            description: "The scene's light probe volume (probe counts, spacing, live or baked), whether the probes can trace here, the baked file they show, and a running bake's progress.",
+            schema: empty(),
+            action: Action::Engine("light_probes.status"),
         },
         Tool {
             name: "graphics_get",

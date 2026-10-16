@@ -186,6 +186,10 @@ impl Validator {
             self.issue(false, file, location, format!("nonportable path {value:?}"));
         }
         let resolved = self.root.join(path);
+        // An imported glTF package is the folder its meshes and textures were unpacked to.
+        if location.ends_with("/package") && resolved.is_dir() {
+            return;
+        }
         if !resolved.is_file() {
             self.issue(required, file, location, format!("missing asset {value:?}"));
             return;
@@ -221,9 +225,13 @@ impl Validator {
                                 | "gltf_source"
                                 | "material"
                                 | "hdr_path"
+                                | "baked"
                         )
                     }) {
-                        self.reference(file, &location, path, key != "gltf_source");
+                        // A missing glTF source or probe bake only loses detail: the
+                        // scene keeps its meshes, the probes the environment's light.
+                        let required = !matches!(key.as_str(), "gltf_source" | "baked");
+                        self.reference(file, &location, path, required);
                     }
                     if key == "Inline" {
                         if let Some(source) = value["source"].as_str() {
@@ -526,6 +534,29 @@ mod tests {
         assert!(result["warnings"]
             .to_string()
             .contains("content/audio/gone.wav"));
+    }
+
+    #[test]
+    fn import_package_folders_count_and_missing_bakes_only_warn() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = dir.path().join("content");
+        std::fs::create_dir_all(content.join("gltf/chair")).unwrap();
+        std::fs::create_dir_all(content.join("scenes")).unwrap();
+        let manifest = crate::project::ProjectManifest::new_empty(Default::default());
+        manifest.save_to_dir(dir.path()).unwrap();
+        std::fs::write(
+            content.join("scenes/a.json"),
+            r#"{"imports": [{"package": "content/gltf/chair"}, {"package": "content/gltf/gone"}],
+                "light_probe_volume": {"baked": "content/lighting/gone.probes"}}"#,
+        )
+        .unwrap();
+
+        let result = validate(dir.path()).unwrap();
+        let errors = result["errors"].to_string();
+        assert!(!errors.contains("gltf/chair"), "{errors}");
+        assert!(errors.contains("gltf/gone"), "{errors}");
+        assert!(!errors.contains("gone.probes"), "{errors}");
+        assert!(result["warnings"].to_string().contains("gone.probes"));
     }
 
     #[test]

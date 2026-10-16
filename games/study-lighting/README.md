@@ -25,4 +25,9 @@ use `visual_capture` with variants `{global_illumination: {enabled: true}}` and
 `lua_eval {entity: "Lighting Shots"}`. Depth of field is off so it cannot blur the
 differences; exposure is the study's (auto plus local exposure).
 
+The "Light Probes" volume fills the room with a 0.5 m grid of light probes, which give
+raster lighting its bounced light (live with ray tracing; from
+`content/lighting/light_probes.probes` on the web). Bake that again (`light_probes_bake`)
+after changing the room or its lights.
+
 The room's assets are copies of the study's, so this project can change independently.

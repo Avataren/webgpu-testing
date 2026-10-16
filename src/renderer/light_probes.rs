@@ -10,7 +10,11 @@
 //! With hardware ray tracing the grid updates itself (`light_probe_update.wgsl`): a slice
 //! of the probes traces its rays each frame (direct light at the hits plus the grid's own
 //! light there, so bounces add up over frames), then the rays are blended into the tiles.
-//! Without it the grid stays black until baked data is loaded (not yet).
+//!
+//! A bake ([`LightProbes::start_bake`]) traces the grid at high quality instead: more rays,
+//! warm-up sweeps for the bounces to build up, then the exact mean of many sweeps. Its
+//! atlases are saved as a `.probes` file ([`encode_bake`]); where the grid cannot trace
+//! (the web, GPUs without ray tracing), loading that file is the only light it gets.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Quat, Vec3};
@@ -53,6 +57,8 @@ pub struct LightProbeGrid {
     /// The share of a probe's previous light kept per update.
     pub hysteresis: f32,
     pub intensity: f32,
+    /// Update by ray tracing where possible (false: show baked data only).
+    pub live: bool,
 }
 
 impl LightProbeGrid {
@@ -74,6 +80,7 @@ impl LightProbeGrid {
             rays_per_probe,
             hysteresis,
             intensity,
+            live: true,
         }
     }
 
@@ -98,7 +105,14 @@ impl LightProbeGrid {
 
     /// Whether `other` needs new atlases (a different layout of probes).
     fn same_layout(&self, other: &Self) -> bool {
-        self.counts == other.counts && self.rays() == other.rays()
+        self.counts == other.counts
+    }
+
+    /// Whether `other` puts its probes in the same places.
+    fn same_placement(&self, other: &Self) -> bool {
+        self.same_layout(other)
+            && self.origin.distance(other.origin) <= 1e-3
+            && (self.spacing - other.spacing).abs() <= 1e-4
     }
 }
 
@@ -201,6 +215,42 @@ pub(crate) struct LightProbes {
     rng: u64,
     /// The atlases were recreated: the lights group must bind the new views.
     bindings_changed: bool,
+    /// The atlases hold light (traced or loaded): surfaces may read them.
+    has_data: bool,
+    /// The baked file the atlases were loaded from.
+    baked_source: Option<String>,
+    bake: Option<Bake>,
+}
+
+/// A bake in progress.
+#[derive(Clone, Copy, Debug)]
+struct Bake {
+    warmup: u32,
+    sweeps: u32,
+    rays: u32,
+    /// Sweeps over every probe completed, warm-up included.
+    done: u32,
+    /// Probes of the current sweep already traced.
+    into_sweep: u32,
+}
+
+impl Bake {
+    fn finished(&self) -> bool {
+        self.done >= self.warmup + self.sweeps
+    }
+}
+
+/// How far a bake has come.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LightProbeBakeProgress {
+    /// Warm-up sweeps, for the bounced light to build up before it is averaged.
+    pub warmup_sweeps: u32,
+    /// Sweeps averaged after the warm-up.
+    pub sweeps: u32,
+    pub rays_per_probe: u32,
+    /// Sweeps completed, warm-up included.
+    pub sweeps_done: u32,
+    pub finished: bool,
 }
 
 struct UpdateStage {
@@ -257,6 +307,9 @@ impl LightProbes {
             probes_untouched: 0,
             rng: 0x9e37_79b9_7f4a_7c15,
             bindings_changed: false,
+            has_data: false,
+            baked_source: None,
+            bake: None,
         }
     }
 
@@ -391,10 +444,138 @@ impl LightProbes {
         Ok(())
     }
 
-    /// Whether a grid is set and can update this frame (it needs the acceleration
-    /// structures).
+    /// Whether a grid is set and traces this frame (it needs the acceleration
+    /// structures): live, or baking.
     pub(crate) fn wants_update(&self) -> bool {
-        self.grid.is_some() && self.update.is_some()
+        let Some(grid) = self.grid else {
+            return false;
+        };
+        if self.update.is_none() {
+            return false;
+        }
+        match self.bake {
+            Some(bake) => !bake.finished(),
+            None => grid.live,
+        }
+    }
+
+    /// Whether the grid can trace at all (hardware ray tracing).
+    pub(crate) fn can_trace(&self) -> bool {
+        self.update.is_some()
+    }
+
+    /// The baked file the atlases hold, if they were loaded from one.
+    pub(crate) fn baked_source(&self) -> Option<&str> {
+        self.baked_source.as_deref()
+    }
+
+    /// Trace the grid at bake quality: `warmup` sweeps over every probe for the bounces
+    /// to build up, then the mean of `sweeps` more, each with `rays` rays per probe.
+    /// Returns the frames it takes (one update per frame).
+    pub(crate) fn start_bake(
+        &mut self,
+        warmup: u32,
+        sweeps: u32,
+        rays: u32,
+    ) -> Result<u32, String> {
+        let Some(grid) = self.grid else {
+            return Err("the scene has no enabled light probe volume".into());
+        };
+        if self.update.is_none() {
+            return Err("baking traces the probes and needs hardware ray tracing".into());
+        }
+        if self.bake.is_some_and(|bake| !bake.finished()) {
+            return Err("a bake is already running".into());
+        }
+        let bake = Bake {
+            warmup: warmup.max(1),
+            sweeps: sweeps.max(1),
+            rays: rays.clamp(MIN_RAYS, MAX_RAYS),
+            done: 0,
+            into_sweep: 0,
+        };
+        self.bake = Some(bake);
+        self.next_probe = 0;
+        let updates_per_sweep = grid.probe_count().div_ceil(MAX_PROBES_PER_UPDATE);
+        Ok((bake.warmup + bake.sweeps) * updates_per_sweep)
+    }
+
+    pub(crate) fn bake_progress(&self) -> Option<LightProbeBakeProgress> {
+        self.bake.map(|bake| LightProbeBakeProgress {
+            warmup_sweeps: bake.warmup,
+            sweeps: bake.sweeps,
+            rays_per_probe: bake.rays,
+            sweeps_done: bake.done,
+            finished: bake.finished(),
+        })
+    }
+
+    /// The finished bake's settings, and the atlas textures to read back and save.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn finished_bake(&self) -> Option<(BakeHeader, &wgpu::Texture, &wgpu::Texture)> {
+        let bake = self.bake.filter(Bake::finished)?;
+        let grid = self.grid?;
+        Some((
+            BakeHeader::new(&grid, bake.sweeps, bake.rays),
+            &self.irradiance.current,
+            &self.distance.current,
+        ))
+    }
+
+    /// Done with a finished (or failed) bake: the grid goes back to updating live, or
+    /// keeps the baked light.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn end_bake(&mut self) {
+        self.bake = None;
+    }
+
+    /// Show the baked atlases in `bytes` (a `.probes` file from [`encode_bake`]), read
+    /// from `source`. They must be for this grid's probes.
+    pub(crate) fn load_bake(
+        &mut self,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+        source: &str,
+    ) -> Result<(), String> {
+        let Some(grid) = self.grid else {
+            return Err("no light probe grid to load into".into());
+        };
+        let bake = decode_bake(bytes)?;
+        let expected = BakeHeader::new(&grid, bake.header.sweeps, bake.header.rays);
+        if !bake.header.matches(&expected) {
+            return Err(format!(
+                "{source} was baked for other probes ({:?} from {:?}, spacing {}; the volume now \
+                 has {:?} from {:?}, spacing {}): bake again",
+                bake.header.counts,
+                bake.header.origin,
+                bake.header.spacing,
+                expected.counts,
+                expected.origin,
+                expected.spacing
+            ));
+        }
+        for (texture, data, texel_bytes) in [
+            (&self.irradiance.current, &bake.irradiance, 8u32),
+            (&self.distance.current, &bake.distance, 4u32),
+        ] {
+            let size = texture.size();
+            queue.write_texture(
+                texture.as_image_copy(),
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size.width * texel_bytes),
+                    rows_per_image: Some(size.height),
+                },
+                size,
+            );
+        }
+        self.has_data = true;
+        self.reset = false;
+        self.probes_untouched = 0;
+        self.baked_source = Some(source.to_owned());
+        self.last_uniform = None;
+        Ok(())
     }
 
     /// Use `grid` from now on (`None`: no probes, surfaces take the environment's light).
@@ -406,10 +587,13 @@ impl LightProbes {
     ) {
         match (&self.grid, &grid) {
             (Some(old), Some(new)) if old.same_layout(new) => {
-                if old.origin != new.origin || old.spacing != new.spacing {
+                if !old.same_placement(new) {
                     // Moved probes see something else: start over.
                     self.reset = true;
                     self.probes_untouched = new.probe_count();
+                    self.has_data = false;
+                    self.baked_source = None;
+                    self.bake = None;
                 }
             }
             (None, None) => {}
@@ -430,7 +614,7 @@ impl LightProbes {
                 let rays = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("LightProbeRays"),
                     size: wgpu::Extent3d {
-                        width: new.rays(),
+                        width: MAX_RAYS,
                         height: rows,
                         depth_or_array_layers: 1,
                     },
@@ -450,6 +634,9 @@ impl LightProbes {
                 self.probes_untouched = new.probe_count();
                 self.next_probe = 0;
                 self.bindings_changed = true;
+                self.has_data = false;
+                self.baked_source = None;
+                self.bake = None;
             }
             (Some(_), None) => {
                 self.irradiance =
@@ -458,6 +645,9 @@ impl LightProbes {
                 self.rays = None;
                 self.blend_inputs = None;
                 self.bindings_changed = true;
+                self.has_data = false;
+                self.baked_source = None;
+                self.bake = None;
             }
         }
         self.grid = grid;
@@ -472,8 +662,8 @@ impl LightProbes {
         let Some(grid) = self.grid else {
             return GridUniform::default();
         };
-        // Black until updated: no light to give without the ray-traced update.
-        let lit = self.update.is_some();
+        // Nothing to give until traced or loaded.
+        let lit = self.has_data;
         GridUniform {
             origin_spacing: [grid.origin.x, grid.origin.y, grid.origin.z, grid.spacing],
             counts: [grid.counts[0], grid.counts[1], grid.counts[2], lit as u32],
@@ -500,23 +690,61 @@ impl LightProbes {
             return;
         };
         let total = grid.probe_count();
-        let probes = total.min(MAX_PROBES_PER_UPDATE);
         let first = self.next_probe % total;
-        self.next_probe = (first + probes) % total;
         let mut flags = 0;
-        if self.reset {
-            flags |= FLAG_RESET;
-            // Every probe is replaced once; then they blend.
-            self.probes_untouched = self.probes_untouched.saturating_sub(probes);
-            if self.probes_untouched == 0 {
-                self.reset = false;
+        let (probes, rays, hysteresis) = match self.bake.as_mut() {
+            Some(bake) => {
+                if bake.finished() {
+                    return;
+                }
+                // Sweeps start at the first probe, so every probe of a sweep is traced
+                // as often as the others.
+                let probes = (total - bake.into_sweep).min(MAX_PROBES_PER_UPDATE);
+                let hysteresis = if bake.done < bake.warmup {
+                    if bake.done == 0 {
+                        flags |= FLAG_RESET;
+                    }
+                    // Fast to follow, as bounces build on the last sweep's light.
+                    0.5
+                } else {
+                    // The exact mean of the averaged sweeps (the first one replaces).
+                    let averaged = (bake.done - bake.warmup) as f32;
+                    averaged / (averaged + 1.0)
+                };
+                bake.into_sweep += probes;
+                if bake.into_sweep >= total {
+                    bake.into_sweep = 0;
+                    bake.done += 1;
+                }
+                (probes, bake.rays, hysteresis)
             }
+            None => {
+                if self.reset {
+                    flags |= FLAG_RESET;
+                    // Every probe is replaced once; then they blend.
+                    let probes = total.min(MAX_PROBES_PER_UPDATE);
+                    self.probes_untouched = self.probes_untouched.saturating_sub(probes);
+                    if self.probes_untouched == 0 {
+                        self.reset = false;
+                    }
+                }
+                (
+                    total.min(MAX_PROBES_PER_UPDATE),
+                    grid.rays(),
+                    grid.hysteresis.clamp(0.0, 0.995),
+                )
+            }
+        };
+        self.next_probe = (first + probes) % total;
+        if !self.has_data {
+            self.has_data = true;
+            self.last_uniform = None;
         }
         let uniform = UpdateUniform {
             rotation: Mat4::from_quat(random_rotation(&mut self.rng)).to_cols_array_2d(),
-            frame: [first, probes, flags, grid.rays()],
+            frame: [first, probes, flags, rays],
             params: [
-                grid.hysteresis.clamp(0.0, 0.995),
+                hysteresis,
                 grid.spacing * MAX_DISTANCE_SPACINGS,
                 SKY_BLUR,
                 BACKFACE_SHARE,
@@ -542,8 +770,8 @@ impl LightProbes {
 
         {
             let mut pass = fullscreen_pass(encoder, "LightProbeTrace", rays_view);
-            pass.set_viewport(0.0, 0.0, grid.rays() as f32, probes as f32, 0.0, 1.0);
-            pass.set_scissor_rect(0, 0, grid.rays(), probes);
+            pass.set_viewport(0.0, 0.0, rays as f32, probes as f32, 0.0, 1.0);
+            pass.set_scissor_rect(0, 0, rays, probes);
             pass.set_pipeline(&stage.trace);
             pass.set_bind_group(0, &stage.trace_inputs, &[]);
             pass.set_bind_group(2, lights, &[]);
@@ -608,6 +836,166 @@ impl LightProbes {
             ));
         }
     }
+}
+
+/// What a `.probes` file is for: the probes' layout and placement, and how it was baked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct BakeHeader {
+    pub counts: [u32; 3],
+    pub origin: [f32; 3],
+    pub spacing: f32,
+    pub irradiance_tile: u32,
+    pub distance_tile: u32,
+    pub irradiance_size: [u32; 2],
+    pub distance_size: [u32; 2],
+    pub sweeps: u32,
+    pub rays: u32,
+}
+
+impl BakeHeader {
+    fn new(grid: &LightProbeGrid, sweeps: u32, rays: u32) -> Self {
+        let irradiance = grid.atlas_size(IRRADIANCE_TILE);
+        let distance = grid.atlas_size(DISTANCE_TILE);
+        Self {
+            counts: grid.counts,
+            origin: grid.origin.to_array(),
+            spacing: grid.spacing,
+            irradiance_tile: IRRADIANCE_TILE,
+            distance_tile: DISTANCE_TILE,
+            irradiance_size: [irradiance.0, irradiance.1],
+            distance_size: [distance.0, distance.1],
+            sweeps,
+            rays,
+        }
+    }
+
+    /// Whether data baked under `self` fits probes laid out as `other` (bake quality
+    /// aside).
+    fn matches(&self, other: &Self) -> bool {
+        self.counts == other.counts
+            && self.irradiance_tile == other.irradiance_tile
+            && self.distance_tile == other.distance_tile
+            && self.irradiance_size == other.irradiance_size
+            && self.distance_size == other.distance_size
+            && Vec3::from(self.origin).distance(Vec3::from(other.origin)) <= 1e-3
+            && (self.spacing - other.spacing).abs() <= 1e-4
+    }
+
+    fn irradiance_bytes(&self) -> usize {
+        self.irradiance_size[0] as usize * self.irradiance_size[1] as usize * 8
+    }
+
+    fn distance_bytes(&self) -> usize {
+        self.distance_size[0] as usize * self.distance_size[1] as usize * 4
+    }
+}
+
+const BAKE_MAGIC: &[u8; 8] = b"WGCPROBE";
+const BAKE_VERSION: u32 = 1;
+const BAKE_HEADER_BYTES: usize = 8 + 4 * 17;
+
+/// A decoded `.probes` file: the atlases as the textures hold them (half floats; RGBA
+/// irradiance, RG distances).
+pub(crate) struct DecodedBake {
+    pub header: BakeHeader,
+    pub irradiance: Vec<u8>,
+    pub distance: Vec<u8>,
+}
+
+/// A `.probes` file from read-back atlases: a little-endian header, then the irradiance
+/// atlas (RGBA, half floats) and the distance atlas (RG, half floats), row by row.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn encode_bake(
+    header: &BakeHeader,
+    irradiance: &crate::renderer::readback::Readback,
+    distance: &crate::renderer::readback::Readback,
+) -> Result<Vec<u8>, String> {
+    let check = |readback: &crate::renderer::readback::Readback, size: [u32; 2], channels| {
+        if readback.width != size[0] || readback.height != size[1] || readback.channels != channels
+        {
+            Err(format!(
+                "read back {}x{}x{}, expected {}x{}x{channels}",
+                readback.width, readback.height, readback.channels, size[0], size[1]
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    check(irradiance, header.irradiance_size, 4)?;
+    check(distance, header.distance_size, 2)?;
+    let mut out =
+        Vec::with_capacity(BAKE_HEADER_BYTES + header.irradiance_bytes() + header.distance_bytes());
+    out.extend_from_slice(BAKE_MAGIC);
+    let words: [u32; 17] = [
+        BAKE_VERSION,
+        header.counts[0],
+        header.counts[1],
+        header.counts[2],
+        header.origin[0].to_bits(),
+        header.origin[1].to_bits(),
+        header.origin[2].to_bits(),
+        header.spacing.to_bits(),
+        header.irradiance_tile,
+        header.distance_tile,
+        header.irradiance_size[0],
+        header.irradiance_size[1],
+        header.distance_size[0],
+        header.distance_size[1],
+        header.sweeps,
+        header.rays,
+        0,
+    ];
+    for word in words {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    for value in irradiance.values.iter().chain(&distance.values) {
+        out.extend_from_slice(&half::f16::from_f64(*value).to_le_bytes());
+    }
+    Ok(out)
+}
+
+pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
+    if bytes.len() < BAKE_HEADER_BYTES || &bytes[..8] != BAKE_MAGIC {
+        return Err("not a light probe bake (.probes) file".into());
+    }
+    let word = |index: usize| {
+        let at = 8 + index * 4;
+        u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+    };
+    if word(0) != BAKE_VERSION {
+        return Err(format!(
+            "light probe bake version {} (this engine reads {BAKE_VERSION})",
+            word(0)
+        ));
+    }
+    let header = BakeHeader {
+        counts: [word(1), word(2), word(3)],
+        origin: [
+            f32::from_bits(word(4)),
+            f32::from_bits(word(5)),
+            f32::from_bits(word(6)),
+        ],
+        spacing: f32::from_bits(word(7)),
+        irradiance_tile: word(8),
+        distance_tile: word(9),
+        irradiance_size: [word(10), word(11)],
+        distance_size: [word(12), word(13)],
+        sweeps: word(14),
+        rays: word(15),
+    };
+    let irradiance_end = BAKE_HEADER_BYTES + header.irradiance_bytes();
+    let end = irradiance_end + header.distance_bytes();
+    if bytes.len() != end {
+        return Err(format!(
+            "light probe bake is {} bytes, its header says {end}",
+            bytes.len()
+        ));
+    }
+    Ok(DecodedBake {
+        header,
+        irradiance: bytes[BAKE_HEADER_BYTES..irradiance_end].to_vec(),
+        distance: bytes[irradiance_end..end].to_vec(),
+    })
 }
 
 /// A uniformly random rotation, so successive updates cover the sphere between the fixed
@@ -678,6 +1066,37 @@ mod tests {
                     | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING,
             );
         }
+    }
+
+    #[test]
+    fn bakes_round_trip_and_check_their_grid() {
+        use crate::renderer::readback::Readback;
+        let grid = LightProbeGrid::centered(Vec3::ZERO, 0.5, [3, 2, 2], 128, 0.97, 1.0);
+        let header = BakeHeader::new(&grid, 256, 256);
+        let readback = |size: [u32; 2], channels: usize| Readback {
+            width: size[0],
+            height: size[1],
+            channels,
+            values: (0..size[0] as usize * size[1] as usize * channels)
+                .map(|i| (i % 7) as f64 * 0.25)
+                .collect(),
+            integer: false,
+        };
+        let irradiance = readback(header.irradiance_size, 4);
+        let distance = readback(header.distance_size, 2);
+        let bytes = encode_bake(&header, &irradiance, &distance).unwrap();
+        let decoded = decode_bake(&bytes).unwrap();
+        assert_eq!(decoded.header, header);
+        assert_eq!(decoded.irradiance.len(), header.irradiance_bytes());
+        let first = half::f16::from_le_bytes([decoded.irradiance[2], decoded.irradiance[3]]);
+        assert_eq!(first.to_f64(), 0.25);
+
+        let mut moved = grid;
+        moved.origin.x += 0.5;
+        assert!(!header.matches(&BakeHeader::new(&moved, 1, 1)));
+        assert!(header.matches(&BakeHeader::new(&grid, 1, 32)));
+        assert!(decode_bake(&bytes[..bytes.len() - 1]).is_err());
+        assert!(decode_bake(b"nonsense").is_err());
     }
 
     #[test]

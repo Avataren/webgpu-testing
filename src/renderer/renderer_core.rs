@@ -1637,6 +1637,63 @@ impl Renderer {
         }
     }
 
+    /// Bake the light probe grid at high quality (needs hardware ray tracing): `warmup`
+    /// sweeps over every probe for the bounced light to build up, then the mean of
+    /// `sweeps` more with `rays` rays per probe, one update per frame. Returns the frames
+    /// it takes; [`Self::take_finished_light_probe_bake`] then gives the `.probes` file.
+    pub fn start_light_probe_bake(
+        &mut self,
+        warmup: u32,
+        sweeps: u32,
+        rays: u32,
+    ) -> Result<u32, String> {
+        self.light_probes.start_bake(warmup, sweeps, rays)
+    }
+
+    pub fn light_probe_bake_progress(
+        &self,
+    ) -> Option<crate::renderer::light_probes::LightProbeBakeProgress> {
+        self.light_probes.bake_progress()
+    }
+
+    /// The finished bake as the bytes of a `.probes` file (read back from the GPU), once.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn take_finished_light_probe_bake(&mut self) -> Option<Result<Vec<u8>, String>> {
+        use crate::renderer::readback::FetchableTexture;
+        let (header, irradiance, distance) = self.light_probes.finished_bake()?;
+        let read = |name: &str, texture: &wgpu::Texture| {
+            let size = texture.size();
+            self.read_texture(
+                &FetchableTexture::new(name.to_owned(), "", texture),
+                [0, 0, size.width, size.height],
+                0,
+            )
+        };
+        let result = read("probes.irradiance", irradiance)
+            .and_then(|irradiance| Ok((irradiance, read("probes.distance", distance)?)))
+            .and_then(|(irradiance, distance)| {
+                crate::renderer::light_probes::encode_bake(&header, &irradiance, &distance)
+            });
+        self.light_probes.end_bake();
+        Some(result)
+    }
+
+    /// Show the baked light probe data in `bytes` (a `.probes` file read from `source`).
+    pub fn load_light_probe_bake(&mut self, bytes: &[u8], source: &str) -> Result<(), String> {
+        self.light_probes
+            .load_bake(&self.context.queue, bytes, source)
+    }
+
+    /// The `.probes` file the light probe grid shows, if it was loaded from one.
+    pub fn light_probe_baked_source(&self) -> Option<&str> {
+        self.light_probes.baked_source()
+    }
+
+    /// Whether the light probe grid can trace (hardware ray tracing).
+    pub fn light_probes_can_trace(&self) -> bool {
+        self.light_probes.can_trace()
+    }
+
     fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> TracedLighting {
         let Some(rt_scene) = self.ray_tracing.as_ref() else {
             return TracedLighting::Raster;
