@@ -225,23 +225,12 @@ pub fn make_character(
 
     // The controller moves the character; clips that travel (Mixamo's without "In
     // Place") would drag the hips away from it. Their speeds were measured already.
-    let travels = scene
-        .animator_clips(character)
-        .is_some_and(|clips| clips.iter().any(|clip| clip.root_speed > 0.05));
-    if travels {
-        let world = scene.main_world_mut();
-        if let Some(owner) = crate::scene::skeletal::tree_animator(world, character) {
-            if let Ok(mut animator) = world.get::<&mut crate::scene::skeletal::Animator>(owner) {
-                if animator.root_motion == crate::scene::skeletal::RootMotion::Keep {
-                    animator.root_motion = crate::scene::skeletal::RootMotion::InPlace;
-                    notes.push(
-                        "the clips travel, so the Animator plays them in place (the \
-                         controller moves the character)"
-                            .into(),
-                    );
-                }
-            }
-        }
+    if scene.play_travelling_clips_in_place(character) {
+        notes.push(
+            "the clips travel, so the Animator plays them in place (the controller moves the \
+             character)"
+                .into(),
+        );
     }
 
     let camera = if options.camera {

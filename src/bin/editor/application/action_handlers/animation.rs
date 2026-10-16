@@ -146,10 +146,13 @@ pub fn handle_generate_animation_tree(ctx: &mut ActionContext, entity: Entity) -
     tree.transitions = generated.transitions;
     tree.runtime = Default::default();
     let states: Vec<&str> = tree.states.iter().map(|s| s.name.as_str()).collect();
-    let message = format!("Animation tree: {}", states.join(", "));
+    let mut message = format!("Animation tree: {}", states.join(", "));
     if let Err(err) = world.insert_one(entity, tree) {
         log::warn!("Cannot add an animation tree to {entity:?}: {err}");
         return ActionResult::no_change();
+    }
+    if ctx.scene.play_travelling_clips_in_place(entity) {
+        message.push_str("; the clips travel, so the Animator now plays them in place");
     }
     notify(ctx, ReloadNotification::success(message));
     ActionResult::scene_changed()

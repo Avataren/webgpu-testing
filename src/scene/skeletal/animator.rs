@@ -739,6 +739,9 @@ struct Binding {
     /// slot: maps the bone's parent space into the animator's local space.
     parent_to_animator: Vec<Mat4>,
     animator_entity: Entity,
+    /// The animator's world transform when bound: clip travel is measured in the world
+    /// (a Blender-converted armature's own space is in centimetres with Z up).
+    animator_world: Mat4,
 }
 
 #[derive(Debug)]
@@ -823,6 +826,10 @@ impl Binding {
             lineage: Vec::new(),
             parent_to_animator: Vec::new(),
             animator_entity: entity,
+            animator_world: world
+                .get::<&WorldTransform>(entity)
+                .map(|transform| transform.0.matrix())
+                .unwrap_or_else(|_| file_frame(world, entity)),
         };
         let mut slots: HashMap<Entity, usize> = HashMap::new();
         let previous_rest: HashMap<Entity, Transform> = previous
@@ -1118,8 +1125,8 @@ impl Binding {
             .collect()
     }
 
-    /// How fast the clip's root bone travels over the ground, start to end, in the
-    /// animator's space (m/s; 0 for clips animated in place).
+    /// How fast the clip's root bone travels over the ground, start to end, in the world
+    /// (m/s; 0 for clips animated in place).
     fn root_speed(&self, clip: &BoundClip) -> f32 {
         let (Some(root), duration) = (clip.root, clip.clip.duration) else {
             return 0.0;
@@ -1141,6 +1148,7 @@ impl Binding {
         }
         let travel = self.parent_to_animator[bound.slot]
             .transform_vector3(bound.translation(end) - bound.translation(start));
+        let travel = self.animator_world.transform_vector3(travel);
         Vec3::new(travel.x, 0.0, travel.z).length() / span
     }
 

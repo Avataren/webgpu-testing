@@ -1069,7 +1069,12 @@ fn patch_animation_tree(
         .scene
         .main_world_mut()
         .insert_one(entity, tree)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    if generate {
+        // Travelling clips play in place under a controller.
+        ctx.gpu.scene.play_travelling_clips_in_place(entity);
+    }
+    Ok(())
 }
 
 /// Insert or patch a component that has a `Default`, or remove it when `value` is null.

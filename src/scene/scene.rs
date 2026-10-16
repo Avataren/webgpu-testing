@@ -124,6 +124,32 @@ impl Scene {
         crate::scene::skeletal::AnimationTree::locomotion(&clips)
     }
 
+    /// When the clips of the animator that `entity`'s tree drives travel over the ground
+    /// (Mixamo's without "In Place"), play them in place: a character controller moves
+    /// the character, and travel would drag the hips away from it. Returns whether it
+    /// changed the animator.
+    pub fn play_travelling_clips_in_place(&mut self, entity: Entity) -> bool {
+        use crate::scene::skeletal::{tree_animator, Animator, RootMotion};
+        let travels = self
+            .animator_clips(entity)
+            .is_some_and(|clips| clips.iter().any(|clip| clip.root_speed > 0.05));
+        if !travels {
+            return false;
+        }
+        let world = self.main_world_mut();
+        let Some(owner) = tree_animator(world, entity) else {
+            return false;
+        };
+        let Ok(mut animator) = world.get::<&mut Animator>(owner) else {
+            return false;
+        };
+        if animator.root_motion != RootMotion::Keep {
+            return false;
+        }
+        animator.root_motion = RootMotion::InPlace;
+        true
+    }
+
     /// The scene's physics simulation (see [`crate::physics`]).
     pub fn physics(&self) -> &crate::physics::ScenePhysics {
         &self.physics
