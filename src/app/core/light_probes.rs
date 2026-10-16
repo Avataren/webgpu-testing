@@ -1,40 +1,54 @@
-//! Per frame: hand the scene's light probe volume to the renderer, load its baked data
-//! where the probes need it, and save a finished bake into the project.
+//! Per frame: hand the scene's light probe volumes to the renderer, load their baked data
+//! where the renderer does not show it yet, and save a finished bake into the project.
 
+use crate::renderer::LightProbeGrid;
 use crate::renderer::Renderer;
 use crate::scene::Scene;
+use std::collections::HashMap;
 
 /// Where bakes are saved, relative to the project.
 #[cfg(not(target_arch = "wasm32"))]
 const BAKE_DIR: &str = "content/lighting";
 
-/// Set the renderer's probe grid from `scene`, load the volume's baked data when the
-/// renderer does not show it yet, and save a bake that finished. `failed_load` remembers
-/// the file that last failed to load, so it is not read again every frame.
-pub(super) fn sync(renderer: &mut Renderer, scene: &mut Scene, failed_load: &mut Option<String>) {
-    let volume = crate::scene::active_light_probe_volume(scene.main_world());
-    renderer.set_light_probe_grid(volume.as_ref().map(|volume| volume.grid));
+/// Set the renderer's probe volumes from `scene`, load each volume's baked data when the
+/// renderer does not show it yet, and save a bake that finished. `failed_loads` holds the
+/// files that failed to load and the grid they failed for: they are read again only once
+/// that volume's grid changes (moved back to where the bake fits, say).
+pub(super) fn sync(
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    failed_loads: &mut HashMap<String, LightProbeGrid>,
+) {
+    let volumes = crate::scene::light_probe_volumes(scene.main_world());
+    let grids: Vec<_> = volumes.iter().map(|volume| volume.grid).collect();
+    renderer.set_light_probe_grids(&grids);
 
-    if let Some(path) = volume.as_ref().and_then(|volume| volume.baked.as_deref()) {
-        if renderer.light_probe_baked_source() != Some(path) && failed_load.as_deref() != Some(path)
+    for volume in &volumes {
+        let Some(path) = volume.baked.as_deref() else {
+            continue;
+        };
+        if renderer.light_probe_baked_source(volume.grid.id) == Some(path)
+            || failed_loads.get(path) == Some(&volume.grid)
         {
-            let loaded = crate::io::load_binary(&crate::project::resolve_project_path(path))
-                .and_then(|bytes| renderer.load_light_probe_bake(&bytes, path));
-            match loaded {
-                Ok(()) => {
-                    log::info!("Light probes: showing the bake in {path}");
-                    *failed_load = None;
-                }
-                Err(error) => {
-                    log::warn!("Light probes: {error}");
-                    *failed_load = Some(path.to_owned());
-                }
+            continue;
+        }
+        let loaded = crate::io::load_binary(&crate::project::resolve_project_path(path))
+            .and_then(|bytes| renderer.load_light_probe_bake(volume.grid.id, &bytes, path));
+        match loaded {
+            Ok(()) => {
+                log::info!("Light probes: showing the bake in {path}");
+                failed_loads.remove(path);
+            }
+            Err(error) => {
+                log::warn!("Light probes: {error}");
+                failed_loads.insert(path.to_owned(), volume.grid);
             }
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(result) = renderer.take_finished_light_probe_bake() {
+    if let Some((id, result)) = renderer.take_finished_light_probe_bake() {
+        let volume = volumes.iter().find(|volume| volume.grid.id == id);
         let outcome = match (result, volume) {
             (Ok(bytes), Some(volume)) => match save_bake(scene, volume.entity, &bytes) {
                 Ok(path) => {
@@ -42,10 +56,10 @@ pub(super) fn sync(renderer: &mut Renderer, scene: &mut Scene, failed_load: &mut
                         "Light probes: baked {} KB into {path}",
                         bytes.len().div_ceil(1024)
                     );
-                    if let Err(error) = renderer.load_light_probe_bake(&bytes, &path) {
+                    if let Err(error) = renderer.load_light_probe_bake(id, &bytes, &path) {
                         log::warn!("Light probes: {error}");
                     }
-                    *failed_load = None;
+                    failed_loads.remove(&path);
                     Ok(path)
                 }
                 Err(error) => Err(format!("saving the bake failed: {error}")),
@@ -56,22 +70,35 @@ pub(super) fn sync(renderer: &mut Renderer, scene: &mut Scene, failed_load: &mut
         if let Err(error) = &outcome {
             log::error!("Light probes: {error}");
         }
-        renderer.set_light_probe_bake_outcome(outcome);
+        renderer.set_light_probe_bake_outcome(id, outcome);
     }
 }
 
-/// Write `bytes` to `content/lighting/<volume name>.probes` in the project and point the
-/// volume at it. Returns the project path.
+/// Write `bytes` to `content/lighting/<volume name>.probes` in the project (with the
+/// entity's id added when another volume has the same name) and point the volume at it.
+/// Returns the project path.
 #[cfg(not(target_arch = "wasm32"))]
 fn save_bake(scene: &mut Scene, entity: hecs::Entity, bytes: &[u8]) -> Result<String, String> {
     let root =
         crate::project::active_project_root().ok_or("no project is open to save the bake into")?;
     let world = scene.main_world_mut();
-    let name = world
-        .get::<&crate::scene::Name>(entity)
-        .map(|name| name.0.clone())
-        .unwrap_or_else(|_| "light_probes".into());
-    let path = format!("{BAKE_DIR}/{}.probes", file_stem(&name));
+    let stem_of = |entity: hecs::Entity| {
+        file_stem(
+            &world
+                .get::<&crate::scene::Name>(entity)
+                .map(|name| name.0.clone())
+                .unwrap_or_else(|_| "light_probes".into()),
+        )
+    };
+    let mut stem = stem_of(entity);
+    let shared = world
+        .query::<&crate::scene::LightProbeVolume>()
+        .iter()
+        .any(|(other, _)| other != entity && stem_of(other) == stem);
+    if shared {
+        stem = format!("{stem}_{}", entity.id());
+    }
+    let path = format!("{BAKE_DIR}/{stem}.probes");
     let file = root.join(&path);
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;

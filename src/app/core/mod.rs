@@ -154,7 +154,7 @@ impl AppBuilder {
             exit_on_escape,
             exit_requested: false,
             remote,
-            light_probe_load_failed: None,
+            light_probe_load_failed: Default::default(),
         }
     }
 }
@@ -170,7 +170,9 @@ pub struct AppCore {
     exit_requested: bool,
     remote: Option<RemoteHubHandle>,
     /// The baked light probe file that last failed to load.
-    light_probe_load_failed: Option<String>,
+    /// Light probe bakes that failed to load, with the grid they failed for (not read
+    /// again every frame, but again once the volume changes).
+    light_probe_load_failed: std::collections::HashMap<String, crate::renderer::LightProbeGrid>,
 }
 
 impl AppCore {

@@ -44,7 +44,9 @@ pub use compute_resources::{
 pub use depth::Depth;
 pub use gpu_timer::GpuTimings;
 pub use light_probe_debug::LightProbeDebugView;
-pub use light_probes::{LightProbeBakeOutcome, LightProbeBakeProgress, LightProbeGrid};
+pub use light_probes::{
+    LightProbeBakeOutcome, LightProbeBakeProgress, LightProbeGrid, MAX_LIGHT_PROBE_VOLUMES,
+};
 pub use lights::{
     DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
     MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,

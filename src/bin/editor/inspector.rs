@@ -177,7 +177,11 @@ pub enum InspectorAction {
 /// What the light probe section asks of the renderer.
 #[derive(Clone, Copy, Debug)]
 pub enum LightProbeRequest {
-    Bake(BakeQuality),
+    /// Bake this volume (after any bake already running).
+    Bake {
+        entity: Entity,
+        quality: BakeQuality,
+    },
     /// Draw the probes as spheres (`None`: don't).
     SetDebug(Option<LightProbeDebugView>),
 }
@@ -214,23 +218,38 @@ impl BakeQuality {
 /// The renderer's light probe state the inspector shows, refreshed every frame.
 #[derive(Clone, Debug, Default)]
 pub struct LightProbePanelStatus {
-    /// The volume the renderer uses (the first enabled one), and its grid.
-    pub active: Option<ActiveProbeGrid>,
+    /// The volumes the renderer uses, in blending order, and their grids.
+    pub volumes: Vec<ActiveProbeGrid>,
     /// Whether the probes can trace here (hardware ray tracing).
     pub can_trace: bool,
-    /// The `.probes` file the grid shows, if loaded from one.
-    pub showing_bake: Option<String>,
     pub bake: Option<LightProbeBakeProgress>,
     pub debug: Option<LightProbeDebugView>,
     /// Whether a project is open (bakes are saved into it).
     pub project_open: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ActiveProbeGrid {
     pub entity: Entity,
     pub counts: [u32; 3],
     pub spacing: f32,
+    /// The `.probes` file it shows, if loaded from one.
+    pub showing_bake: Option<String>,
+}
+
+impl LightProbePanelStatus {
+    fn volume(&self, entity: Entity) -> Option<&ActiveProbeGrid> {
+        self.volumes.iter().find(|volume| volume.entity == entity)
+    }
+
+    /// Where `entity` comes in the blending order (1 first), and of how many.
+    fn rank(&self, entity: Entity) -> Option<(usize, usize)> {
+        let index = self
+            .volumes
+            .iter()
+            .position(|volume| volume.entity == entity)?;
+        Some((index + 1, self.volumes.len()))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2005,7 +2024,7 @@ fn show_light_probe_volume_section(
     theme::section(ui, icons::LIGHT_PROBES, "Light Probe Volume", |ui| {
         let mut edited = component.clone();
         let mut changed = false;
-        let active = status.active.filter(|grid| grid.entity == entity);
+        let active = status.volume(entity);
 
         Grid::new("light_probe_volume_grid")
             .num_columns(2)
@@ -2084,6 +2103,16 @@ fn show_light_probe_volume_section(
                     &mut changed,
                 );
 
+                ui.label("Priority");
+                changed |= ui
+                    .add(DragValue::new(&mut edited.priority).speed(0.1))
+                    .on_hover_text(
+                        "Where volumes overlap, the higher priority's light wins; at equal \
+                         priority the smaller volume's",
+                    )
+                    .changed();
+                ui.end_row();
+
                 ui.label("Relocate probes");
                 changed |= ui
                     .checkbox(&mut edited.relocate, "")
@@ -2114,7 +2143,7 @@ fn show_light_probe_volume_section(
 
         ui.add_space(4.0);
         ui.separator();
-        light_probe_bake_controls(ui, &edited, active.is_some(), status, actions);
+        light_probe_bake_controls(ui, entity, &edited, status, actions);
         ui.add_space(4.0);
         ui.separator();
         light_probe_debug_controls(ui, active.is_some(), status, actions);
@@ -2123,29 +2152,33 @@ fn show_light_probe_volume_section(
 
 fn light_probe_bake_controls(
     ui: &mut egui::Ui,
+    entity: Entity,
     volume: &LightProbeVolume,
-    active: bool,
     status: &LightProbePanelStatus,
     actions: &mut Vec<InspectorAction>,
 ) {
-    let lit_by = if !active {
-        if volume.enabled {
-            "Not in use: another enabled volume comes first"
-        } else {
-            "Disabled"
-        }
-    } else if status.bake.is_some() {
-        "Baking"
-    } else if status.can_trace && !volume.use_baked {
-        "Live: ray traced every frame"
-    } else if status.showing_bake.is_some() {
-        "Lit by the bake"
-    } else if status.can_trace {
-        "No bake to show"
-    } else {
-        "No light: this GPU cannot trace the probes, and there is no bake"
+    let active = status.volume(entity);
+    let id = entity.to_bits().get();
+    let baking = status.bake.filter(|progress| progress.volume == id);
+    let lit_by = match active {
+        None if volume.enabled => format!(
+            "Not in use: the renderer takes {} enabled volumes at most",
+            wgpu_cube::renderer::MAX_LIGHT_PROBE_VOLUMES
+        ),
+        None => "Disabled".into(),
+        Some(_) if baking.is_some() => "Baking".into(),
+        Some(_) if status.bake.is_some() => "Waiting while another volume bakes".into(),
+        Some(_) if status.can_trace && !volume.use_baked => "Live: ray traced every frame".into(),
+        Some(grid) if grid.showing_bake.is_some() => "Lit by the bake".into(),
+        Some(_) if status.can_trace => "No bake to show".into(),
+        Some(_) => "No light: this GPU cannot trace the probes, and there is no bake".into(),
     };
     ui.label(theme::hint(lit_by));
+    if let Some((rank, of)) = status.rank(entity).filter(|(_, of)| *of > 1) {
+        ui.label(theme::hint(format!(
+            "Blends {rank} of {of}: where volumes overlap, earlier ones win"
+        )));
+    }
     ui.horizontal(|ui| {
         ui.label("Baked");
         match &volume.baked {
@@ -2157,7 +2190,7 @@ fn light_probe_bake_controls(
         };
     });
 
-    if let Some(progress) = status.bake.filter(|_| active) {
+    if let Some(progress) = baking {
         let total = progress.warmup_sweeps + progress.sweeps;
         let done = progress.sweeps_done.min(total);
         let text = if done < progress.warmup_sweeps {
@@ -2181,8 +2214,8 @@ fn light_probe_bake_controls(
     let quality_id = ui.make_persistent_id("light_probe_bake_quality");
     let mut quality: BakeQuality =
         ui.data_mut(|data| data.get_temp(quality_id).unwrap_or_default());
-    let blocker = if !active {
-        Some("Only the volume in use can bake")
+    let blocker = if active.is_none() {
+        Some("Only volumes in use can bake")
     } else if !status.can_trace {
         Some("Baking traces the probes: it needs hardware ray tracing")
     } else if !status.project_open {
@@ -2209,18 +2242,20 @@ fn light_probe_bake_controls(
                 theme::primary_button(format!("{}  Bake", icons::LIGHT_PROBES)),
             )
             .on_hover_text(
-                "Trace the probes at bake quality over the next frames and save them to \
-                 content/lighting/<volume>.probes (used where the probes cannot trace, e.g. \
-                 the web); save the project afterwards",
+                "Trace this volume's probes at bake quality over the next frames (after any \
+                 bake already running) and save them to content/lighting/<volume>.probes \
+                 (used where the probes cannot trace, e.g. the web); save the project \
+                 afterwards",
             );
         let button = match blocker {
             Some(reason) => button.on_disabled_hover_text(reason),
             None => button,
         };
         if button.clicked() {
-            actions.push(InspectorAction::LightProbes(LightProbeRequest::Bake(
+            actions.push(InspectorAction::LightProbes(LightProbeRequest::Bake {
+                entity,
                 quality,
-            )));
+            }));
         }
     });
     ui.data_mut(|data| data.insert_temp(quality_id, quality));

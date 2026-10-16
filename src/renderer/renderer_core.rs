@@ -1628,11 +1628,14 @@ impl Renderer {
         self.gpu_timer.mark(&mut frame.encoder, "light_probes");
     }
 
-    /// Light surfaces inside `grid` from its probes (`None`: no grid). Call every frame
-    /// with the scene's light probe volume; a changed layout starts the probes over.
-    pub fn set_light_probe_grid(&mut self, grid: Option<crate::renderer::LightProbeGrid>) {
+    /// Light surfaces inside `grids` from their probes, the first one's light where it
+    /// covers a surface, the next one's where it does not, and so on (at most
+    /// [`crate::renderer::MAX_LIGHT_PROBE_VOLUMES`]; none: surfaces take the
+    /// environment's light). Call every frame with the scene's light probe volumes; a
+    /// volume that moved starts its probes over, the others keep theirs.
+    pub fn set_light_probe_grids(&mut self, grids: &[crate::renderer::LightProbeGrid]) {
         self.light_probes
-            .set_grid(&self.context.device, &self.context.queue, grid);
+            .set_grids(&self.context.device, &self.context.queue, grids);
         if self.light_probes.take_bindings_changed() {
             self.lights_buffer.set_light_probes(
                 &self.context.device,
@@ -1643,17 +1646,20 @@ impl Renderer {
         }
     }
 
-    /// Bake the light probe grid at high quality (needs hardware ray tracing): `warmup`
-    /// sweeps over every probe for the bounced light to build up, then the mean of
-    /// `sweeps` more with `rays` rays per probe, one update per frame. Returns the frames
-    /// it takes; [`Self::take_finished_light_probe_bake`] then gives the `.probes` file.
+    /// Bake light probe volumes `volumes` (their grid ids; every volume when `None`) at
+    /// high quality, one after another (needs hardware ray tracing): `warmup` sweeps over
+    /// every probe for the bounced light to build up, then the mean of `sweeps` more with
+    /// `rays` rays per probe, one update per frame. Volumes asked for during a bake wait
+    /// their turn. Returns the frames the bakes take;
+    /// [`Self::take_finished_light_probe_bake`] then gives each volume's `.probes` file.
     pub fn start_light_probe_bake(
         &mut self,
+        volumes: Option<&[u64]>,
         warmup: u32,
         sweeps: u32,
         rays: u32,
     ) -> Result<u32, String> {
-        self.light_probes.start_bake(warmup, sweeps, rays)
+        self.light_probes.start_bake(volumes, warmup, sweeps, rays)
     }
 
     pub fn light_probe_bake_progress(
@@ -1662,37 +1668,64 @@ impl Renderer {
         self.light_probes.bake_progress()
     }
 
-    /// The finished bake as the bytes of a `.probes` file (read back from the GPU), once.
+    /// A finished bake: the volume's grid id and its `.probes` file (read back from the
+    /// GPU), once per bake.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn take_finished_light_probe_bake(&mut self) -> Option<Result<Vec<u8>, String>> {
+    pub fn take_finished_light_probe_bake(&mut self) -> Option<(u64, Result<Vec<u8>, String>)> {
         use crate::renderer::readback::FetchableTexture;
-        let (header, irradiance, distance) = self.light_probes.finished_bake()?;
-        let read = |name: &str, texture: &wgpu::Texture| {
-            let size = texture.size();
+        let finished = self.light_probes.finished_bake()?;
+        let read = |name: &str, texture: &wgpu::Texture, region: [u32; 4]| {
             self.read_texture(
                 &FetchableTexture::new(name.to_owned(), "", texture),
-                [0, 0, size.width, size.height],
+                region,
                 0,
             )
         };
-        let result = read("probes.irradiance", irradiance)
-            .and_then(|irradiance| Ok((irradiance, read("probes.distance", distance)?)))
-            .and_then(|(irradiance, distance)| {
-                crate::renderer::light_probes::encode_bake(&header, &irradiance, &distance)
-            });
+        let result = read(
+            "probes.irradiance",
+            finished.irradiance,
+            finished.irradiance_region,
+        )
+        .and_then(|irradiance| {
+            Ok((
+                irradiance,
+                read(
+                    "probes.distance",
+                    finished.distance,
+                    finished.distance_region,
+                )?,
+            ))
+        })
+        .and_then(|(irradiance, distance)| {
+            crate::renderer::light_probes::encode_bake(&finished.header, &irradiance, &distance)
+        });
+        let volume = finished.volume;
         self.light_probes.end_bake();
-        Some(result)
+        Some((volume, result))
     }
 
-    /// Show the baked light probe data in `bytes` (a `.probes` file read from `source`).
-    pub fn load_light_probe_bake(&mut self, bytes: &[u8], source: &str) -> Result<(), String> {
+    /// Show the baked light probe data in `bytes` (a `.probes` file read from `source`)
+    /// in volume `volume` (its grid id).
+    pub fn load_light_probe_bake(
+        &mut self,
+        volume: u64,
+        bytes: &[u8],
+        source: &str,
+    ) -> Result<(), String> {
         self.light_probes
-            .load_bake(&self.context.queue, bytes, source)
+            .load_bake(&self.context.queue, volume, bytes, source)
     }
 
-    /// The `.probes` file the light probe grid shows, if it was loaded from one.
-    pub fn light_probe_baked_source(&self) -> Option<&str> {
-        self.light_probes.baked_source()
+    /// The `.probes` file light probe volume `volume` (its grid id) shows, if it was
+    /// loaded from one.
+    pub fn light_probe_baked_source(&self, volume: u64) -> Option<&str> {
+        self.light_probes.baked_source(volume)
+    }
+
+    /// Where light probe volume `volume`'s regions of `probes.irradiance` and
+    /// `probes.distance` are ([x, y, width, height] each).
+    pub fn light_probe_regions(&self, volume: u64) -> Option<([u32; 4], [u32; 4])> {
+        self.light_probes.regions(volume)
     }
 
     /// Whether the light probe grid can trace (hardware ray tracing).
@@ -1700,15 +1733,18 @@ impl Renderer {
         self.light_probes.can_trace()
     }
 
-    /// Record how the last light probe bake ended (the app saves it): the project path of
-    /// the saved file, or what went wrong.
-    pub fn set_light_probe_bake_outcome(&mut self, result: Result<String, String>) {
+    /// Record how the last light probe bake (of volume `volume`) ended (the app saves it):
+    /// the project path of the saved file, or what went wrong.
+    pub fn set_light_probe_bake_outcome(&mut self, volume: u64, result: Result<String, String>) {
         let serial = self
             .light_probe_bake_outcome
             .as_ref()
             .map_or(1, |outcome| outcome.serial + 1);
-        self.light_probe_bake_outcome =
-            Some(crate::renderer::LightProbeBakeOutcome { serial, result });
+        self.light_probe_bake_outcome = Some(crate::renderer::LightProbeBakeOutcome {
+            serial,
+            volume,
+            result,
+        });
     }
 
     pub fn light_probe_bake_outcome(&self) -> Option<&crate::renderer::LightProbeBakeOutcome> {

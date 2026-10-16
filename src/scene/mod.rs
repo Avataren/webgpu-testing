@@ -50,7 +50,7 @@ pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use input_state::{ButtonState, InputState};
 pub use library::SceneLibrary;
-pub use light_probes::{active_light_probe_volume, light_probe_grid, ActiveLightProbeVolume};
+pub use light_probes::{light_probe_volumes, ActiveLightProbeVolume};
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub use post_process::{blend_post_process_volumes, volume_influence};

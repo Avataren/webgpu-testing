@@ -20,9 +20,15 @@ impl EditorSystem for LightProbeSystem {
             let mut notifications = Vec::new();
             for request in app.take_light_probe_requests() {
                 match request {
-                    LightProbeRequest::Bake(quality) => {
+                    LightProbeRequest::Bake { entity, quality } => {
                         let (warmup, sweeps, rays) = quality.settings();
-                        match gpu.renderer.start_light_probe_bake(warmup, sweeps, rays) {
+                        let volume = [entity.to_bits().get()];
+                        match gpu.renderer.start_light_probe_bake(
+                            Some(&volume),
+                            warmup,
+                            sweeps,
+                            rays,
+                        ) {
                             Ok(frames) => log::info!(
                                 "Light probes: {} bake started ({frames} frames)",
                                 quality.label()
@@ -60,16 +66,21 @@ impl EditorSystem for LightProbeSystem {
                 }
             }
 
-            let volume = wgpu_cube::scene::active_light_probe_volume(gpu.scene.main_world());
+            let volumes = wgpu_cube::scene::light_probe_volumes(gpu.scene.main_world());
             let renderer = &*gpu.renderer;
             *app.light_probe_status_mut() = LightProbePanelStatus {
-                active: volume.map(|volume| ActiveProbeGrid {
-                    entity: volume.entity,
-                    counts: volume.grid.counts,
-                    spacing: volume.grid.spacing,
-                }),
+                volumes: volumes
+                    .iter()
+                    .map(|volume| ActiveProbeGrid {
+                        entity: volume.entity,
+                        counts: volume.grid.counts,
+                        spacing: volume.grid.spacing,
+                        showing_bake: renderer
+                            .light_probe_baked_source(volume.grid.id)
+                            .map(str::to_owned),
+                    })
+                    .collect(),
                 can_trace: renderer.light_probes_can_trace(),
-                showing_bake: renderer.light_probe_baked_source().map(str::to_owned),
                 bake: renderer.light_probe_bake_progress(),
                 debug: renderer.light_probe_debug(),
                 project_open: wgpu_cube::project::active_project_root().is_some(),

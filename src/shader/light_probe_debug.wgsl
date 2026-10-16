@@ -1,15 +1,28 @@
 // src/shader/light_probe_debug.wgsl
 // The light probe debug view (renderer/light_probe_debug.rs): a sphere at every probe of
-// the grid (light_probes.wgsl), where it is after relocation, showing the light its
+// every volume that holds light (light_probes.wgsl), where it is after relocation, showing the light its
 // irradiance tile holds for each direction. Probes inside geometry (which give nothing)
 // are dark red; probes moved out of geometry have a yellow rim. Drawn over the finished
 // image, depth tested against the scene. Needs camera.wgsl (group 0).
 
-struct LightProbeGrid {
+// As in light_probes.wgsl.
+const DEBUG_MAX_VOLUMES : u32 = 8u;
+const DEBUG_IRRADIANCE_TILE : u32 = 8u;
+const DEBUG_VOLUME_LIT : u32 = 1u;
+
+struct LightProbeVolume {
     origin_spacing : vec4<f32>,
     counts : vec4<u32>,
     atlas : vec4<u32>,
     params : vec4<f32>,
+    axis_x : vec4<f32>,
+    axis_y : vec4<f32>,
+    axis_z : vec4<f32>,
+};
+
+struct LightProbeVolumes {
+    header : vec4<u32>,
+    volumes : array<LightProbeVolume, DEBUG_MAX_VOLUMES>,
 };
 
 struct LightProbeDebug {
@@ -17,7 +30,7 @@ struct LightProbeDebug {
     params : vec4<f32>,
 };
 
-@group(1) @binding(0) var<uniform> probe_grid : LightProbeGrid;
+@group(1) @binding(0) var<uniform> probe_volumes : LightProbeVolumes;
 @group(1) @binding(1) var probe_irradiance : texture_2d<f32>;
 @group(1) @binding(2) var<uniform> probe_debug : LightProbeDebug;
 @group(1) @binding(3) var probe_sampler : sampler;
@@ -27,6 +40,7 @@ struct ProbeVertex {
     @location(0) world : vec3<f32>,
     @location(1) @interpolate(flat) center : vec3<f32>,
     @location(2) @interpolate(flat) probe : u32,
+    @location(4) @interpolate(flat) volume : u32,
     @location(3) @interpolate(flat) relocated : f32,
 };
 
@@ -35,16 +49,16 @@ struct ProbeFragment {
     @builtin(frag_depth) depth : f32,
 };
 
-fn debug_probe_count() -> u32 {
-    let counts = probe_grid.counts.xyz;
+fn debug_probe_count(v : u32) -> u32 {
+    let counts = probe_volumes.volumes[v].counts.xyz;
     return counts.x * counts.y * counts.z;
 }
 
-fn debug_probe_offset(probe : u32) -> vec3<f32> {
-    let columns = max(probe_grid.atlas.x, 1u);
-    let tile = probe_grid.atlas.y;
-    let width = columns * tile;
-    let top = (debug_probe_count() + columns - 1u) / columns * tile;
+fn debug_probe_offset(v : u32, probe : u32) -> vec3<f32> {
+    let volume = probe_volumes.volumes[v];
+    let columns = max(volume.atlas.x, 1u);
+    let width = columns * DEBUG_IRRADIANCE_TILE;
+    let top = volume.atlas.y + (debug_probe_count(v) + columns - 1u) / columns * DEBUG_IRRADIANCE_TILE;
     return textureLoad(
         probe_irradiance, vec2<i32>(i32(probe % width), i32(top + probe / width)), 0
     ).xyz;
@@ -62,11 +76,14 @@ fn debug_oct_encode(d : vec3<f32>) -> vec2<f32> {
     return p;
 }
 
-// The irradiance of `probe` toward direction `d` (filtered, as surfaces read it).
-fn debug_probe_light(probe : u32, d : vec3<f32>) -> vec4<f32> {
-    let columns = max(probe_grid.atlas.x, 1u);
-    let tile = probe_grid.atlas.y;
-    let corner = vec2<f32>(f32(probe % columns), f32(probe / columns)) * f32(tile) + 1.0;
+// The irradiance of `probe` of volume `v` toward direction `d` (filtered, as surfaces
+// read it).
+fn debug_probe_light(v : u32, probe : u32, d : vec3<f32>) -> vec4<f32> {
+    let volume = probe_volumes.volumes[v];
+    let columns = max(volume.atlas.x, 1u);
+    let tile = DEBUG_IRRADIANCE_TILE;
+    let corner = vec2<f32>(f32(probe % columns), f32(probe / columns)) * f32(tile)
+        + vec2<f32>(1.0, 1.0 + f32(volume.atlas.y));
     let oct = debug_oct_encode(d) * 0.5 + 0.5;
     let dims = vec2<f32>(textureDimensions(probe_irradiance));
     let uv = (corner + oct * f32(tile - 2u)) / dims;
@@ -76,14 +93,32 @@ fn debug_probe_light(probe : u32, d : vec3<f32>) -> vec4<f32> {
 @vertex
 fn vs_probe(
     @builtin(vertex_index) vertex : u32,
-    @builtin(instance_index) probe : u32,
+    @builtin(instance_index) instance : u32,
 ) -> ProbeVertex {
     var out : ProbeVertex;
-    let counts = probe_grid.counts.xyz;
-    let coords = vec3<u32>(probe % counts.x, (probe / counts.x) % counts.y, probe / (counts.x * counts.y));
-    let offset = debug_probe_offset(probe);
-    let center = probe_grid.origin_spacing.xyz
-        + vec3<f32>(coords) * probe_grid.origin_spacing.w + offset;
+    // Instances run through the volumes' probes, one volume after another.
+    var v = 0u;
+    var probe = instance;
+    let volume_count = min(probe_volumes.header.x, DEBUG_MAX_VOLUMES);
+    loop {
+        if v + 1u >= volume_count || probe < debug_probe_count(v) {
+            break;
+        }
+        probe -= debug_probe_count(v);
+        v += 1u;
+    }
+    let volume = probe_volumes.volumes[v];
+    if v >= volume_count || probe >= debug_probe_count(v) || (volume.counts.w & DEBUG_VOLUME_LIT) == 0u {
+        // Nothing to show: off screen.
+        out.position = vec4<f32>(0.0, 0.0, -2.0, 1.0);
+        return out;
+    }
+    let counts = volume.counts.xyz;
+    let coords = vec3<f32>(vec3<u32>(probe % counts.x, (probe / counts.x) % counts.y, probe / (counts.x * counts.y)))
+        * volume.origin_spacing.w;
+    let offset = debug_probe_offset(v, probe);
+    let center = volume.origin_spacing.xyz + volume.axis_x.xyz * coords.x
+        + volume.axis_y.xyz * coords.y + volume.axis_z.xyz * coords.z + offset;
     let radius = probe_debug.params.x;
 
     // A camera-facing square wide enough for the sphere's silhouette in perspective.
@@ -109,7 +144,8 @@ fn vs_probe(
     out.world = world;
     out.center = center;
     out.probe = probe;
-    out.relocated = select(0.0, 1.0, length(offset) > 0.01 * probe_grid.origin_spacing.w);
+    out.volume = v;
+    out.relocated = select(0.0, 1.0, length(offset) > 0.01 * volume.origin_spacing.w);
     return out;
 }
 
@@ -131,7 +167,7 @@ fn fs_probe(in : ProbeVertex) -> ProbeFragment {
     let hit = origin + direction * t;
     let n = normalize(hit - in.center);
 
-    let light = debug_probe_light(in.probe, n);
+    let light = debug_probe_light(in.volume, in.probe, n);
     var color : vec3<f32>;
     if light.a < 0.5 {
         // Inside geometry: no light to give.

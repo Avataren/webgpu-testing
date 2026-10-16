@@ -216,7 +216,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "particle_emitter": { "type": ["object", "null"], "description": "Particle emitter settings as entity_get shows them, or null" },
         "environment": { "type": ["object", "null"], "description": "Environment component (see environment_get for fields), or null" },
         "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, overrides: [setting paths] or null for all, settings: {...as postprocess_set}}. A volume spawned into a scene that already has one overrides only the settings given. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
-        "light_probe_volume": { "type": ["object", "null"], "description": "Light probe grid for indirect diffuse light (GI), or null to remove: {enabled, size: [x,y,z] box in metres centred on the entity (scales with it, rotation ignored), spacing (m, default 0.5), rays_per_probe (32-256, default 128), hysteresis (0-0.995, default 0.97), intensity, relocate (default true: probes inside or against geometry move out of it, within 0.45 spacing), use_baked}. Surfaces inside take their diffuse ambient from the probes, which see walls, so sky light enters only through openings. Probes update by ray tracing each frame (needs capabilities.ray_tracing); fit the box to the room or level. Inspect with texture_fetch probes.irradiance / probes.distance. Only given fields change." },
+        "light_probe_volume": { "type": ["object", "null"], "description": "Light probe grid for indirect diffuse light (GI), or null to remove: {enabled, size: [x,y,z] box in metres centred on the entity (scales and turns with it), spacing (m, default 0.5), rays_per_probe (32-256, default 128), hysteresis (0-0.995, default 0.97), intensity, relocate (default true: probes inside or against geometry move out of it, within 0.45 spacing), priority (default 0: where volumes overlap, the higher priority, then the smaller volume, wins), use_baked}. Surfaces inside take their diffuse ambient from the probes, which see walls, so sky light enters only through openings. Up to 8 enabled volumes are used: one per room, or a finer one inside a big one. Probes update by ray tracing each frame (needs capabilities.ray_tracing); fit the box to the room or level. Inspect with texture_fetch probes.irradiance / probes.distance. Only given fields change." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -718,8 +718,9 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "light_probes_bake",
-            description: "Bake the scene's light probe volume (light_probe_volume) at high quality: warm-up sweeps for the bounced light to build up, then the exact mean of many sweeps with up to 256 rays per probe (about 65k rays per probe by default). Runs over the next frames (one update per frame; the result says how many): wait that long, then light_probes_status. The bake is saved as content/lighting/<volume name>.probes and the volume's baked path is set; project_save keeps it. Baked probes light the scene where the probes cannot trace (web builds, GPUs without ray tracing) and stay as baked; with ray tracing they are the starting point (use_baked: true shows only the bake). Needs hardware ray tracing.",
+            description: "Bake the scene's light probe volumes (light_probe_volume), or one of them (entity), at high quality, one after another: warm-up sweeps for the bounced light to build up, then the exact mean of many sweeps with up to 256 rays per probe (about 65k rays per probe by default). Runs over the next frames (one update per frame; the result says how many): wait that long, then light_probes_status. A volume asked for during a bake waits its turn. Each bake is saved as content/lighting/<volume name>.probes and the volume's baked path is set; project_save keeps them. Baked probes light the scene where the probes cannot trace (web builds, GPUs without ray tracing) and stay as baked; with ray tracing they are the starting point (use_baked: true shows only the bake). Needs hardware ray tracing.",
             schema: object(json!({
+                "entity": entity_ref(),
                 "warmup_sweeps": { "type": "integer", "description": "Sweeps before averaging, for the bounces to build up (default 32)" },
                 "sweeps": { "type": "integer", "description": "Sweeps averaged (default 256)" },
                 "rays_per_probe": { "type": "integer", "description": "Rays per probe per sweep, 32-256 (default 256)" }
@@ -728,13 +729,13 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "light_probes_status",
-            description: "The scene's light probe volume (probe counts, spacing, live or baked), whether the probes can trace here, the baked file they show, and a running bake's progress.",
+            description: "The light probe volumes in use, in blending order (probe counts, spacing, rotation, live or baked, the baked file each shows, their regions of probes.irradiance / probes.distance), whether the probes can trace here, a running bake's progress and queue, and the last bake's outcome.",
             schema: empty(),
             action: Action::Engine("light_probes.status"),
         },
         Tool {
             name: "light_probes_debug",
-            description: "Show or hide the light probe debug view: a sphere at every probe of the scene's light probe volume (where relocation moved it), lit by the light the probe holds from each direction. Dark red: inside geometry (gives nothing); yellow rim: moved out of geometry. Drawn over the image in the editor and player until hidden; screenshot to see it.",
+            description: "Show or hide the light probe debug view: a sphere at every probe of the light probe volumes (where relocation moved it), lit by the light the probe holds from each direction. Dark red: inside geometry (gives nothing); yellow rim: moved out of geometry. Drawn over the image in the editor and player until hidden; screenshot to see it.",
             schema: object(json!({
                 "show": { "type": "boolean", "description": "Default true; false hides it" },
                 "radius": { "type": "number", "description": "Sphere radius in meters (default 0.06; kept until changed)" },

@@ -134,11 +134,11 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     (
         "light_probes.bake",
-        "Bake the scene's light probe volume at high quality into content/lighting/",
+        "Bake the scene's light probe volumes (or one) at high quality into content/lighting/",
     ),
     (
         "light_probes.status",
-        "The light probe volume, bake progress and the baked data it shows",
+        "The light probe volumes, bake progress and the baked data each shows",
     ),
     (
         "light_probes.debug",

@@ -125,14 +125,16 @@ engine you launched; save first).
 - Light probes give raster lighting bounced light and keep the sky out of interiors (works
   on the web): `entity_spawn {kind: "light_probe_volume", position, light_probe_volume: {size:
   [x, y, z], spacing}}` with the box fitted inside the room or level (centred on the entity,
-  axis aligned; 0.5 m spacing suits rooms). Surfaces inside take diffuse and rough specular
+  turning with it; 0.5 m spacing suits rooms; selecting it in the editor outlines where the
+  probes sit). Up to 8 volumes: one per room, or a finer one inside a big one (where they
+  overlap the higher `priority`, then the smaller volume, wins). Surfaces inside take diffuse and rough specular
   environment light from the probes, which see walls. With ray tracing the probes update live
   (`engine_stats` `renderer.gpu` `light_probes`, about 0.6 ms for 850 probes); for web builds
-  and GPUs without it, `light_probes_bake` (high quality, a few seconds; then `wait` the frames
-  it reports) saves `content/lighting/<volume>.probes` and sets the volume's `baked` path:
-  `project_save` keeps it. Bake again after moving the volume or changing the room's lighting.
-  `light_probes_status` shows the volume, bake progress, the last bake's outcome and what is
-  shown; `use_baked: true` previews the bake in the editor; `light_probes_debug {show: true}`
+  and GPUs without it, `light_probes_bake` (all volumes in turn, or `entity`; high quality, a
+  few seconds each; then `wait` the frames it reports) saves `content/lighting/<volume>.probes`
+  and sets each volume's `baked` path: `project_save` keeps them. Bake again after moving the volume or changing the room's lighting.
+  `light_probes_status` shows the volumes, bake progress and queue, the last bake's outcome
+  and what each shows; `use_baked: true` previews the bake in the editor; `light_probes_debug {show: true}`
   draws a sphere per probe lit by its data (dark red: inside geometry, yellow rim: relocated);
   `texture_fetch probes.irradiance` / `probes.distance` show the probes' data. Probes inside or
   against walls move out of them (`relocate`, default on, within 0.45 spacing). In the editor

@@ -1,10 +1,12 @@
 // src/shader/light_probe_update.wgsl
-// Updating the light probe grid (light_probes.wgsl) by ray tracing, in three fullscreen
-// passes per update:
+// Updating a light probe volume (light_probes.wgsl) by ray tracing, in three fullscreen
+// passes per update of one volume (several volumes are several updates, each with its
+// own slot of the update uniform):
 // 1. fs_probe_trace: one texel per ray, one row per probe updated: the light arriving
 //    along the ray (direct light at the hit, plus the probes' own light there for the
 //    further bounces) and the distance to the hit (negative for the back of a surface);
-// 2. fs_probe_irradiance: every irradiance atlas texel, the cosine-weighted mean of its
+// 2. fs_probe_irradiance: every texel of the volume's irradiance region (the pass is
+//    scissored to it), the cosine-weighted mean of its
 //    probe's rays, blended into its previous value; and below the tiles each probe's
 //    offset, moving it out of geometry (relocation, after RTXGI's DDGI);
 // 3. fs_probe_distance: the same for the distances (and their squares), with a sharper
@@ -22,6 +24,8 @@ struct LightProbeUpdate {
     // environment's mip levels), w: the share of backface hits marking a probe as inside
     // geometry.
     params : vec4<f32>,
+    // x: the volume updated (an index into light_probe_volumes).
+    volume : vec4<u32>,
 };
 
 // No previous value: take this update's.
@@ -72,12 +76,17 @@ fn probe_ray_direction(index : u32) -> vec3<f32> {
     return normalize((probe_update.rotation * vec4<f32>(d, 0.0)).xyz);
 }
 
+// The volume this update traces.
+fn probe_volume() -> u32 {
+    return probe_update.volume.x;
+}
+
 fn probe_count_total() -> u32 {
-    return light_probe_count();
+    return light_probe_count(probe_volume());
 }
 
 fn probe_coords(probe : u32) -> vec3<i32> {
-    let counts = light_probe_grid.counts.xyz;
+    let counts = light_probe_volumes.volumes[probe_volume()].counts.xyz;
     let x = probe % counts.x;
     let y = (probe / counts.x) % counts.y;
     let z = probe / (counts.x * counts.y);
@@ -124,7 +133,7 @@ fn fs_probe_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let probe = (probe_update.frame.x + texel.y) % probe_count_total();
-    let start = light_probe_position(probe_coords(probe));
+    let start = light_probe_position(probe_volume(), probe_coords(probe));
     let direction = probe_ray_direction(texel.x);
     let cone_spread = sqrt(4.0 * PI / f32(rays - probe_fixed_rays()));
 
@@ -159,8 +168,8 @@ fn fs_probe_trace(in : VertexOutput) -> @location(0) vec4<f32> {
             let diffuse_color = material.base_color * (1.0 - material.metallic);
             // Direct light as a diffuse surface (the probe stores no view direction).
             radiance += rt_direct_lighting(position, n, v, diffuse_color, 0.0, 1.0);
-            // Further bounces: the grid's own light there, last update's; past the
-            // grid's edge, the environment's.
+            // Further bounces: the probes' own light there (any volume's), last
+            // update's; outside every volume, the environment's.
             let probes = light_probe_irradiance_at(position, n, v);
             let indirect = mix(probe_environment_diffuse(n), probes.rgb, probes.w);
             radiance += diffuse_color * indirect;
@@ -199,10 +208,11 @@ struct ProbeTexel {
     valid : bool,
 };
 
+// Texel `pixel` of the volume's region of an atlas of `tile_u`-texel tiles.
 fn probe_texel(pixel : vec2<i32>, tile_u : u32) -> ProbeTexel {
     var out : ProbeTexel;
     let tile = i32(tile_u);
-    let columns = i32(max(light_probe_grid.atlas.x, 1u));
+    let columns = i32(light_probe_columns(probe_volume()));
     let tile_coords = pixel / vec2<i32>(tile);
     let probe = tile_coords.y * columns + tile_coords.x;
     out.valid = tile_coords.x < columns && probe < i32(probe_count_total());
@@ -223,7 +233,7 @@ fn probe_texel(pixel : vec2<i32>, tile_u : u32) -> ProbeTexel {
 // the surfaces allow (RTXGI's DDGI probe relocation).
 fn probe_relocated(previous : vec3<f32>, row : i32) -> vec3<f32> {
     let rays = probe_fixed_rays();
-    let spacing = light_probe_grid.origin_spacing.w;
+    let spacing = light_probe_volumes.volumes[probe_volume()].origin_spacing.w;
     let min_frontface = PROBE_MIN_FRONTFACE * spacing;
     var backfaces = 0u;
     var closest_back = 1.0e30;
@@ -277,10 +287,12 @@ fn probe_relocated(previous : vec3<f32>, row : i32) -> vec3<f32> {
     return offset;
 }
 
-// The offset texel of `pixel` below the irradiance tiles (-1: none there).
+// The probe whose offset texel `pixel` (in the volume's irradiance region) is, below its
+// tiles (-1: none there).
 fn probe_offset_texel_probe(pixel : vec2<i32>) -> i32 {
-    let width = i32(max(light_probe_grid.atlas.x, 1u) * light_probe_grid.atlas.y);
-    let top = i32(light_probe_tile_rows() * light_probe_grid.atlas.y);
+    let v = probe_volume();
+    let width = i32(light_probe_columns(v) * LIGHT_PROBE_IRRADIANCE_TILE);
+    let top = i32(light_probe_tile_rows(v) * LIGHT_PROBE_IRRADIANCE_TILE);
     if pixel.y < top || pixel.x >= width {
         return -1;
     }
@@ -291,9 +303,12 @@ fn probe_offset_texel_probe(pixel : vec2<i32>) -> i32 {
 @fragment
 fn fs_probe_irradiance(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
-    let offset_probe = probe_offset_texel_probe(pixel);
+    let volume = light_probe_volumes.volumes[probe_volume()];
+    let local = pixel - vec2<i32>(0, i32(volume.atlas.y));
+    let offset_probe = probe_offset_texel_probe(local);
     if offset_probe >= 0 {
-        if light_probe_grid.params.w < 0.5 || (probe_update.frame.z & PROBE_FLAG_RESET) != 0u {
+        let relocating = (volume.counts.w & LIGHT_PROBE_RELOCATE) != 0u;
+        if !relocating || (probe_update.frame.z & PROBE_FLAG_RESET) != 0u {
             return vec4<f32>(0.0);
         }
         let previous = textureLoad(light_probe_irradiance, pixel, 0);
@@ -303,7 +318,7 @@ fn fs_probe_irradiance(in : VertexOutput) -> @location(0) vec4<f32> {
         }
         return vec4<f32>(probe_relocated(previous.xyz, row), 0.0);
     }
-    let texel = probe_texel(pixel, light_probe_grid.atlas.y);
+    let texel = probe_texel(local, LIGHT_PROBE_IRRADIANCE_TILE);
     if !texel.valid {
         return vec4<f32>(0.0);
     }
@@ -339,7 +354,8 @@ fn fs_probe_irradiance(in : VertexOutput) -> @location(0) vec4<f32> {
 @fragment
 fn fs_probe_distance(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
-    let texel = probe_texel(pixel, light_probe_grid.atlas.z);
+    let top = light_probe_volumes.volumes[probe_volume()].atlas.z;
+    let texel = probe_texel(pixel - vec2<i32>(0, i32(top)), LIGHT_PROBE_DISTANCE_TILE);
     if !texel.valid {
         return vec4<f32>(0.0);
     }

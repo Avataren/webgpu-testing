@@ -206,12 +206,13 @@ impl PostProcessVolume {
 /// surfaces inside the box take their indirect diffuse light from the probes around them
 /// instead of from the environment.
 ///
-/// The box is centred on the entity and axis aligned: its size scales with the entity,
-/// its rotation is ignored. With hardware ray tracing the probes trace the scene every
-/// frame, so their light follows moving lights and geometry. Without it (the web, older
-/// GPUs) they show `baked`: light traced once in the editor (`light_probes.bake`) and
-/// saved with the project, which stays as it was baked. The renderer uses the first
-/// enabled volume it finds.
+/// The box is centred on the entity, turns with it and scales with it. With hardware ray
+/// tracing the probes trace the scene every frame, so their light follows moving lights
+/// and geometry. Without it (the web, older GPUs) they show `baked`: light traced once in
+/// the editor (`light_probes.bake`) and saved with the project, which stays as it was
+/// baked. The renderer uses up to [`crate::renderer::MAX_LIGHT_PROBE_VOLUMES`] enabled
+/// volumes; where they overlap, the one with the higher `priority` (then the smaller one)
+/// gives its light, fading into the next at its edge.
 ///
 /// # Examples
 ///
@@ -247,6 +248,9 @@ pub struct LightProbeVolume {
     /// under half a spacing of their grid positions (they then light the room instead of
     /// giving nothing or leaking).
     pub relocate: bool,
+    /// Where volumes overlap, the higher priority's light wins; at equal priority the
+    /// smaller volume's (so a detailed volume inside a big one takes over there).
+    pub priority: i32,
 }
 
 impl Default for LightProbeVolume {
@@ -261,6 +265,7 @@ impl Default for LightProbeVolume {
             baked: None,
             use_baked: false,
             relocate: true,
+            priority: 0,
         }
     }
 }
