@@ -3,8 +3,21 @@
 
 // Rougher surfaces than this reflect too little to be worth a trace.
 const SSR_MIN_SMOOTHNESS : f32 = 0.05;
+// The traces follow the mirror direction only and the blur widens with roughness by a few
+// texels, far less than a rough surface's reflection lobe: past about 0.3 roughness a
+// traced reflection showed the room sharp and blotchy where it should be a vague sheen.
+// Hits fade out over this roughness range, leaving rough surfaces the main pass's
+// environment and light probe specular, which are blurred to match. Misses (the sky the
+// main pass leaves to rt_sky_reflection) are not faded.
+const SSR_FADE_ROUGHNESS_START : f32 = 0.25;
+const SSR_FADE_ROUGHNESS_END : f32 = 0.45;
 // Brightest reflected value, so a tiny HDR highlight does not turn into a blurred blotch.
 const SSR_MAX_RADIANCE : f32 = 32.0;
+
+// How much of a traced hit a surface of `smoothness` keeps (SSR_FADE_ROUGHNESS_*).
+fn ssr_roughness_fade(smoothness : f32) -> f32 {
+    return 1.0 - smoothstep(SSR_FADE_ROUGHNESS_START, SSR_FADE_ROUGHNESS_END, 1.0 - smoothness);
+}
 
 // Interleaved gradient noise: well spread over every small neighbourhood, so the blur
 // averages the ray offsets out, and the same every frame, so nothing flickers.

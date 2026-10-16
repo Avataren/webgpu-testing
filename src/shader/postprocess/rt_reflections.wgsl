@@ -316,6 +316,11 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     if position.w < 0.5 || smoothness < SSR_MIN_SMOOTHNESS {
         return vec4<f32>(0.0);
     }
+    // Too rough to keep a hit: only the sky a miss brings under traced global
+    // illumination needs the ray.
+    if ssr_roughness_fade(smoothness) <= 0.0 && !environment_specular_traced() {
+        return vec4<f32>(0.0);
+    }
     let n = decode_normal_oct(textureLoad(rt_gbuffer_normal, pixel, 0).xy);
     let origin = position.xyz;
     rt_rng_state = (u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(post_uniform.output.z) * 26699u) | 1u;
@@ -380,7 +385,7 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     color = select(color, vec3<f32>(0.0), color != color);
     color = clamp(color, vec3<f32>(0.0), vec3<f32>(SSR_MAX_RADIANCE));
 
-    let weight = 1.0 - smoothstep(0.8, 1.0, hit.t / max_distance);
+    let weight = (1.0 - smoothstep(0.8, 1.0, hit.t / max_distance)) * ssr_roughness_fade(smoothness);
     return vec4<f32>(ssr_compress(color) * weight, weight);
 }
 

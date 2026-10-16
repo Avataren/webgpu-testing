@@ -73,7 +73,8 @@ fn fs_ssr_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = ssr_source_pixel(in.position.xy, dims);
     let position = textureLoad(ssr_position, pixel, 0);
     let smoothness = ssr_smoothness(position);
-    if position.w < 0.5 || smoothness < SSR_MIN_SMOOTHNESS {
+    // Too rough to keep a hit, and a miss brings nothing: no trace.
+    if position.w < 0.5 || smoothness < SSR_MIN_SMOOTHNESS || ssr_roughness_fade(smoothness) <= 0.0 {
         return vec4<f32>(0.0);
     }
     let n = decode_normal_oct(textureLoad(ssr_normal, pixel, 0).xy);
@@ -147,7 +148,7 @@ fn fs_ssr_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     let edge = min(min(viewport_uv.x, 1.0 - viewport_uv.x), min(viewport_uv.y, 1.0 - viewport_uv.y));
     let edge_fade = clamp(edge / 0.08, 0.0, 1.0);
     let distance_fade = 1.0 - smoothstep(0.6, 1.0, hi / max_distance);
-    let weight = facing_fade * front_fade * edge_fade * distance_fade;
+    let weight = facing_fade * front_fade * edge_fade * distance_fade * ssr_roughness_fade(smoothness);
     return vec4<f32>(ssr_compress(color) * weight, weight);
 }
 
