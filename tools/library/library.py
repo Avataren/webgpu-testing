@@ -17,6 +17,7 @@ carries only those.
                             [--characters] [--animations] [--query TEXT]
     library.py remove ID...
     library.py reindex
+    library.py save-mixamo-token     (after copy(localStorage.access_token) on mixamo.com)
 
 FBX, .blend and OBJ files go through Blender (found like the editor finds it:
 `BLENDER_PATH`, the PATH, or the usual install places). Every file is split into one
@@ -34,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -225,6 +227,30 @@ def reference_character(root, family):
     return os.path.join(root, "assets", choice["id"], choice["file"])
 
 
+def rename_glb_animation(path, name):
+    """Give a one-animation GLB's animation `name` (Blender's exporter calls it
+    "Animation"). Returns whether the file changed."""
+    with open(path, "rb") as file:
+        data = file.read()
+    magic, version, _ = struct.unpack_from("<4sII", data, 0)
+    json_length, json_type = struct.unpack_from("<I4s", data, 12)
+    if magic != b"glTF" or json_type != b"JSON":
+        return False
+    document = json.loads(data[20:20 + json_length])
+    animations = document.get("animations") or []
+    if len(animations) != 1 or animations[0].get("name") == name:
+        return False
+    animations[0]["name"] = name
+    text = json.dumps(document, separators=(",", ":")).encode()
+    text += b" " * (-len(text) % 4)
+    rest = data[20 + json_length:]
+    header = struct.pack("<4sII", magic, version, 20 + len(text) + len(rest))
+    with open(path + ".tmp", "wb") as file:
+        file.write(header + struct.pack("<I4s", len(text), json_type) + text + rest)
+    os.replace(path + ".tmp", path)
+    return True
+
+
 def store(root, asset_id, kind, name, glb, thumbnail, fields):
     folder = os.path.join(root, "assets", asset_id)
     if os.path.isdir(folder):
@@ -232,6 +258,8 @@ def store(root, asset_id, kind, name, glb, thumbnail, fields):
     os.makedirs(folder)
     file_name = f"{asset_id}.glb"
     shutil.copyfile(glb, os.path.join(folder, file_name))
+    if kind == "animation":
+        rename_glb_animation(os.path.join(folder, file_name), name)
     entry = {"id": asset_id, "kind": kind, "name": name, "file": file_name}
     if thumbnail and os.path.isfile(thumbnail):
         shutil.copyfile(thumbnail, os.path.join(folder, "thumbnail.png"))
@@ -393,14 +421,14 @@ MIXAMO_LICENSE = (
 class Mixamo:
     def __init__(self):
         token = os.environ.get("MIXAMO_TOKEN")
-        path = os.path.expanduser("~/.config/wgpu-cube/mixamo-token")
+        path = TOKEN_PATH
         if not token and os.path.isfile(path):
             with open(path, encoding="utf-8") as file:
                 token = file.read().strip()
         if not token:
             raise SystemExit(
                 "No Mixamo token. Log in at mixamo.com, run copy(localStorage.access_token) "
-                f"in the browser console and paste it into {path} (chmod 600)."
+                "in the browser console, then: tools/library/library.py save-mixamo-token"
             )
         self.token = token
 
@@ -426,8 +454,9 @@ class Mixamo:
                     continue
                 if error.code == 401:
                     raise SystemExit(
-                        "Mixamo refused the token (401): it has expired. Copy a fresh one "
-                        "into ~/.config/wgpu-cube/mixamo-token."
+                        "Mixamo refused the token (401): it has expired. On mixamo.com run "
+                        "copy(localStorage.access_token), then: "
+                        "tools/library/library.py save-mixamo-token"
                     ) from None
                 detail = error.read().decode(errors="replace")[:300]
                 raise RuntimeError(f"Mixamo {method} {path}: HTTP {error.code} {detail}") from None
@@ -477,6 +506,7 @@ class Mixamo:
         gms["params"] = ",".join(values)
         if in_place and "inplace" in gms:
             gms["inplace"] = True
+        self.last_details = details.get("details", {})
         self.call("POST", "/animations/export", {
             "character_id": character_id,
             "gms_hash": [gms],
@@ -495,6 +525,55 @@ class Mixamo:
             "type": "Character",
         })
         return self.wait_for_export(character_id)
+
+
+TOKEN_PATH = os.path.expanduser("~/.config/wgpu-cube/mixamo-token")
+
+
+def read_clipboard():
+    for command in (
+        ["xclip", "-selection", "clipboard", "-o"],
+        ["xsel", "--clipboard", "--output"],
+        ["wl-paste", "--no-newline"],
+        ["pbpaste"],
+        ["powershell", "-NoProfile", "-Command", "Get-Clipboard"],
+    ):
+        if shutil.which(command[0]):
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode == 0:
+                return result.stdout
+    raise SystemExit("no clipboard tool found (xclip, xsel, wl-paste, pbpaste)")
+
+
+def save_mixamo_token():
+    """Save the token on the clipboard, after checking it looks like one; never print it."""
+    token = read_clipboard().strip().strip('"').strip("'")
+    parts = token.split(".")
+    if not token.startswith("eyJ") or len(parts) != 3 or any(c.isspace() for c in token):
+        raise SystemExit(
+            "The clipboard does not hold a Mixamo token (it should be one long word "
+            "starting with eyJ). On the logged-in mixamo.com page, open the console "
+            "(Ctrl+Shift+J), run copy(localStorage.access_token), then run this again "
+            "without copying anything else in between."
+        )
+    os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
+    descriptor = os.open(TOKEN_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(token)
+    os.chmod(TOKEN_PATH, 0o600)
+    expires = ""
+    try:
+        import base64
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+        created = int(claims.get("created_at", 0)) // 1000
+        lifetime = int(claims.get("expires_in", 0)) // 1000
+        if created and lifetime:
+            when = datetime.datetime.fromtimestamp(created + lifetime)
+            expires = f"; it expires {when:%Y-%m-%d %H:%M}"
+    except Exception:  # noqa: BLE001 - the expiry is only a hint
+        pass
+    return f"Saved the Mixamo token ({len(token)} characters) to {TOKEN_PATH}{expires}."
 
 
 def fetch_mixamo(root, set_path, only=None, characters=True, animations=True, queries=()):
@@ -558,13 +637,26 @@ def fetch_mixamo(root, set_path, only=None, characters=True, animations=True, qu
                 url = client.export_motion(base_id, product, in_place=item.get("in_place", False))
                 path = os.path.join(inbox, f"{slug(name)}.fbx")
                 download(url, path)
-                entries += ingest(
+                details = getattr(client, "last_details", {}) or {}
+                extra = {"mixamo_id": product["id"], "mixamo_name": found}
+                if product.get("description"):
+                    extra["mixamo_description"] = product["description"]
+                added = ingest(
                     root, path, provider="mixamo", license_text=MIXAMO_LICENSE,
                     author="Adobe Mixamo", url="https://www.mixamo.com/",
                     tags=["mixamo", *item.get("tags", [])], name=name, prefix="mixamo",
-                    source_extra={"mixamo_id": product["id"], "mixamo_name": found},
-                    family_hint="mixamo",
+                    source_extra=extra, family_hint="mixamo",
                 )
+                if "loopable" in details:
+                    for entry in added:
+                        for clip in entry.get("clips", []):
+                            clip["loopable"] = bool(details["loopable"])
+                        if details["loopable"] and "loop" not in entry["tags"]:
+                            entry["tags"] = sorted({*entry["tags"], "loop"})
+                        with open(os.path.join(root, "assets", entry["id"], "asset.json"),
+                                  "w", encoding="utf-8") as file:
+                            json.dump(entry, file, indent=2)
+                entries += added
                 print(f"mixamo animation: {name} ({found})", file=sys.stderr)
             except SystemExit:
                 raise
@@ -642,6 +734,7 @@ def main():
     remove.add_argument("ids", nargs="+")
 
     commands.add_parser("reindex")
+    commands.add_parser("save-mixamo-token")
 
     args = parser.parse_args()
     root = library_root(args.root)
@@ -699,7 +792,16 @@ def main():
                 shutil.rmtree(folder)
         write_index(root)
         emit({"removed": args.ids}, f"removed {len(args.ids)}")
+    elif args.command == "save-mixamo-token":
+        print(save_mixamo_token())
     elif args.command == "reindex":
+        renamed = 0
+        for asset in load_assets(root):
+            if asset["kind"] == "animation" and asset.get("clips"):
+                path = os.path.join(root, "assets", asset["id"], asset["file"])
+                renamed += rename_glb_animation(path, asset["clips"][0]["name"])
+        if renamed:
+            print(f"named the animation in {renamed} files after their assets", file=sys.stderr)
         assets = write_index(root)
         emit({"count": len(assets)}, f"{len(assets)} assets indexed")
 

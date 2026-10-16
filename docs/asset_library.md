@@ -72,10 +72,19 @@ as the community scripts do. Adobe's terms do not allow automated access, so thi
 your account's risk, and Mixamo's licence lets you use the files in your projects but not
 redistribute the raw files: they stay in the library, never in a repository.
 
-1. Log in at mixamo.com.
-2. In the browser console: `copy(localStorage.access_token)`.
-3. Paste it into `~/.config/wgpu-cube/mixamo-token` (`chmod 600`), or set `MIXAMO_TOKEN`.
-   The token expires after a while; a 401 means it needs refreshing.
+1. Log in at mixamo.com (a free Adobe account works).
+2. Open the browser console on that page (Ctrl+Shift+J) and run
+   `copy(localStorage.access_token)`. It answers `undefined`; the token is on the
+   clipboard.
+3. Without copying anything else, run `tools/library/library.py save-mixamo-token`. It
+   checks the clipboard holds a token, saves it to `~/.config/wgpu-cube/mixamo-token`
+   (readable only by you) and prints when it expires (about a day). `MIXAMO_TOKEN` works
+   too. When the fetcher reports a 401, repeat these steps.
+
+Several Mixamo animations share a name ("Waving" is also "Waving With Both Hands"); the
+fetcher takes the one whose description matches the name exactly, and records Mixamo's
+description and whether the clip loops. Clip lengths are Mixamo's own: "Waving" is a
+0.53 s loop.
 
 `fetch-mixamo` downloads the characters and animations listed in
 `tools/library/mixamo_set.json` (about 90 animations: locomotion, jumps, combat, weapons,
