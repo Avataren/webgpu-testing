@@ -231,6 +231,9 @@ pub struct PostProcess {
     particles_traced: bool,
     /// The history holds last frame's TAA result (false after a resize or turning TAA on).
     taa_history_valid: bool,
+    /// The occlusion targets hold white (no occlusion) from a frame that ran no ambient
+    /// occlusion, so the next such frame need not clear them again.
+    ssao_cleared: bool,
     /// How last frame's reflections were traced (Some(true) = ray traced), None when
     /// none ran: the reflection history only carries over while this stays the same.
     reflection_history: Option<bool>,
@@ -708,6 +711,7 @@ impl PostProcess {
             particle_copy: None,
             particles_traced: false,
             taa_history_valid: false,
+            ssao_cleared: false,
             reflection_history: None,
             temporal_routing: (false, false),
             lut: LutTexture::new(device, queue),
@@ -758,6 +762,7 @@ impl PostProcess {
         self.position_msaa = targets.position_msaa;
         self.ssao = targets.ssao;
         self.ssao_ping = targets.ssao_ping;
+        self.ssao_cleared = false;
         self.reflection = ReflectionTargets::new(device, &self.size, self.reflection.full);
         self.bloom_chain = targets.bloom_chain;
         self.dof_half = targets.dof_half;
@@ -1393,9 +1398,11 @@ impl PostProcess {
             } else {
                 self.ssao_stage.render(encoder, scene_uniform, ssao_targets);
             }
+            self.ssao_cleared = false;
             timer.mark(encoder, "ambient_occlusion");
-        } else {
+        } else if !self.ssao_cleared {
             self.ssao_stage.clear(encoder, ssao_targets);
+            self.ssao_cleared = true;
         }
 
         if self.settings.bloom_active() {

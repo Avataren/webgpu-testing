@@ -439,10 +439,16 @@ impl StatsWindow {
             ui.label(format!("Opaque: {}", stats.opaque_draw_calls));
             ui.label(format!("Transparent: {}", stats.transparent_draw_calls));
             ui.label(format!("Overlay: {}", stats.overlay_draw_calls));
-            ui.label(format!("Shadows: {}", stats.shadow_draw_calls));
+            ui.label(format!(
+                "Shadows: {} ({} views drawn, {} kept)",
+                stats.shadow_draw_calls, stats.shadow_views_rendered, stats.shadow_views_cached
+            ));
         });
         ui.label(format!("Batches: {}", stats.batch_count));
-        ui.label(format!("Instances: {}", stats.instance_count));
+        ui.label(format!(
+            "Instances: {} ({} outside the view)",
+            stats.instance_count, stats.culled_instances
+        ));
     }
 }
 

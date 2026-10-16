@@ -1,9 +1,10 @@
 use std::{cmp::Ordering, ops::Range};
 
-use crate::asset::{Handle, MaterialAsset, Mesh};
+use crate::asset::{Handle, LocalBounds, MaterialAsset, Mesh};
 use crate::renderer::batch::{
     CullMode, InstanceData, InstanceSource, RenderBatcher, RenderPass, SkinKey,
 };
+use crate::renderer::internal::culling::{world_sphere, Frustum, Sphere};
 use crate::renderer::internal::MaterialPipelineKey;
 use crate::renderer::material::Material;
 use crate::renderer::shader_builder::SamplerFilterMode;
@@ -25,6 +26,23 @@ pub(crate) struct OrderedBatch {
     pub prepassed: bool,
     /// Its materials cut the surface away by alpha (`Material::is_alpha_masked`).
     pub alpha_masked: bool,
+    /// Each instance's world-space bounding sphere, for culling; empty when their
+    /// extent is not known (skinned, GPU-placed, or drawn by a shader material that
+    /// may move vertices), so every instance counts as visible everywhere.
+    pub bounds: Vec<Sphere>,
+    /// A sphere around every instance (`None` without `bounds`), to reject a whole
+    /// batch at once.
+    pub bounding_sphere: Option<Sphere>,
+    /// Per instance, whether the camera sees it this frame (see
+    /// [`PreparedBatches::cull_for_camera`]); empty when all do.
+    pub camera_visible: Vec<bool>,
+}
+
+impl OrderedBatch {
+    /// Whether the camera sees any of the batch's instances.
+    pub(crate) fn camera_sees_any(&self) -> bool {
+        self.camera_visible.is_empty() || self.camera_visible.iter().any(|visible| *visible)
+    }
 }
 
 pub(crate) struct PreparedBatches {
@@ -40,7 +58,13 @@ pub(crate) struct PreparedBatches {
 }
 
 impl PreparedBatches {
-    pub(crate) fn from_batcher(batcher: &RenderBatcher, camera_pos: Vec3) -> Self {
+    /// Order this frame's batches for drawing. `bounds_of` gives a mesh's local bounds
+    /// (for culling); meshes without them are never culled.
+    pub(crate) fn from_batcher(
+        batcher: &RenderBatcher,
+        camera_pos: Vec3,
+        bounds_of: &dyn Fn(Handle<Mesh>) -> Option<LocalBounds>,
+    ) -> Self {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
         let mut overlay = Vec::new();
@@ -96,6 +120,9 @@ impl PreparedBatches {
                 cull_mode: batch.cull_mode,
                 prepassed: false,
                 alpha_masked: batch.alpha_masked,
+                bounds: Vec::new(),
+                bounding_sphere: None,
+                camera_visible: Vec::new(),
             };
 
             if ordered
@@ -133,6 +160,10 @@ impl PreparedBatches {
             }
         }
 
+        // Front to back, so the depth prepass rejects what nearer surfaces hide, and in a
+        // fixed order (the batcher's map has none), so coplanar surfaces resolve the same
+        // way every frame.
+        sort_opaque_front_to_back(&mut opaque, camera_pos);
         transparent.extend(sort_transparent_back_to_front(
             transparent_instances,
             &transparent_templates,
@@ -177,6 +208,31 @@ impl PreparedBatches {
             batch.first_instance = start;
         }
 
+        for batch in &mut batches {
+            let shader_material = batch.instances.first().is_some_and(|instance| {
+                matches!(
+                    material_pipeline_keys.get(instance.material_index as usize),
+                    Some(MaterialPipelineKey::Shader(_))
+                )
+            });
+            let gpu_placed = batch
+                .instances
+                .iter()
+                .any(|instance| instance.source == InstanceSource::Gpu);
+            if batch.skin.is_some() || shader_material || gpu_placed {
+                continue;
+            }
+            let Some(bounds) = bounds_of(batch.mesh) else {
+                continue;
+            };
+            batch.bounds = batch
+                .instances
+                .iter()
+                .map(|instance| world_sphere(&bounds, &instance.transform))
+                .collect();
+            batch.bounding_sphere = Sphere::around(&batch.bounds);
+        }
+
         Self {
             batches,
             opaque_range,
@@ -192,6 +248,43 @@ impl PreparedBatches {
 
     pub(crate) fn all(&self) -> &[OrderedBatch] {
         &self.batches
+    }
+
+    /// Mark the instances the camera's `frustum` sees (`OrderedBatch::camera_visible`);
+    /// the passes drawn with that camera skip the others. Instances without bounds stay
+    /// visible. Returns how many instances were culled.
+    pub(crate) fn cull_for_camera(&mut self, frustum: &Frustum) -> u32 {
+        let mut culled = 0;
+        for batch in &mut self.batches {
+            batch.camera_visible.clear();
+            if batch.bounds.is_empty() {
+                continue;
+            }
+            if batch
+                .bounding_sphere
+                .is_some_and(|sphere| !frustum.intersects(sphere))
+            {
+                batch.camera_visible.resize(batch.instances.len(), false);
+                culled += batch.instances.len() as u32;
+                continue;
+            }
+            batch
+                .camera_visible
+                .extend(batch.bounds.iter().map(|sphere| {
+                    let visible = frustum.intersects(*sphere);
+                    culled += u32::from(!visible);
+                    visible
+                }));
+        }
+        culled
+    }
+
+    /// Every batch's union sphere and instance spheres, in `all()` order, for
+    /// [`crate::renderer::internal::culling::Visibility::compute`].
+    pub(crate) fn bounds(&self) -> impl Iterator<Item = (Option<Sphere>, &[Sphere])> {
+        self.batches
+            .iter()
+            .map(|batch| (batch.bounding_sphere, batch.bounds.as_slice()))
     }
 
     pub(crate) fn opaque(&self) -> &[OrderedBatch] {
@@ -261,6 +354,23 @@ fn sort_transparent_back_to_front(
         }
     }
     runs.into_iter().map(|(_, batch)| batch).collect()
+}
+
+fn nearest_distance_sq(batch: &OrderedBatch, camera_pos: Vec3) -> f32 {
+    batch
+        .instances
+        .iter()
+        .map(|inst| (inst.transform.translation - camera_pos).length_squared())
+        .fold(f32::INFINITY, f32::min)
+}
+
+fn sort_opaque_front_to_back(batches: &mut [OrderedBatch], camera_pos: Vec3) {
+    batches.sort_by(|a, b| {
+        nearest_distance_sq(a, camera_pos)
+            .total_cmp(&nearest_distance_sq(b, camera_pos))
+            .then_with(|| a.mesh.index().cmp(&b.mesh.index()))
+            .then_with(|| a.skin.cmp(&b.skin))
+    });
 }
 
 fn sort_batches_back_to_front(batches: &mut [OrderedBatch], camera_pos: Vec3) {
@@ -445,7 +555,7 @@ mod tests {
 
         batcher.clear();
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
 
         assert!(
             prepared.all().is_empty(),
@@ -484,7 +594,7 @@ mod tests {
                 .unwrap();
         }
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
         let order: Vec<(usize, Vec<u64>)> = prepared
             .transparent()
             .iter()
@@ -503,6 +613,106 @@ mod tests {
             .map(|batch| batch.first_instance)
             .collect();
         assert_eq!(starts.len(), 3);
+    }
+
+    #[test]
+    fn opaque_batches_draw_front_to_back_in_a_fixed_order() {
+        let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
+        let material = Material::white();
+        let handle = assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
+        for (mesh, z) in [(3, -9.0), (1, -2.0), (2, -5.0), (4, -2.0)] {
+            batcher
+                .add(
+                    RenderObject {
+                        mesh: Handle::new(mesh),
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::from_translation(Vec3::new(0.0, 0.0, z)),
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: None,
+                        instance_source: InstanceSource::Cpu,
+                        gpu_index: None,
+                        cull_mode: CullMode::Back,
+                        pick_id: 1,
+                        skin: None,
+                    },
+                    &assets,
+                )
+                .unwrap();
+        }
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
+        let order: Vec<usize> = prepared
+            .opaque()
+            .iter()
+            .map(|batch| batch.mesh.index())
+            .collect();
+        assert_eq!(order, vec![1, 4, 2, 3]);
+    }
+
+    #[test]
+    fn camera_culling_marks_instances_outside_the_frustum() {
+        use crate::asset::LocalBounds;
+        let mut batcher = RenderBatcher::new();
+        let mut assets = Assets::new();
+        let material = Material::white();
+        let handle = assets
+            .materials
+            .insert(MaterialAsset::from_material(material, PathBuf::new()));
+        // In front of the camera, behind it, and (another mesh) far to the side.
+        for (mesh, position) in [
+            (1, Vec3::new(0.0, 0.0, -5.0)),
+            (1, Vec3::new(0.0, 0.0, 5.0)),
+            (2, Vec3::new(100.0, 0.0, -5.0)),
+        ] {
+            batcher
+                .add(
+                    RenderObject {
+                        mesh: Handle::new(mesh),
+                        material: handle,
+                        resolved_material: Some(material),
+                        transform: Transform::from_translation(position),
+                        depth_state: DepthState::default(),
+                        force_overlay: false,
+                        render_pass: None,
+                        instance_source: InstanceSource::Cpu,
+                        gpu_index: None,
+                        cull_mode: CullMode::Back,
+                        pick_id: 1,
+                        skin: None,
+                    },
+                    &assets,
+                )
+                .unwrap();
+        }
+        let bounds = LocalBounds {
+            min: Vec3::splat(-0.5),
+            max: Vec3::splat(0.5),
+        };
+        let mut prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| Some(bounds));
+        let view = glam::Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 100.0);
+        let culled = prepared.cull_for_camera(&Frustum::from_view_proj(proj * view));
+        assert_eq!(culled, 2);
+        let near_batch = prepared
+            .opaque()
+            .iter()
+            .find(|batch| batch.mesh.index() == 1)
+            .unwrap();
+        assert_eq!(near_batch.bounds.len(), 2);
+        let visible = near_batch.camera_visible.iter().filter(|v| **v).count();
+        assert_eq!((near_batch.camera_visible.len(), visible), (2, 1));
+        assert!(near_batch.camera_sees_any());
+        let side_batch = prepared
+            .opaque()
+            .iter()
+            .find(|batch| batch.mesh.index() == 2)
+            .unwrap();
+        assert_eq!(side_batch.camera_visible, vec![false]);
+        assert!(!side_batch.camera_sees_any());
     }
 
     #[test]
@@ -628,7 +838,7 @@ mod tests {
             )
             .unwrap();
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
 
         let mut gpu_indices = BTreeSet::new();
         for batch in prepared.all() {

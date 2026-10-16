@@ -87,10 +87,32 @@ before any pass is recorded; passes read it rather than flags left by earlier pa
 The camera is set after the frame's render region and post-processing settings, since
 its TAA jitter and texture LOD bias depend on both.
 
+- **Culling** (`renderer/internal/culling.rs`): every instance gets a world-space bounding
+  sphere from its mesh's local box (`Mesh::local_bounds`) and transform when the batches
+  are prepared; the depth prepass, main, shader-material and transparent passes skip
+  instances outside the jittered camera frustum (`OrderedBatch::camera_visible`), and
+  each shadow view skips those outside its own. Draws are split into runs of visible
+  instances, so the objects buffer layout does not change. Skinned meshes, GPU-placed
+  instances and shader materials (which may move vertices) are never culled; neither are
+  the overlay, gizmo and pick passes, drawn with the unjittered camera.
+- **Opaque order**: opaque batches draw front to back by their nearest instance, then by
+  mesh, so the prepass rejects hidden fragments early and coplanar surfaces resolve the
+  same way every frame (the batcher's map has no order of its own).
 - **Depth prepass**: opaque PBR batches, cut-out surfaces through an alpha-tested
   pipeline (`depth_prepass_masked.wgsl`), so the ray-traced shadow mask traced from this
   depth sees them. Shader materials (their own vertex stage may move vertices) write their
   depth in the main pass.
+- **Shadow maps are cached** (`renderer/internal/shadows.rs`): each light's map remembers
+  a hash of what it was rendered from (the light's view projection and every caster's
+  geometry identity, transform, shadow flag and, for cut-outs, material and texture
+  generation, order-independent); a frame whose hash matches keeps the map. Skinned or
+  GPU-placed casters, and custom shadow passes, render every frame. Every rendered view's
+  view projection goes into one uniform buffer bound at a dynamic offset.
+  `RendererStats::shadow_views_rendered` / `shadow_views_cached` show the split, and
+  `culled_instances` the culling.
+- **Acceleration structures are kept** across frames with the same instances (geometry,
+  transforms, masks, shader-side entries) and no BLAS to build (`raytracing/scene.rs`,
+  `instance_signature`); otherwise the TLAS is rebuilt as before.
 - **Shader materials** fill the G-buffer from their own shader: a generated
   `fs_main_gbuffer` wraps the user's `fs_main` (`renderer/internal/shader_material.rs`)
   when it takes a struct with `world_pos` and `normal`; motion vectors come from the
@@ -151,6 +173,11 @@ to flicker, especially at a distant horizon.
   instance's model matrix with last frame's (`prev_models`, group 1 binding 2, matched
   by pick id + mesh).
 
+- **Shadow sampling** (`shadows.wgsl`, `lighting_with_shadows.wgsl`) uses
+  `textureSampleCompareLevel` (the maps have one mip, so it equals the implicit-LOD
+  sample) and so needs no uniform control flow: a light that cannot reach a fragment
+  (facing away, out of range, outside the cone, no shadow data, or already answered by
+  the ray-traced mask) is skipped before its PCF taps.
 - **Bind groups** for the main pipeline: 0 = camera, 1 = objects, 2 = lights,
   3 = textures. Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
   adapter supports it. Otherwise it is "traditional", with one binding per material slot.

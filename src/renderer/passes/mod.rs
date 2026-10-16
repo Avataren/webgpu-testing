@@ -3,7 +3,8 @@ use crate::environment::Environment;
 use crate::renderer::frame_graph::{
     FrameGraph, FrameGraphColorAttachment, FrameGraphDepthAttachment, PassPlan,
 };
-use crate::renderer::internal::shadows::{MaskTextures, ShadowInvocation};
+use crate::renderer::internal::culling::instance_visible;
+use crate::renderer::internal::shadows::{MaskTextures, ShadowInvocation, ShadowPassOutcome};
 use crate::renderer::internal::{MaterialPipelineKey, OrderedBatch, PipelineKey, PreparedBatches};
 use crate::renderer::{
     CustomRenderContext, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderPass,
@@ -25,6 +26,9 @@ pub(crate) struct BatchPassOptions {
     pub(crate) pick_only: bool,
     /// Batches the depth prepass drew keep its depth instead of writing their own.
     pub(crate) after_prepass: bool,
+    /// Skip the instances the camera's frustum does not see (`OrderedBatch::camera_visible`):
+    /// for passes drawn with the scene camera, not the stable one.
+    pub(crate) cull: bool,
 }
 
 pub(crate) struct BatchRecorder<'a> {
@@ -66,6 +70,14 @@ impl<'a> BatchRecorder<'a> {
         let mut draw_calls = 0u32;
 
         for batch in batches {
+            let visible: &[bool] = if options.cull {
+                if !batch.camera_sees_any() {
+                    continue;
+                }
+                &batch.camera_visible
+            } else {
+                &[]
+            };
             let Some(mesh) = mesh_for_batch(self.assets, &self.renderer.skinning, batch) else {
                 continue;
             };
@@ -111,6 +123,10 @@ impl<'a> BatchRecorder<'a> {
 
             let mut local_offset = 0usize;
             while local_offset < batch.instances.len() {
+                if !instance_visible(visible, local_offset) {
+                    local_offset += 1;
+                    continue;
+                }
                 let material_index = batch.instances[local_offset].material_index as usize;
                 let material_key = self
                     .material_pipeline_keys
@@ -143,7 +159,8 @@ impl<'a> BatchRecorder<'a> {
                     pass.set_bind_group(3, bind_group, &[]);
                 }
 
-                let run_length = material_run_length(batch.instances.as_slice(), local_offset);
+                let run_length =
+                    material_run_length(batch.instances.as_slice(), visible, local_offset);
                 let start_instance = batch.first_instance + local_offset as u32;
                 let end_instance = start_instance + run_length as u32;
 
@@ -280,25 +297,26 @@ pub(crate) fn shadow_pass(
     custom_shadow_enabled: bool,
     shadow_invocations: &mut Vec<ShadowInvocation>,
     skip: u32,
-) {
+) -> ShadowPassOutcome {
     shadow_invocations.clear();
     let mask_textures = cutout_textures(renderer, assets, prepared_batches);
     let geometry = BatchGeometry {
         assets,
         skinning: &renderer.skinning,
     };
-    renderer.shadows.render(
+    let texture_generation = renderer.texture_generation;
+    let outcome = renderer.shadows.render(
         &renderer.context,
         encoder,
         &geometry,
-        prepared_batches.all(),
+        prepared_batches,
         lights,
         &renderer.objects_buffer,
-        prepared_batches.materials(),
         custom_shadow_enabled,
         shadow_invocations,
         skip,
         mask_textures.as_ref(),
+        texture_generation,
     );
 
     if custom_shadow_enabled {
@@ -318,6 +336,7 @@ pub(crate) fn shadow_pass(
             }
         }
     }
+    outcome
 }
 
 /// Textures for the alpha test of this frame's opaque cut-out surfaces.
@@ -396,12 +415,30 @@ pub(crate) fn depth_prepass(
                 {
                     continue;
                 }
+                // Instances outside the view are left out of both this pass and the main
+                // pass, so the batch still counts as drawn whole.
+                if !batch.camera_sees_any() {
+                    batch.prepassed = true;
+                    continue;
+                }
                 let Some(mesh) = mesh_for_batch(assets, &renderer.skinning, batch) else {
                     continue;
                 };
+                let visible = &batch.camera_visible;
                 if !masked {
-                    renderer.draw_full_batch(pass, &mesh, batch);
-                    draw_calls += 1;
+                    renderer.set_geometry_buffers(pass, &mesh);
+                    let mut start = 0usize;
+                    while start < batch.instances.len() {
+                        if !instance_visible(visible, start) {
+                            start += 1;
+                            continue;
+                        }
+                        let run = visible_run_length(visible, batch.instances.len(), start);
+                        let first = batch.first_instance + start as u32;
+                        pass.draw_indexed(0..mesh.index_count(), 0, first..first + run as u32);
+                        draw_calls += 1;
+                        start += run;
+                    }
                     batch.prepassed = true;
                     continue;
                 }
@@ -413,7 +450,11 @@ pub(crate) fn depth_prepass(
                 let mut drawn = true;
                 let mut start = 0usize;
                 while start < batch.instances.len() {
-                    let run = material_run_length(&batch.instances, start);
+                    if !instance_visible(visible, start) {
+                        start += 1;
+                        continue;
+                    }
+                    let run = material_run_length(&batch.instances, visible, start);
                     match textures.group(batch.instances[start].material_index) {
                         Some(group) => {
                             pass.set_bind_group(3, group, &[]);
@@ -507,6 +548,7 @@ pub(crate) fn main_color_pass(
                 use_gbuffer: true,
                 pick_only: false,
                 after_prepass: true,
+                cull: true,
             };
 
             draw_calls += recorder.record(pass, batches, options, bindless_group.as_ref());
@@ -565,6 +607,7 @@ pub(crate) fn shader_material_pass(
         use_gbuffer: false,
         pick_only: false,
         after_prepass: false,
+        cull: true,
     };
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
@@ -650,6 +693,7 @@ pub(crate) fn transparent_pass(
         use_gbuffer: false,
         pick_only: false,
         after_prepass: false,
+        cull: true,
     };
     let config = SurfacePassConfig::new(
         "TransparentPass",
@@ -704,6 +748,7 @@ pub(crate) fn overlay_pass(
         use_gbuffer: false,
         pick_only: false,
         after_prepass: false,
+        cull: false,
     };
     let config =
         SurfacePassConfig::new("OverlayPass", surface_view, batches, &mut recorder, options)
@@ -747,6 +792,7 @@ pub(crate) fn gizmo_pass(
         use_gbuffer: false,
         pick_only: false,
         after_prepass: false,
+        cull: false,
     };
     let config = SurfacePassConfig::new(label, surface_view, batches, &mut recorder, options)
         .render_region(render_region)
@@ -793,6 +839,7 @@ pub(crate) fn pick_pass(
         use_gbuffer: false,
         pick_only: true,
         after_prepass: false,
+        cull: false,
     };
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut draw_calls = 0;
@@ -873,10 +920,28 @@ pub(crate) fn mesh_for_batch(
     mesh.cloned()
 }
 
-pub(crate) fn material_run_length(instances: &[InstanceData], start: usize) -> usize {
+/// Consecutive instances from `start` that share its material and are visible (`visible`
+/// as `OrderedBatch::camera_visible`), so they can go in one draw.
+pub(crate) fn material_run_length(
+    instances: &[InstanceData],
+    visible: &[bool],
+    start: usize,
+) -> usize {
     let material = instances[start].material_index;
     let mut length = 1usize;
-    while start + length < instances.len() && instances[start + length].material_index == material {
+    while start + length < instances.len()
+        && instances[start + length].material_index == material
+        && instance_visible(visible, start + length)
+    {
+        length += 1;
+    }
+    length
+}
+
+/// Consecutive visible instances from `start` (of `count`).
+pub(crate) fn visible_run_length(visible: &[bool], count: usize, start: usize) -> usize {
+    let mut length = 1usize;
+    while start + length < count && instance_visible(visible, start + length) {
         length += 1;
     }
     length

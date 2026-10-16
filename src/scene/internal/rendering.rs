@@ -71,11 +71,22 @@ pub(crate) fn build_render_objects(
 ) -> Vec<RenderObject> {
     let render_entities = collect_render_entities(world, assets, scene_key);
 
+    // Each entity's work is small; below a few hundred the thread pool's hand-off costs
+    // more than it saves.
+    if render_entities.len() < PARALLEL_RENDER_ENTITIES {
+        return render_entities
+            .into_iter()
+            .flat_map(|entity| prepare_render_objects(camera, entity))
+            .collect();
+    }
     render_entities
         .into_par_iter()
         .flat_map_iter(|entity| prepare_render_objects(camera, entity).into_iter())
         .collect()
 }
+
+/// Entities from which render objects are prepared on the thread pool.
+const PARALLEL_RENDER_ENTITIES: usize = 512;
 
 struct RenderEntity {
     mesh: Handle<Mesh>,

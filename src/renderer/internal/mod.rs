@@ -10,6 +10,7 @@
 pub mod batches;
 pub mod buffers;
 pub mod context;
+pub(crate) mod culling;
 pub mod environment;
 pub mod pick;
 pub mod pipeline;

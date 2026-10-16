@@ -633,6 +633,7 @@ impl LightsBuffer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,

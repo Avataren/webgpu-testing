@@ -322,6 +322,11 @@ pub(crate) struct RayTracingScene {
     tlas_capacity: u32,
     /// Instances written into `tlas` last frame (slots past this are already empty).
     tlas_used: u32,
+    /// The TLAS has been built at least once, so it can be used as it is.
+    tlas_built: bool,
+    /// What the TLAS was last built from (see [`Self::instance_signature`]): with the
+    /// same instances and no geometry to build, a frame keeps it instead of rebuilding.
+    last_instance_signature: Option<u64>,
     instances: wgpu::Buffer,
     instance_capacity: u32,
     instance_scratch: Vec<RtInstance>,
@@ -382,6 +387,8 @@ impl RayTracingScene {
             tlas: Self::create_tlas(device, INITIAL_INSTANCES),
             tlas_capacity: INITIAL_INSTANCES,
             tlas_used: 0,
+            tlas_built: false,
+            last_instance_signature: None,
             instances: Self::create_instances(device, INITIAL_INSTANCES),
             instance_capacity: INITIAL_INSTANCES,
             instance_scratch: Vec::new(),
@@ -437,6 +444,30 @@ impl RayTracingScene {
     /// caustics: transmissive ones, then smooth metals, at most [`MAX_CAUSTIC_CASTERS`].
     pub(crate) fn caustic_casters(&self) -> &[[f32; 4]] {
         &self.casters
+    }
+
+    /// A hash of this frame's instance list: each instance's geometry, transform, mask
+    /// and shader-side entry.
+    fn instance_signature(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for (key, transform, mask) in &self.instance_transforms {
+            key.hash(&mut hasher);
+            for value in transform {
+                value.to_bits().hash(&mut hasher);
+            }
+            mask.hash(&mut hasher);
+        }
+        for instance in &self.instance_scratch {
+            (
+                instance.vertex_base,
+                instance.index_base,
+                instance.material_index,
+                instance.flags,
+            )
+                .hash(&mut hasher);
+        }
+        hasher.finish()
     }
 
     pub(crate) fn stats(&self) -> RayTracingStats {
@@ -607,39 +638,52 @@ impl RayTracingScene {
             self.tlas_used = 0;
             buffers_changed = true;
         }
-        // The custom data finds the instance's entry in `instances`.
-        for (slot, (key, transform, mask)) in self.instance_transforms.iter().enumerate() {
-            let blas = match key {
-                GeometryKey::Particles(id) => &self.particles[id].blas,
-                _ => &self.meshes[key].blas,
-            };
-            self.tlas[slot] = Some(wgpu::TlasInstance::new(
-                blas,
-                *transform,
-                slot as u32,
-                *mask,
-            ));
-        }
-        for slot in count..self.tlas_used {
-            self.tlas[slot as usize] = None;
-        }
-        self.tlas_used = count;
-
         if count > self.instance_capacity {
             let capacity = count.next_power_of_two();
             self.instances = Self::create_instances(device, capacity);
             self.instance_capacity = capacity;
             buffers_changed = true;
         }
-        if count > 0 {
-            queue.write_buffer(
-                &self.instances,
-                0,
-                bytemuck::cast_slice(&self.instance_scratch),
-            );
-        }
 
-        let blas_builds = {
+        // Nothing to build and the same instances as last frame: the structures still
+        // describe the scene, so the frame keeps them (a static scene then costs no
+        // rebuild).
+        let pending_builds = self.meshes.values().any(|entry| entry.needs_build)
+            || self.particles.values().any(|entry| entry.count > 0);
+        let signature = self.instance_signature();
+        let unchanged = self.tlas_built
+            && !buffers_changed
+            && !pending_builds
+            && count == self.tlas_used
+            && self.last_instance_signature == Some(signature);
+        let blas_builds = if unchanged {
+            0
+        } else {
+            // The custom data finds the instance's entry in `instances`.
+            for (slot, (key, transform, mask)) in self.instance_transforms.iter().enumerate() {
+                let blas = match key {
+                    GeometryKey::Particles(id) => &self.particles[id].blas,
+                    _ => &self.meshes[key].blas,
+                };
+                self.tlas[slot] = Some(wgpu::TlasInstance::new(
+                    blas,
+                    *transform,
+                    slot as u32,
+                    *mask,
+                ));
+            }
+            for slot in count..self.tlas_used {
+                self.tlas[slot as usize] = None;
+            }
+            self.tlas_used = count;
+            if count > 0 {
+                queue.write_buffer(
+                    &self.instances,
+                    0,
+                    bytemuck::cast_slice(&self.instance_scratch),
+                );
+            }
+
             let pending: Vec<&MeshEntry> = self
                 .meshes
                 .values()
@@ -688,11 +732,17 @@ impl RayTracingScene {
                 .chain(particle_builds)
                 .collect();
             encoder.build_acceleration_structures(entries.iter(), std::iter::once(&self.tlas));
-            entries.len() as u32
+            let built = entries.len() as u32;
+            drop(entries);
+            drop(particle_sizes);
+            drop(pending);
+            for entry in self.meshes.values_mut() {
+                entry.needs_build = false;
+            }
+            self.tlas_built = true;
+            self.last_instance_signature = Some(signature);
+            built
         };
-        for entry in self.meshes.values_mut() {
-            entry.needs_build = false;
-        }
 
         self.evict_unused();
 

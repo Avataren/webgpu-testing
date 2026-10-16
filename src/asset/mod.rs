@@ -9,7 +9,7 @@ pub use material::{
     AssetTypeTag, MaterialAsset, MaterialKind, MaterialParameterMetadata, MaterialTextureReference,
     MaterialTextureSlot, ShaderMaterialMetadata,
 };
-pub use mesh::{Mesh, MeshData};
+pub use mesh::{LocalBounds, Mesh, MeshData};
 
 use crate::renderer::material::Material;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;

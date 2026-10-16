@@ -109,6 +109,9 @@ fn shadow_texel_size(texture: texture_depth_2d_array) -> vec2<f32> {
     );
 }
 
+// The maps have a single mip level, so sampling level 0 explicitly gives the same result
+// as an implicit-derivative sample while freeing the callers from uniform control flow:
+// they skip the taps for lights that cannot reach a fragment instead of sampling anyway.
 fn sample_shadow_pcf(
     texture: texture_depth_2d_array,
     smp: sampler_comparison,
@@ -118,20 +121,13 @@ fn sample_shadow_pcf(
     texel_size: vec2<f32>,
 ) -> f32 {
     var result = 0.0;
-    var samples = 0.0;
-
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            result += textureSampleCompare(texture, smp, coords + offset, layer, depth);
-            samples = samples + 1.0;
+            result += textureSampleCompareLevel(texture, smp, coords + offset, layer, depth);
         }
     }
-
-    if (samples > 0.0) {
-        return result / samples;
-    }
-    return result;
+    return result / 9.0;
 }
 
 // PCF with view-depth scaling for spot lights
@@ -148,15 +144,20 @@ fn sample_shadow_pcf_viewdepth(
     let radius = base_texel * max(view_depth_norm, 0.0) * pcf_scale;
 
     var acc = 0.0;
-    var samples = 0.0;
     for (var y = -1; y <= 1; y = y + 1) {
         for (var x = -1; x <= 1; x = x + 1) {
             let offset = vec2<f32>(f32(x), f32(y)) * radius;
-            acc += textureSampleCompare(texture, smp, proj_xy + offset, layer, depth);
-            samples = samples + 1.0;
+            acc += textureSampleCompareLevel(texture, smp, proj_xy + offset, layer, depth);
         }
     }
-    return acc / max(samples, 1.0);
+    return acc / 9.0;
+}
+
+// Whether a shadow-map projection lands inside the map (and its depth range); outside
+// it a surface counts as lit.
+fn shadow_projection_valid(proj: vec3<f32>) -> bool {
+    return proj.z >= 0.0 && proj.z <= 1.0
+        && proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
 }
 
 // ============================================================================
@@ -170,6 +171,9 @@ fn sample_directional_shadow(
     L: vec3<f32>,
 ) -> f32 {
     let info = shadow_info.directionals[index];
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
     let texel = shadow_texel_size(directional_shadow_maps);
     // World size of one shadow-map texel (the light's projection is orthographic: its
     // first row is the x axis scaled by 2 / width).
@@ -181,66 +185,44 @@ fn sample_directional_shadow(
     let n_dot_l = clamp(dot(N, L), 0.0, 1.0);
     let offset = texel_world * (1.0 + 2.0 * (1.0 - n_dot_l));
     let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, offset);
-    let depth = clamp(proj.z, 0.0, 1.0);
-    
-    // ALWAYS sample in uniform control flow
-    let shadow_sample = sample_shadow_pcf(
+    if (!shadow_projection_valid(proj)) {
+        return 1.0;
+    }
+    return sample_shadow_pcf(
         directional_shadow_maps,
         directional_shadow_sampler,
         proj.xy,
         i32(index),
-        depth,
+        proj.z,
         texel,
     );
-    
-    // Then conditionally return based on validity checks
-    let has_shadow_data = info.params.x != 0.0;
-    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
-    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
-    let valid = has_shadow_data && in_depth_range && in_bounds;
-    
-    return select(1.0, shadow_sample, valid);
 }
 
 fn sample_spot_shadow(index: u32, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
     let info = shadow_info.spots[index];
-    
-    // Import lights structure to get light position/direction
-    // Note: This requires lights to be available where this function is used
-    
     // params.x: has_data (!=0)
     // params.y: far (for proper normalization)
     // params.z: receiver normal offset (0..0.004)
     // params.w: pcf_scale (1.5..3.0)
-    let far_plane = max(info.params.y, 0.0001);
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
     let receiver_offset = info.params.z;
-    let pcf_scale = select(2.0, info.params.w, info.params.w > 0.0);
 
     // Project into shadow map (with receiver offset)
     let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, receiver_offset);
-    let depth = clamp(proj.z, 0.0, 1.0);
-
-    // Note: view_depth calculation requires light position from lights structure
-    // This will be calculated in the calling context
-
-    // Always sample in uniform control flow
+    if (!shadow_projection_valid(proj)) {
+        return 1.0;
+    }
     let texel = shadow_texel_size(spot_shadow_maps);
-    let shadow_sample = sample_shadow_pcf(
+    return sample_shadow_pcf(
         spot_shadow_maps,
         spot_shadow_sampler,
         proj.xy,
         i32(index),
-        depth,
+        proj.z,
         texel,
     );
-
-    // Validity checks after sampling
-    let has_shadow_data = info.params.x != 0.0;
-    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
-    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
-    let valid = has_shadow_data && in_depth_range && in_bounds;
-
-    return select(1.0, shadow_sample, valid);
 }
 
 // Advanced spot shadow with depth-scaled PCF
@@ -252,13 +234,17 @@ fn sample_spot_shadow_advanced(
     light_dir: vec3<f32>
 ) -> f32 {
     let info = shadow_info.spots[index];
-    
+    if (info.params.x == 0.0) {
+        return 1.0;
+    }
     let far_plane = max(info.params.y, 0.0001);
     let receiver_offset = info.params.z;
     let pcf_scale = select(2.0, info.params.w, info.params.w > 0.0);
 
     let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, receiver_offset);
-    let depth = clamp(proj.z, 0.0, 1.0);
+    if (!shadow_projection_valid(proj)) {
+        return 1.0;
+    }
 
     // Calculate view-space depth along spotlight forward axis
     let to_frag = world_pos - light_pos;
@@ -266,25 +252,17 @@ fn sample_spot_shadow_advanced(
     let view_depth = max(dot(to_frag, Lfwd), 0.0);
     let view_depth_norm = clamp(view_depth / far_plane, 0.0, 1.0);
 
-    // Always sample in uniform control flow with depth-scaled PCF
     let texel = shadow_texel_size(spot_shadow_maps);
-    let shadow_sample = sample_shadow_pcf_viewdepth(
+    return sample_shadow_pcf_viewdepth(
         spot_shadow_maps,
         spot_shadow_sampler,
         proj.xy,
         i32(index),
-        depth,
+        proj.z,
         texel,
         view_depth_norm,
         pcf_scale
     );
-
-    let has_shadow_data = info.params.x != 0.0;
-    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
-    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
-    let valid = has_shadow_data && in_depth_range && in_bounds;
-
-    return select(1.0, shadow_sample, valid);
 }
 
 fn select_point_face(direction: vec3<f32>) -> u32 {
@@ -332,8 +310,12 @@ fn sample_point_shadow_offset(
     let info = shadow_info.points[index];
     let to_fragment = world_pos - light_pos;
     let distance = length(to_fragment);
+    let in_range = light_range <= 0.0 || distance <= light_range;
+    if (info.params.x == 0.0 || distance <= 0.0001 || !in_range) {
+        return 1.0;
+    }
 
-    let dir = normalize(to_fragment);
+    let dir = to_fragment / distance;
     let face = select_point_face(dir);
     let matrix = info.view_proj[face];
     // Each face spans 90 degrees: a texel is 2 * distance / size wide at the fragment.
@@ -341,27 +323,17 @@ fn sample_point_shadow_offset(
     let n_dot_l = clamp(dot(N, -dir), 0.0, 1.0);
     let offset = texel_world * (1.0 + 2.0 * (1.0 - n_dot_l));
     let proj = project_shadow_with_normal_offset(matrix, world_pos, N, offset);
+    if (!shadow_projection_valid(proj)) {
+        return 1.0;
+    }
     let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
-    let depth = clamp(proj.z, 0.0, 1.0);
     let texel = shadow_texel_size(point_shadow_maps);
-    
-    // ALWAYS sample in uniform control flow
-    let shadow_sample = sample_shadow_pcf(
+    return sample_shadow_pcf(
         point_shadow_maps,
         point_shadow_sampler,
         proj.xy,
         layer,
-        depth,
+        proj.z,
         texel,
     );
-    
-    // Then conditionally return based on validity checks
-    let has_shadow_data = info.params.x != 0.0;
-    let valid_distance = distance > 0.0001;
-    let in_range = light_range <= 0.0 || distance <= light_range;
-    let in_depth_range = proj.z >= 0.0 && proj.z <= 1.0;
-    let in_bounds = proj.x >= 0.0 && proj.x <= 1.0 && proj.y >= 0.0 && proj.y <= 1.0;
-    let valid = has_shadow_data && valid_distance && in_range && in_depth_range && in_bounds;
-    
-    return select(1.0, shadow_sample, valid);
 }

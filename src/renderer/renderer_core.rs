@@ -3,18 +3,18 @@ use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::environment::Environment;
 #[path = "passes/mod.rs"]
 pub(crate) mod passes;
+use crate::renderer::internal::culling::Frustum;
 use crate::renderer::internal::pick::PickState;
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
     CameraBuffer, DynamicObjectsBuffer, EnvironmentResources, LightsBuffer, MaterialPipelineKey,
-    OrderedBatch, PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
+    PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
     TextureBindingModel,
 };
 use crate::renderer::{
-    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
     postprocess::{PostProcess, PostProcessCamera, PostProcessSettings, TracedLighting},
     CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
-    RenderPass, RenderRegion, SamplerFilterMode, Vertex,
+    RenderRegion, SamplerFilterMode, Vertex,
 };
 use crate::scene::{Camera, CameraProjection, Scene};
 use crate::settings::RenderSettings;
@@ -24,7 +24,6 @@ use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 100;
-const POINT_SHADOW_FACE_COUNT: u32 = 6;
 
 /// Why a frame could not be acquired from the surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +74,13 @@ pub struct RendererStats {
     pub overlay_draw_calls: u32,
     pub gizmo_draw_calls: u32,
     pub shadow_draw_calls: u32,
+    /// Shadow views (one per directional or spot light, six per point light) rendered
+    /// this frame, and those kept from an earlier frame because nothing they show
+    /// changed.
+    pub shadow_views_rendered: u32,
+    pub shadow_views_cached: u32,
+    /// Instances outside the camera's view this frame, left out of the scene passes.
+    pub culled_instances: u32,
     /// The pick pass's, on frames that resolve a pick.
     pub pick_draw_calls: u32,
     /// Skinned mesh instances deformed this frame, and their vertices.
@@ -217,6 +223,11 @@ pub struct Renderer {
 
     // Non-GPU state (no Drop impl, drop order doesn't matter)
     camera_position: Vec3,
+    /// The scene camera's clip planes (with this frame's TAA jitter), for culling.
+    camera_frustum: Option<Frustum>,
+    /// Counts the texture set's updates ([`Self::update_texture_bind_group`]), so passes
+    /// that cache work depending on texture contents (cut-out shadows) notice a change.
+    texture_generation: u64,
     camera_target: Vec3,
     camera_up: Vec3,
     camera_projection: CameraProjection,
@@ -397,6 +408,8 @@ impl Renderer {
             light_probe_debug: crate::renderer::light_probe_debug::LightProbeDebugStage::new(),
             light_probe_bake_outcome: None,
             camera_position: Vec3::ZERO,
+            camera_frustum: None,
+            texture_generation: 0,
             camera_target: Vec3::ZERO,
             camera_up: Vec3::Y,
             camera_projection: CameraProjection::default(),
@@ -862,6 +875,7 @@ impl Renderer {
             -jitter.y * scene_size.1 as f32 * 0.5,
         );
         let vp = Mat4::from_translation(jitter.extend(0.0)) * unjittered_vp;
+        self.camera_frustum = Some(Frustum::from_view_proj(vp));
         let inv_vp = vp.inverse();
         let camera_pos = camera.position();
         let mut forward = (camera.target - camera_pos)
@@ -968,6 +982,7 @@ impl Renderer {
 
     pub fn update_texture_bind_group(&mut self, assets: &Assets) {
         self.texture_binder.update(&self.context.device, assets);
+        self.texture_generation = self.texture_generation.wrapping_add(1);
     }
 
     #[allow(clippy::needless_option_as_deref)]
@@ -1016,7 +1031,7 @@ impl Renderer {
             None => (surface_view.clone(), surface_view),
         };
         let mut frame_state =
-            self.prepare_frame_state(batcher, environment, &lights, target_view, ui_view)?;
+            self.prepare_frame_state(batcher, assets, environment, &lights, target_view, ui_view)?;
         self.gpu_timer.begin_frame(&mut frame_state.encoder);
         if let Some(stage) = self.present_stage.as_ref() {
             stage.clear_ui(&mut frame_state.encoder);
@@ -1128,7 +1143,6 @@ impl Renderer {
         self.run_ui_hook(&mut frame_state);
         self.gpu_timer.mark(&mut frame_state.encoder, "ui");
         self.gpu_timer.end_frame(&mut frame_state.encoder);
-        self.finalize_stats(&mut frame_state, &lights);
 
         let FrameState { encoder, stats, .. } = frame_state;
         self.stats = stats;
@@ -1268,16 +1282,6 @@ impl Renderer {
         self.stats
     }
 
-    fn draw_full_batch(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh, batch: &OrderedBatch) {
-        self.set_geometry_buffers(pass, mesh);
-        let instance_count = batch.instances.len() as u32;
-        pass.draw_indexed(
-            0..mesh.index_count(),
-            0,
-            batch.first_instance..(batch.first_instance + instance_count),
-        );
-    }
-
     fn material_bind_group(
         &mut self,
         assets: &Assets,
@@ -1302,6 +1306,7 @@ impl Renderer {
     fn prepare_frame_state(
         &mut self,
         batcher: &RenderBatcher,
+        assets: &Assets,
         environment: &Environment,
         lights: &LightsData,
         surface_view: wgpu::TextureView,
@@ -1314,7 +1319,14 @@ impl Renderer {
                 label: Some("Encoder"),
             });
 
-        let prepared_batches = PreparedBatches::from_batcher(batcher, self.camera_position);
+        let mut prepared_batches =
+            PreparedBatches::from_batcher(batcher, self.camera_position, &|mesh| {
+                assets.meshes.get(mesh).map(Mesh::local_bounds)
+            });
+        let culled_instances = match self.camera_frustum.as_ref() {
+            Some(frustum) => prepared_batches.cull_for_camera(frustum),
+            None => 0,
+        };
         let batch_count = prepared_batches.all().len() as u32;
         let instance_count = prepared_batches
             .all()
@@ -1324,6 +1336,7 @@ impl Renderer {
         let stats = RendererStats {
             batch_count,
             instance_count,
+            culled_instances,
             ..RendererStats::default()
         };
 
@@ -1389,7 +1402,7 @@ impl Renderer {
         custom_shadow_enabled: bool,
         skip: u32,
     ) {
-        passes::shadow_pass(
+        let outcome = passes::shadow_pass(
             self,
             scene,
             assets,
@@ -1401,6 +1414,9 @@ impl Renderer {
             &mut frame.shadow_invocations,
             skip,
         );
+        frame.stats.shadow_draw_calls += outcome.draw_calls;
+        frame.stats.shadow_views_rendered += outcome.views_rendered;
+        frame.stats.shadow_views_cached += outcome.views_cached;
     }
 
     fn run_depth_prepass(&mut self, frame: &mut FrameState, assets: &Assets) {
@@ -1954,15 +1970,6 @@ impl Renderer {
 
     #[cfg(not(feature = "egui"))]
     fn run_ui_hook(&mut self, _frame: &mut FrameState) {}
-
-    fn finalize_stats(&mut self, frame: &mut FrameState, lights: &LightsData) {
-        let prepared_batches = &frame.prepared_batches;
-        frame.stats.shadow_draw_calls = estimate_shadow_draw_calls(
-            prepared_batches.all(),
-            prepared_batches.materials(),
-            lights,
-        );
-    }
 }
 
 /// The bindless texture array's layout for ray-traced passes, whose hits sample material
@@ -1983,92 +1990,6 @@ fn cutout_textures_layout(texture_binder: &TextureBindingModel) -> Option<&wgpu:
         .global_bind_group()
         .is_some()
         .then(|| texture_binder.bind_layout())
-}
-
-fn estimate_shadow_draw_calls(
-    batches: &[OrderedBatch],
-    materials: &[Material],
-    lights: &LightsData,
-) -> u32 {
-    if batches.is_empty() {
-        return 0;
-    }
-
-    let per_pass_draws: u32 = batches
-        .iter()
-        .map(|batch| count_shadow_draws_for_batch(batch, materials))
-        .sum();
-
-    if per_pass_draws == 0 {
-        return 0;
-    }
-
-    let directional_passes = lights
-        .directional_shadows()
-        .iter()
-        .take(MAX_DIRECTIONAL_LIGHTS)
-        .filter(|shadow| shadow.params[0] != 0.0)
-        .count() as u32;
-
-    let spot_passes = lights
-        .spot_shadows()
-        .iter()
-        .take(MAX_SPOT_LIGHTS)
-        .filter(|shadow| shadow.params[0] != 0.0)
-        .count() as u32;
-
-    let point_passes = lights
-        .point_shadows()
-        .iter()
-        .take(MAX_POINT_LIGHTS)
-        .filter(|shadow| shadow.params[0] != 0.0)
-        .count() as u32
-        * POINT_SHADOW_FACE_COUNT;
-
-    let total_passes = directional_passes + spot_passes + point_passes;
-    per_pass_draws * total_passes
-}
-
-fn count_shadow_draws_for_batch(batch: &OrderedBatch, materials: &[Material]) -> u32 {
-    if matches!(
-        batch.pass,
-        RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo | RenderPass::GizmoSolid
-    ) {
-        return 0;
-    }
-
-    let mut draws = 0u32;
-    let mut run_active = false;
-
-    for instance in &batch.instances {
-        let material_index = instance.material_index as usize;
-        let Some(material) = materials.get(material_index) else {
-            log::warn!(
-                "Material index {} out of bounds while counting shadows ({} materials)",
-                material_index,
-                materials.len()
-            );
-            if run_active {
-                draws += 1;
-                run_active = false;
-            }
-            continue;
-        };
-        if material.is_unlit() {
-            if run_active {
-                draws += 1;
-                run_active = false;
-            }
-        } else if !run_active {
-            run_active = true;
-        }
-    }
-
-    if run_active {
-        draws += 1;
-    }
-
-    draws
 }
 
 /// Frames after which the TAA jitter pattern repeats. 8 points cover the pixel evenly;

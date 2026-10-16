@@ -5,6 +5,42 @@ use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 use crate::renderer::{SkinVertex, Vertex};
+use glam::Vec3;
+
+/// The axis-aligned box around a mesh's vertices in its own space, for culling.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LocalBounds {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl LocalBounds {
+    /// The box around `vertices`; a point at the origin for an empty mesh.
+    pub fn from_vertices(vertices: &[Vertex]) -> Self {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        for vertex in vertices {
+            let pos = Vec3::from_array(vertex.pos);
+            min = min.min(pos);
+            max = max.max(pos);
+        }
+        if vertices.is_empty() || !min.is_finite() || !max.is_finite() {
+            return Self {
+                min: Vec3::ZERO,
+                max: Vec3::ZERO,
+            };
+        }
+        Self { min, max }
+    }
+
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+
+    pub fn half_extents(&self) -> Vec3 {
+        (self.max - self.min) * 0.5
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshData {
@@ -58,6 +94,7 @@ pub struct Mesh {
     index_count: u32,
     index_format: wgpu::IndexFormat,
     data: Arc<MeshData>,
+    bounds: LocalBounds,
 }
 
 impl Mesh {
@@ -122,6 +159,7 @@ impl Mesh {
             skin_buffer,
             index_count: data.indices.len() as u32,
             index_format,
+            bounds: LocalBounds::from_vertices(&data.vertices),
             data: Arc::new(data),
         }
     }
@@ -136,6 +174,7 @@ impl Mesh {
             index_count: self.index_count,
             index_format: self.index_format,
             data: Arc::clone(&self.data),
+            bounds: self.bounds,
         }
     }
 
@@ -161,6 +200,12 @@ impl Mesh {
 
     pub fn data(&self) -> &MeshData {
         &self.data
+    }
+
+    /// The box around the mesh's vertices in its own space (the bind pose of a skinned
+    /// mesh).
+    pub fn local_bounds(&self) -> LocalBounds {
+        self.bounds
     }
 
     /// The shared geometry: a new `Arc` means the mesh changed (ray tracing rebuilds).
@@ -193,6 +238,7 @@ impl Clone for Mesh {
             index_count: self.index_count,
             index_format: self.index_format,
             data: Arc::clone(&self.data),
+            bounds: self.bounds,
         }
     }
 }
