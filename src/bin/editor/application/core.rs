@@ -15,6 +15,7 @@ use wgpu_cube::{
     SceneHierarchyHandle, SceneHierarchyRegistryHandle, SceneTabDescriptor, SceneTabsHandle,
 };
 
+use super::animation_panel_system::AnimationPanelSystem;
 use super::asset_browser_system::AssetBrowserSystem;
 use super::camera_system::CameraSystem;
 use super::history_system::{HistorySystem, TransformToolSystem};
@@ -146,12 +147,18 @@ pub struct EditorSharedState {
     pub(super) welcome_plugin_override: Option<bool>,
     /// Reload notifications shown as toasts
     pub(super) reload_notifications: Vec<ReloadNotification>,
+    /// FBX/.blend files Blender is converting for import.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) conversions: Vec<super::blender_convert::Conversion>,
     /// Cached plugin window sizes (logical width, height, pixels_per_point)
     pub(super) plugin_window_sizes: HashMap<Entity, (f32, f32, f32)>,
     /// Last known egui pixels-per-point (recorded during UI rendering)
     pub(super) last_pixels_per_point: Option<f32>,
     /// The renderer's light probe state for the inspector (LightProbeSystem).
     pub(super) light_probe_status: crate::inspector::LightProbePanelStatus,
+    /// The selected entity's clips and animation state for the inspector
+    /// (AnimationPanelSystem).
+    pub(super) animation_status: crate::inspector::AnimationPanelStatus,
     /// Inspector requests for the renderer's light probes, carried out on the GPU update.
     pub(super) light_probe_requests: Vec<crate::inspector::LightProbeRequest>,
 }
@@ -367,6 +374,7 @@ impl EditorApplicationBuilder {
         };
         systems.push(Box::new(SceneCreationSystem));
         systems.push(Box::new(LightProbeSystem::default()));
+        systems.push(Box::new(AnimationPanelSystem::default()));
         let particle_system_index = {
             let system = EditorParticleSystem::default();
             let index = systems.len();
@@ -406,9 +414,12 @@ impl EditorApplicationBuilder {
             ui_plugins_loaded: false,
             welcome_plugin_override: None,
             reload_notifications: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            conversions: Vec::new(),
             last_pixels_per_point: None,
             plugin_window_sizes: HashMap::new(),
             light_probe_status: Default::default(),
+            animation_status: Default::default(),
             light_probe_requests: Vec::new(),
         };
 
@@ -870,6 +881,7 @@ impl EditorApplication {
         let mut queue = std::mem::take(&mut self.shared.commands);
         let mut remaining = VecDeque::new();
         let mut pending_imports = Vec::new();
+        let mut pending_clip_imports = Vec::new();
         let mut pending_deletions = Vec::new();
         let mut pending_inspector = Vec::new();
         let mut pending_plugin_reloads = Vec::new();
@@ -879,6 +891,7 @@ impl EditorApplication {
         while let Some(command) = queue.pop_front() {
             match command {
                 ImportPath(path) => pending_imports.push(path),
+                ImportClips { path, attach } => pending_clip_imports.push((path, attach)),
                 DeleteEntity(entity) => pending_deletions.push(entity),
                 Inspector(action) => pending_inspector.push(action),
                 ActivateScene(document_id) => ctx.request_active_scene(document_id),
@@ -908,6 +921,11 @@ impl EditorApplication {
         if !pending_inspector.is_empty() {
             self.apply_pending_inspector_actions(ctx, pending_inspector);
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        self.convert_pending_imports(&mut pending_imports, pending_clip_imports);
+        #[cfg(target_arch = "wasm32")]
+        drop(pending_clip_imports);
 
         if !pending_imports.is_empty() {
             self.process_pending_imports(ctx, pending_imports);
@@ -958,6 +976,108 @@ impl EditorApplication {
 
         remaining.append(&mut self.shared.commands);
         self.shared.commands = remaining;
+    }
+
+    /// Hand FBX/.blend imports to Blender, and collect what it finished: models join
+    /// `imports`, clip libraries are copied into the project's animations.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn convert_pending_imports(
+        &mut self,
+        imports: &mut Vec<PathBuf>,
+        clip_imports: Vec<(PathBuf, Option<Entity>)>,
+    ) {
+        use super::blender_convert::{is_convertible, Conversion, Converted};
+
+        let start =
+            |path: &PathBuf, clips_for: Option<Option<Entity>>, shared: &mut EditorSharedState| {
+                match Conversion::start(path, clips_for) {
+                    Ok(conversion) => shared.conversions.push(conversion),
+                    Err(err) => {
+                        log::error!("{err}");
+                        shared
+                            .reload_notifications
+                            .push(ReloadNotification::error(err));
+                    }
+                }
+            };
+        imports.retain(|path| {
+            if is_convertible(path) {
+                start(path, None, &mut self.shared);
+                false
+            } else {
+                true
+            }
+        });
+        for (path, attach) in &clip_imports {
+            if is_convertible(path) {
+                start(path, Some(*attach), &mut self.shared);
+            } else {
+                self.import_clip_library(path, *attach);
+            }
+        }
+
+        let mut index = 0;
+        while index < self.shared.conversions.len() {
+            let Some(result) = self.shared.conversions[index].poll() else {
+                index += 1;
+                continue;
+            };
+            let conversion = self.shared.conversions.remove(index);
+            match result {
+                Converted::Model(glb) => {
+                    log::info!(
+                        "Blender converted {}; importing it",
+                        conversion.source.display()
+                    );
+                    imports.push(glb);
+                }
+                Converted::Clips(glb) => self.import_clip_library(&glb, conversion.attach),
+                Converted::Failed(err) => {
+                    log::error!("{err}");
+                    self.shared
+                        .reload_notifications
+                        .push(ReloadNotification::error(err));
+                }
+            }
+        }
+    }
+
+    /// Copy a glTF/GLB of animations into the project's content/animations, and add it to
+    /// `attach`'s animator.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn import_clip_library(&mut self, path: &std::path::Path, attach: Option<Entity>) {
+        let Some(project_dir) = self.project_system().controller().current_dir().cloned() else {
+            log::error!("Open a project before importing animations");
+            return;
+        };
+        let options = serde_json::json!({ "overwrite": true });
+        match super::remote::import_animation_library(&project_dir, path, &options) {
+            Ok(result) => {
+                let message = format!(
+                    "Imported animations {} ({} clips)",
+                    result["project_path"].as_str().unwrap_or_default(),
+                    result["clips"].as_array().map_or(0, Vec::len)
+                );
+                log::info!("{message}: {}", result["clips"]);
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::success(message));
+                if let (Some(entity), Some(path)) = (attach, result["project_path"].as_str()) {
+                    self.enqueue_command(EditorCommand::Inspector(
+                        crate::inspector::InspectorAction::AddAnimationLibrary {
+                            entity,
+                            path: PathBuf::from(path),
+                        },
+                    ));
+                }
+            }
+            Err(err) => {
+                log::error!("Cannot import animations from {}: {err}", path.display());
+                self.shared
+                    .reload_notifications
+                    .push(ReloadNotification::error(err));
+            }
+        }
     }
 
     pub(super) fn process_pending_imports(

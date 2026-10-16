@@ -1325,6 +1325,7 @@ impl Server {
                     "kind": "plane", "name": "Floor",
                     "rotation": [-90, 0, 0], "scale": [40, 40, 1],
                     "material": { "color": "#262b36", "roughness": 0.9, "metallic": 0.0 },
+                    "collider": {},
                     "quiet": true,
                 }),
             ),
@@ -1336,7 +1337,7 @@ impl Server {
         }
         let saved = self.save_project(&json!({}))?;
         Ok(json!({
-            "entities": ["Post Process Volume (infinite: tonemapping, bloom, SSAO, FXAA, slight grading)", "Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0)"],
+            "entities": ["Post Process Volume (infinite: tonemapping, bloom, SSAO, FXAA, slight grading)", "Sun (directional light, shadows)", "GameCamera (active, 14 m up, looking at the origin)", "Floor (40 x 40 m plane at y = 0, with a collider)"],
             "environment": "dark blue backdrop, ambient 0.35",
             "note": "Post-processing lives on the Post Process Volume entity (postprocess_get/postprocess_set). Change or delete any of this; pass template: \"empty\" for a bare scene.",
             "saved": saved,

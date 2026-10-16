@@ -223,6 +223,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "collider": { "type": ["object", "null"], "description": "Collision shape, or null to remove. On its own the entity is fixed scenery. {shape: {kind: auto} (fits the mesh: primitives exactly, other meshes as triangles for scenery or convex hull for dynamic bodies) | {kind: box, size: [x,y,z]} | {kind: sphere, radius} | {kind: capsule, radius, height} | {kind: cylinder, radius, height} | {kind: mesh} | {kind: convex_hull}, offset: [x,y,z], friction (0.6), restitution (0), density (1), sensor (trigger volume: scripts get on_trigger_enter/exit), include_children (also the meshes of descendants: imported models and levels)}. Sizes are local units, stretched by the entity's scale. Only given fields change." },
         "character_controller": { "type": ["object", "null"], "description": "Walking character (capsule move-and-slide; the entity origin is the feet), or null to remove. Steered from Lua: character_move(e, x, z, run), character_jump(e), character_state(e). Fields: radius (0.3), height (1.8), max_slope (deg, 50), step_height (0.35), snap_distance (0.3), walk_speed (2.2), run_speed (6), acceleration (40), air_control (0.35), gravity (22), jump_height (1.3), air_jumps (0), coyote_time (0.12), jump_buffer (0.15), max_fall_speed (45), face_movement (true), turn_speed (deg/s, 720), yaw_offset (deg; models should face +Z), push_mass (80 kg), ride_platforms (true). Only given fields change." },
         "spring_camera": { "type": ["object", "null"], "description": "Third-person spring-arm camera (give the entity a camera too), or null to remove: {target: entity name (empty = parent), pivot_offset: [0,1.5,0], distance (4.5), min_distance, max_distance, yaw, pitch (deg, -15 looks down), min_pitch, max_pitch, shoulder_offset, mouse_look (true: turns while the cursor is locked or right mouse held), sensitivity (deg/pixel), invert_y, zoom_step (m per wheel notch), follow_lag (s), vertical_lag (s), collision (pull in before scenery), probe_radius, auto_follow (swing behind a moving target, 0 = off)}. Only given fields change." },
+        "animation_tree": { "type": ["object", "null"], "description": "Animation state machine (like Godot's AnimationTree) driving the character's animator (on the entity, the nearest below, or above), or null to remove. {generate: true} builds a locomotion tree from the character's clips by name (idle/walk/run/backpedal/strafes in a 2D blend space at the speeds the clips travel, then Jump/Fall/Land states); put it on the character root. Fields: from_character (default true: the CharacterController feeds speed, forward_speed, side_speed, vertical_speed, grounded, air_time, landing_speed and the triggers jumped and landed), start, parameters {name: number}, states [{name, motion: {kind: clip, clip, speed} | {kind: blend_1d, parameter, points: [{at, clip, speed}], scale_speed} | {kind: blend_2d, x, y, points: [{at: [x, y], clip, speed}], scale_speed}, looping, speed}], transitions [{from (a state or \"*\"), to, when (e.g. \"!grounded && air_time > 0.15\"), fade, after (0..1 share of the state played)}]. entity_get shows playing {state, previous, time, progress, parameters} in play mode. Lua: animation_set/trigger/get/state/travel." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -465,7 +466,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -1013,7 +1014,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "project_create",
-            description: "Editor only: create a new project at location/name and open it; returns once it is open, with the editor state. Its content/ folder holds scenes, scripts (content/scripts), audio and textures. By default the scene starts with a starter set-up (dark backdrop, ambient light, a shadowed sun, an active GameCamera looking at the origin, a 40 m Floor) and is saved.",
+            description: "Editor only: create a new project at location/name and open it; returns once it is open, with the editor state. Its content/ folder holds scenes, scripts (content/scripts), audio and textures. By default the scene starts with a starter set-up (dark backdrop, ambient light, a shadowed sun, an active GameCamera looking at the origin, a 40 m Floor with a collider) and is saved.",
             schema: object(json!({
                 "name": { "type": "string" },
                 "location": { "type": "string", "description": "Parent directory" },
@@ -1072,14 +1073,26 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "asset_import",
-            description: "Editor only: bring a file into the project. A glTF/GLB model is copied in, saved as a scene document and instanced into the active scene (example models are under web/assets/; skinned characters are under web/assets/skinned/ and get an animator playing their first clip in play mode; scale the '(Instance)' root for models authored in centimetres). A glTF/GLB with animations but no meshes (or kind: animation) is a clip library instead: it is copied to content/animations and its clips are listed, ready for entity_update {animator: {add_clips}}. Images, audio, fonts, .lua and .wgsl files are copied into content/textures, audio, fonts, scripts or shaders (or dest) and the result gives the project-relative path to reference. Replacing a texture the scene uses reloads it.",
+            description: "Editor only: bring a file into the project. A glTF/GLB model is copied in, saved as a scene document and instanced into the active scene (example models are under web/assets/; skinned characters are under web/assets/skinned/ and get an animator playing their first clip in play mode; scale the '(Instance)' root for models authored in centimetres). FBX, .blend and OBJ files are converted with Blender in the background first (Mixamo FBX included; watch logs). A file with animations but no meshes (or kind: animation, e.g. Mixamo's \"Without Skin\" downloads) is a clip library instead: it is copied to content/animations, named after the file, and its clips are listed, ready for entity_update {animator: {add_clips}}; pass entity to add it to that character's animator right away. Images, audio, fonts, .lua and .wgsl files are copied into content/textures, audio, fonts, scripts or shaders (or dest) and the result gives the project-relative path to reference. Replacing a texture the scene uses reloads it.",
             schema: object(json!({
                 "path": { "type": "string", "description": "Source file" },
                 "dest": { "type": "string", "description": "Non-model files: target path relative to the project's content folder, e.g. textures/ui/logo.png" },
                 "overwrite": { "type": "boolean", "description": "Replace an existing file at the target (default false)" },
-                "kind": { "type": "string", "enum": ["model", "animation"], "description": "glTF/GLB only: import as a model (instanced) or as an animation clip library. Default: animation when the file has animations and no meshes" }
+                "kind": { "type": "string", "enum": ["model", "animation"], "description": "Import as a model (instanced) or as an animation clip library. Default: animation when the file has animations and no meshes" },
+                "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Animations: add the clip library to this character's animator (its root, model or the entity its AnimationTree is on)" }
             }), &["path"]),
             action: Action::Engine("asset.import"),
+        },
+        Tool {
+            name: "character_make",
+            description: "Editor only, while editing: make an imported model playable, like the inspector's Make Character. The model goes under a new entity (default name Player) with a CharacterController sized to it, an AnimationTree generated from its clips (idle/walk/run/strafe/back/jump/fall/land by name), and the active camera gets a SpringCamera following it (or a camera is made). A model facing -Z is turned to face +Z. script: true also writes content/scripts/<name>.lua with the engine's third-person controls (require(\"engine.third_person\")). Returns the entities, size, tree states and notes (e.g. that nothing has a Collider, so the character would fall: give the floor one).",
+            schema: object(json!({
+                "entity": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "The model: its '(Instance)' root or any entity with its meshes below" },
+                "name": { "type": "string", "description": "Name of the character entity (default Player, or '<model> Character' when taken)" },
+                "camera": { "type": "boolean", "description": "Have the active camera follow it with a SpringCamera (default true)" },
+                "script": { "anyOf": [{ "type": "boolean" }, { "type": "string" }], "description": "true writes content/scripts/<name>.lua with third-person controls; a project-relative path writes (or attaches an existing) script there" }
+            }), &["entity"]),
+            action: Action::Engine("character.make"),
         },
         Tool {
             name: "animation_inspect",

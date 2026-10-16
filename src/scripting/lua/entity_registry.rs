@@ -129,6 +129,12 @@ pub(crate) enum ExistingCommand {
         entity_bits: u64,
         command: crate::scene::skeletal::AnimatorCommand,
     },
+    /// Change the animation tree driving the entity (its own, an ancestor's or a
+    /// descendant's).
+    AnimationTree {
+        entity_bits: u64,
+        command: crate::scene::skeletal::TreeCommand,
+    },
     /// Remove the entity and everything below it in the hierarchy.
     Despawn {
         entity_bits: u64,

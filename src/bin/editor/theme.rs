@@ -76,6 +76,8 @@ pub mod icons {
     pub const RIGID_BODY: &str = "⚫";
     pub const COLLIDER: &str = "⬚";
     pub const CHARACTER: &str = "🏃";
+    pub const ANIMATOR: &str = "🎬";
+    pub const ANIMATION_TREE: &str = "🔀";
     pub const SPRING_CAMERA: &str = "📷";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";

@@ -386,6 +386,20 @@ impl ScriptCommands {
         Ok(())
     }
 
+    /// Queue an animation tree change (`animation_set` and friends).
+    pub fn animation_tree(
+        &mut self,
+        handle: i64,
+        command: crate::scene::skeletal::TreeCommand,
+    ) -> Result<(), mlua::Error> {
+        let entity_bits = self.resolve_entity_bits(handle)?;
+        self.existing.push(ExistingCommand::AnimationTree {
+            entity_bits,
+            command,
+        });
+        Ok(())
+    }
+
     pub fn despawn(&mut self, handle: i64) -> Result<(), mlua::Error> {
         if self.pending.remove(&handle).is_some() {
             self.assets.retain(|(target, _)| *target != handle);
@@ -628,6 +642,30 @@ impl ScriptCommands {
                     None => warn!(
                         target: "script",
                         "{command:?}: entity {entity:?} has no Animator (nor does any parent)"
+                    ),
+                }
+            }
+            ExistingCommand::AnimationTree {
+                entity_bits,
+                command,
+            } => {
+                use crate::scene::skeletal::{tree_entity, AnimationTree};
+                let Some(entity) = Entity::from_bits(entity_bits) else {
+                    return Ok(());
+                };
+                if !world.contains(entity) {
+                    return Err(ComponentError::NoSuchEntity.into());
+                }
+                match tree_entity(world, entity) {
+                    Some(owner) => {
+                        if let Ok(mut tree) = world.get::<&mut AnimationTree>(owner) {
+                            tree.apply(command);
+                        }
+                    }
+                    None => warn!(
+                        target: "script",
+                        "{command:?}: entity {entity:?} has no AnimationTree (nor does any \
+                         parent or child)"
                     ),
                 }
             }

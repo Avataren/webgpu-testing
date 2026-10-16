@@ -27,7 +27,14 @@ use wgpu_cube::scene::{ParticleBehaviorPreset, Scene, SceneHandle, SceneWorkspac
 use wgpu_cube::{DefaultUI, SceneCreationAction, SceneHierarchyHandle, ScenePrimitivePreset};
 
 pub(super) enum EditorCommand {
+    /// Import a model (glTF/GLB, or FBX/.blend/OBJ through Blender).
     ImportPath(PathBuf),
+    /// Import a file's animations as a clip library (content/animations), and add it to
+    /// the animator of `attach` (or the one its animation tree drives).
+    ImportClips {
+        path: PathBuf,
+        attach: Option<Entity>,
+    },
     DeleteEntity(Entity),
     Inspector(InspectorAction),
     CreateScene(SceneCreationAction),
@@ -168,6 +175,10 @@ impl<'shared> EditorAppAccess<'shared> {
 
     pub(super) fn take_light_probe_requests(&mut self) -> Vec<crate::inspector::LightProbeRequest> {
         std::mem::take(&mut self.shared.light_probe_requests)
+    }
+
+    pub(super) fn animation_status_mut(&mut self) -> &mut crate::inspector::AnimationPanelStatus {
+        &mut self.shared.animation_status
     }
 
     pub(super) fn light_probe_status_mut(

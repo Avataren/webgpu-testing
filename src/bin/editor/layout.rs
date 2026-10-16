@@ -12,7 +12,9 @@ use wgpu_cube::{
 };
 
 use crate::asset_browser::{AssetBrowserAction, AssetBrowserState};
-use crate::inspector::{show_entity_inspector, InspectorAction, LightProbePanelStatus};
+use crate::inspector::{
+    show_entity_inspector, AnimationPanelStatus, InspectorAction, LightProbePanelStatus,
+};
 use crate::theme;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,7 @@ pub struct EditorBehavior<'a> {
     pub content_root: Option<PathBuf>,
     pub workspace_info: SceneHierarchyWorkspaceInfo,
     pub light_probe_status: &'a LightProbePanelStatus,
+    pub animation_status: &'a AnimationPanelStatus,
 }
 
 impl Behavior<EditorPane> for EditorBehavior<'_> {
@@ -206,6 +209,7 @@ impl EditorBehavior<'_> {
                                 &selection,
                                 self.content_root.as_deref(),
                                 self.light_probe_status,
+                                self.animation_status,
                             );
                             self.inspector_actions.extend(actions);
                         } else {

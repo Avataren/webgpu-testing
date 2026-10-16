@@ -257,15 +257,51 @@ to flicker, especially at a distant horizon.
     available: the main pass reads it as a second vertex stream (`@location(5)`,
     `Vertex::previous_position_layout`; the mesh itself for rigid batches), and motion
     vectors include limb motion. Ray tracing copies the deformed vertices into its pool.
-  - Skinned imports get an `Animator` on their root. It plays `SkeletalClip`s read from
-    glTF/GLB files (`ClipLibrary`, cached in `Assets::clip_library`), bound to bones by
-    normalized name, so animation-only files drive any rig with matching names.
-    Layers with bone masks, cross-fades, per-bone translation retargeting by rest-length
-    ratio and root motion (`keep`/`in_place`/`apply`). Animators run only while
+  - Skinned imports get an `Animator` on their root (also files without animations, so
+    a T-pose download can take clips from others; its own file stays the first library).
+    It plays `SkeletalClip`s read from glTF/GLB files (`ClipLibrary`, cached in
+    `Assets::clip_library`), bound to bones by normalized name, so animation-only files
+    drive any rig with matching names. Layers with bone masks, cross-fades, per-bone
+    translation retargeting by rest-length ratio and root motion
+    (`keep`/`in_place`/`apply`). Animators run only while
     `Scene::set_animation_playback(true)` (play mode), so the editor saves rest poses.
+  - Rest-relative retargeting (`Binding::finish_frames`): a clip from another export of
+    the rig (a Mixamo FBX through Blender, whose bones point along Y, on a GLB that kept
+    Mixamo's joint orientations and turns its armature -90 degrees) has its keys turned
+    `pre * key * post`, with `pre = T(parent)⁻¹ S(parent)` and `post = S(bone)⁻¹ T(bone)`
+    from the world rest rotations in the clip's file (`BoneRest::parent_rotation`) and in
+    the model's own file (found through the animator's `GltfSource`, else read from the
+    entities). Each bone then turns away from its rest as in the clip. Identical rigs get
+    no correction; different rest postures (T versus A) are not handled.
+  - Blends (`Animator::play_blend`): a group of clips posed by weight with one shared
+    phase (a walk and a run keep step), negative speed plays backwards, each clip's
+    `root_speed` (ground travel per second) is measured from its root track.
+  - `AnimationTree` (`skeletal/tree.rs`, Godot-style): states playing a clip or a 1D/2D
+    blend space (2D: the smallest enclosing triangle, barycentric weights), transitions
+    with parsed conditions (`&& || !`, comparisons) and exit times, parameters fed from
+    the `CharacterController` after the physics step (`ScenePhysics::feed_animation_trees`:
+    speeds along the facing, grounded, air time, landing speed, jumped/landed triggers).
+    `update_trees` runs before `update_animators` and plays the current state through
+    `play_blend` on layer 0. `AnimationTree::locomotion` builds one from clip names
+    (Mixamo's included), placing blend points at the clips' root speeds. `tree_animator`
+    finds the animator a tree drives (itself, below, above); `animator_entity` finds the
+    one a script means (itself, above, below).
   - Copy paths remap joints: `SceneAsset::instantiate` (entity indices),
-    `merge_world_as_child` and the remote duplicate. Lua: `animator_*`, `find_bone`.
-    MCP: `entity_get`/`entity_update {animator}`, `animation_inspect`, `debug_skeleton`.
+    `merge_world_as_child` and the remote duplicate. Lua: `animator_*`, `animation_*`,
+    `find_bone`. MCP: `entity_get`/`entity_update {animator, animation_tree}`,
+    `animation_inspect`, `debug_skeleton`, `character_make`.
+  - FBX, .blend and OBJ import through Blender (`src/bin/editor/application/blender_convert.rs`
+    runs `tools/blender/convert_to_gltf.py` in the background): a model becomes a GLB
+    imported like any glTF; a file without meshes (Mixamo "Without Skin"), or one imported
+    as animations, becomes a clip library in `content/animations`, named after the file
+    (Mixamo names every clip "mixamo.com"). Blender is found through `BLENDER_PATH`, the
+    `PATH` or its usual install places.
+  - "Make Character" (`physics::make_character`, also remote `character.make`): the
+    model goes under a new entity with a `CharacterController` sized from its bounds
+    (skinned meshes measured through their joints: `joint × inverse bind`), a generated
+    tree, a `SpringCamera` on the active camera and optionally a script requiring
+    `engine.third_person` (a built-in Lua module, `scripting/lua/modules/`). A model whose
+    toes point to -Z is turned to face +Z.
 
 ## Physics
 
@@ -390,7 +426,11 @@ the web too).
 - **Editor structure** (`src/bin/editor/application/`):
   - `EditorApplication` holds an `EditorSharedState` and a list of `EditorSystem`s
     (camera, selection, history, project, script editor, shader editor, asset browser,
-    particles). Each system implements `update`, `gpu_update` and `ui`.
+    particles, light probes, animation panel). Each system implements `update`,
+    `gpu_update` and `ui`. Inspector sections that show live engine state read a status
+    a system writes each frame (`LightProbePanelStatus`; `AnimationPanelStatus`: the
+    selected character's clips, bound once per animator and library list, and in play
+    mode its tree's state and parameters).
   - UI code doesn't mutate the scene directly. It queues `EditorCommand`s (inspector
     edits arrive as `InspectorAction`s). The next frame's update stage drains the queue
     (`drain_update_commands`) and applies them through `action_handlers/`, recording undo

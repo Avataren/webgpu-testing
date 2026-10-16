@@ -6,16 +6,25 @@
 //!   target bones by name.
 //! - [`Animator`] plays, cross-fades and layers those clips on the bones below its
 //!   entity, with retargeting and root motion.
+//! - [`AnimationTree`] drives an animator from parameters: states, blend spaces and
+//!   transitions, like Godot's AnimationTree.
 
 pub mod animator;
 pub mod clip;
 pub mod skin;
+pub mod tree;
 
 pub use animator::{
     animator_entity, find_bone, Animator, AnimatorCommand, AnimatorLayer, AnimatorState,
-    AnimatorStatus, ClipInfo, PlayOptions, PlayingClip, RootMotion, MAX_LAYERS,
+    AnimatorStatus, BlendClip, BlendOptions, ClipInfo, PlayOptions, PlayingClip, RootMotion,
+    MAX_LAYERS,
 };
 pub use clip::{node_name, normalize_bone_name, BoneRest, BoneTrack, ClipLibrary, SkeletalClip};
 pub use skin::{skeleton_segments, SkinnedMesh, MAX_JOINTS};
+pub use tree::{
+    check_condition, tree_animator, tree_entity, AnimationTree, AnimationTreeState,
+    AnimationTreeTransition, BlendPoint, BlendPoint2d, LocomotionClips, Motion, TreeCommand,
+};
 
 pub(crate) use animator::update_animators;
+pub(crate) use tree::update_trees;

@@ -518,6 +518,10 @@ impl SceneAsset {
                 builder.add(component.clone());
             }
 
+            if let Some(component) = &entity.animation_tree {
+                builder.add(component.clone());
+            }
+
             builders.push(builder);
         }
 

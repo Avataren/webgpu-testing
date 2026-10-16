@@ -1,3 +1,7 @@
+use super::animation::{
+    handle_add_animation_library, handle_generate_animation_tree, handle_import_animations,
+    handle_make_character, handle_set_animation_tree, handle_set_animator,
+};
 use super::camera::handle_update_camera;
 use super::components::{
     handle_add_camera, handle_add_directional_light, handle_add_environment,
@@ -98,6 +102,26 @@ pub fn dispatch_action(
             component,
             value,
         } => handle_set_physics(&mut ctx, entity, component, value),
+
+        // Animation actions
+        InspectorAction::SetAnimator { entity, animator } => {
+            handle_set_animator(&mut ctx, entity, animator)
+        }
+        InspectorAction::AddAnimationLibrary { entity, path } => {
+            handle_add_animation_library(&mut ctx, entity, path)
+        }
+        InspectorAction::ImportAnimations { entity, path } => {
+            handle_import_animations(&mut ctx, entity, path)
+        }
+        InspectorAction::SetAnimationTree { entity, tree } => {
+            handle_set_animation_tree(&mut ctx, entity, tree)
+        }
+        InspectorAction::GenerateAnimationTree { entity } => {
+            handle_generate_animation_tree(&mut ctx, entity)
+        }
+        InspectorAction::MakeCharacter { entity, script } => {
+            handle_make_character(&mut ctx, entity, script)
+        }
 
         // Material actions
         InspectorAction::UpdateMaterial {

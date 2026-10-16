@@ -137,13 +137,14 @@ merge; a Lua regression test covers the script functions.
 
 ### Animation
 
-- **Humanoid retargeting.** Rotations are copied as they are, which is right for rigs that
-  share rest orientations (Mixamo to Mixamo, a file to itself) and wrong for rigs with
-  different rest poses (T-pose versus A-pose, other bone axes). Needs a humanoid bone map
-  and rest-relative rotation transfer.
+- **Humanoid retargeting.** Rest-relative rotation transfer is done (other bone axes and
+  armature turns, e.g. a Blender-converted Mixamo FBX on a three.js Mixamo GLB). Rigs with
+  different rest postures (T-pose versus A-pose) or other bone names still need a humanoid
+  bone map and a pose-matching step.
 - **Root rotation** (turning on the spot in root motion) is not extracted; only translation.
-- **Blend trees and state machines**: scripts choose and cross-fade clips; there is no
-  1D/2D blend space (walk-run by speed) or data-driven state graph yet.
+- **Blend trees and state machines**: done as `AnimationTree` (states, 1D/2D blend
+  spaces, transitions; see `docs/characters.md`). Not done: nested state machines, sync
+  markers (footfalls) between clips of different cycles.
 - **Additive layers**: layers override; there is no additive mode.
 - **Animation events** (footsteps at a time in a clip): scripts can poll `animator_state`,
   but clips carry no events and nothing is emitted when a clip ends.
@@ -153,9 +154,11 @@ merge; a Lua regression test covers the script functions.
 
 ### Editor UI
 
-Inspector sections for `SkinnedMesh` and `Animator`, collapsing joints in the hierarchy, a
-skeleton toggle in the viewport, a clip browser and a timeline. Everything is reachable
-through MCP and Lua today.
+Done: inspector sections for `Animator` (clip files, clips with length, ground speed and
+bone coverage, default clip, root motion) and `AnimationTree` (states, blend points,
+transitions, live state in play mode), "Make Character", FBX import. Not done: a
+`SkinnedMesh` section, collapsing joints in the hierarchy, a skeleton toggle in the
+viewport, a timeline and clip preview while editing.
 
 ### Asset sources
 
@@ -165,9 +168,9 @@ through MCP and Lua today.
   through `asset_import {kind: "animation"}` with no new code, and CC0 assets could ship with
   examples. Not yet tried in the engine: check bone names and coverage with
   `animation_inspect` and `entity_get`.
-- **FBX conversion** (`tools/fbx2glb` on `ufbx`, a separate crate so the C library stays out
-  of the engine and the wasm build) is not started. Until then, FBX files have to be
-  converted outside the engine (Blender).
+- **FBX conversion** goes through Blender (`tools/blender/convert_to_gltf.py`, run by the
+  editor's import). A Blender-free converter (`ufbx` in a separate crate, so the C library
+  stays out of the engine and the wasm build) would help machines without Blender.
 - **Mixamo tools** are not started. Findings from the earlier survey, unverified against the
   live service:
   - No public API. Community scripts use the web app's JSON API

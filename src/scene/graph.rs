@@ -145,6 +145,7 @@ impl SceneInstance {
 
         animations::advance_animations(world, assets, animations, animation_states, dt);
         if self.skeletal_playback {
+            crate::scene::skeletal::update_trees(world, dt as f32);
             crate::scene::skeletal::update_animators(world, assets, dt as f32);
         }
         animations::update_rotate_animations(world, dt);

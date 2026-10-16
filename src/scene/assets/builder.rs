@@ -256,6 +256,7 @@ impl SceneAssetEntityBuilder {
             collider: None,
             character_controller: None,
             spring_camera: None,
+            animation_tree: None,
             source_entity: None,
         }
     }

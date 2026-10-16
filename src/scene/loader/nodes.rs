@@ -257,7 +257,9 @@ pub(super) fn attach_animators<D: SceneImportDevice>(
     buffers: &[gltf::buffer::Data],
     node_entities: &[Option<hecs::Entity>],
 ) -> bool {
-    if document.skins().len() == 0 || document.animations().len() == 0 {
+    // A skinned file without animations (a character downloaded in T-pose) gets one
+    // too, to take clips from other files.
+    if document.skins().len() == 0 {
         return false;
     }
     let joint_nodes: std::collections::HashSet<usize> = document

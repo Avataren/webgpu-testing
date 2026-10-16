@@ -199,6 +199,20 @@ engine you launched; save first).
   true}` draws bones over the mesh in screenshots. Lua: `animator_play`, `animator_state`,
   `find_bone` (attach props to hands). Verify motion with `runtime_set {mode: "play",
   manual: true}` + `runtime_step` + `screenshot`.
+- Playable characters (`docs/characters.md` is the full guide): FBX/.blend/OBJ files
+  import through Blender (`asset_import` returns `converting: true`; watch `logs`), so a
+  Mixamo character FBX imports as a model and its "Without Skin" animation FBXs as clips:
+  `asset_import {path, entity: "<model> (Instance)"}` adds them to that animator, named
+  after the file. Then `character_make {entity: "<model> (Instance)", script: true}`
+  makes a `Player` with a sized `character_controller`, a generated `animation_tree`, a
+  spring camera on the active camera and `content/scripts/player.lua` (third-person
+  controls); read its `notes` (a floor without a collider, a turned model). The
+  `animation_tree` (Godot-style: states with a clip or 1D/2D blend space, transitions with
+  conditions such as `"!grounded && air_time > 0.15"`) is fed `speed`, `forward_speed`,
+  `side_speed`, `grounded`, `landing_speed` and the `jumped`/`landed` triggers by the
+  controller; `entity_update {animation_tree: {generate: true}}` rebuilds it from clip
+  names, `{states, transitions, parameters}` replace parts, and `entity_get` shows the
+  live state in play mode. Lua: `animation_set`, `animation_trigger`, `animation_state`.
 - Physics (play mode, Rapier): give scenery `collider: {}` (auto-fits primitives and
   meshes; `include_children: true` on an imported level's root takes its child meshes),
   props `rigid_body: {mass}` too, moving platforms `rigid_body: {kind: "kinematic"}` (a
@@ -206,9 +220,10 @@ engine you launched; save first).
   `on_trigger_enter(self, other)`). A player is a character root with
   `character_controller: {}` (origin at the feet, model facing +Z) and a camera with
   `spring_camera: {target: "<name>"}` plus `active_camera: true`; Lua steers it with
-  `character_move` / `character_jump` and reads `character_state`. The reusable
-  third-person controller is `games/character-playground/content/scripts/lib/third_person.lua`
-  (`require("lib.third_person")` after copying it into a project; `scheme = "mmo"` gives World of Warcraft mouse controls). `debug_physics
+  `character_move` / `character_jump` and reads `character_state`. The engine's
+  third-person controller is a built-in module: `require("engine.third_person")` in any
+  project (`scheme = "mmo"` gives World of Warcraft mouse controls; lua_api_reference
+  "Third-person controller"). `debug_physics
   {enabled: true}` draws every collider; the editor outlines the selected one. The
   simulation is rebuilt when play starts, so check physics in play mode (`playtest`).
 - Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`

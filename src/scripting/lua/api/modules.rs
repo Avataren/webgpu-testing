@@ -15,6 +15,12 @@
 //! looked up next to the script first, then under the script root (also from inside a
 //! module, so a module in `ai/` requires its neighbour as `"ai.helpers"`). Editing a required
 //! or included file hot-reloads every script that uses it.
+//!
+//! The engine brings modules of its own under `engine.`, used when the project has no file
+//! of that name (so copying one into `scripts/engine/` overrides it):
+//!
+//! - `engine.third_person`: keyboard and mouse controls for a character with a
+//!   `CharacterController` and a spring camera (see "Third-person controller").
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -46,12 +52,33 @@ fn candidates(name: &str, search_dirs: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Modules built into the engine, by their path under `engine/`.
+const BUILT_IN: [(&str, &str); 1] = [("third_person", include_str!("../modules/third_person.lua"))];
+
+/// A built-in module: `engine.third_person` or `engine/third_person`.
+fn built_in(name: &str) -> Option<(PathBuf, String)> {
+    let relative = name.strip_suffix(".lua").unwrap_or(name).replace('.', "/");
+    let module = relative.strip_prefix("engine/")?;
+    BUILT_IN
+        .iter()
+        .find(|(name, _)| *name == module)
+        .map(|(name, source)| {
+            (
+                PathBuf::from(format!("engine/{name}.lua")),
+                (*source).to_owned(),
+            )
+        })
+}
+
 fn find(name: &str, search_dirs: &[PathBuf]) -> LuaResult<(PathBuf, String)> {
     let candidates = candidates(name, search_dirs);
     for path in &candidates {
         if let Ok(contents) = crate::io::read_to_string(path) {
             return Ok((path.clone(), contents));
         }
+    }
+    if let Some(found) = built_in(name) {
+        return Ok(found);
     }
     Err(mlua::Error::RuntimeError(format!(
         "module {name:?} not found; looked for {}",
@@ -208,6 +235,27 @@ mod tests {
             .to_string();
         assert!(cycle.contains("require cycle"), "{cycle}");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn engine_modules_are_built_in() {
+        let lua = Lua::new();
+        let env = lua.create_table().unwrap();
+        let metatable = lua.create_table().unwrap();
+        metatable.set("__index", lua.globals()).unwrap();
+        env.set_metatable(Some(metatable));
+        install(&lua, &env, vec![std::env::temp_dir()], Arc::default()).unwrap();
+        let (has_new, same): (bool, bool) = lua
+            .load(
+                "local T = require('engine.third_person')\n\
+                 return type(T.new) == 'function', T == require('engine/third_person')",
+            )
+            .set_environment(env)
+            .eval()
+            .unwrap();
+        assert!(has_new && same);
+        assert!(built_in("engine.nothing").is_none());
+        assert!(built_in("third_person").is_none(), "only under engine.");
     }
 
     #[test]

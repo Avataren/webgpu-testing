@@ -93,6 +93,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "Draw the bones of skinned meshes on top of the scene ({enabled})",
     ),
     (
+        "character.make",
+        "Make an imported model playable: a parent with a CharacterController, a generated AnimationTree, a spring camera and optionally a third-person script ({entity, name, camera, script})",
+    ),
+    (
         "debug.physics",
         "Draw every simulated collider ({enabled}); report bodies, steps and gravity",
     ),
@@ -302,6 +306,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "entity.duplicate" => entity::duplicate(params, ctx),
         "animation.inspect" => animation::inspect(params, ctx),
         "debug.skeleton" => animation::debug_skeleton(params, ctx),
+        "character.make" => animation::make_character(params, ctx),
         "debug.physics" => animation::debug_physics(params, ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
         "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {

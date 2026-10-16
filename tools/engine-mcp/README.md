@@ -65,7 +65,7 @@ Options and environment:
 | Runtime | `runtime_set` (play/stop, time_scale), `wait`, `playtest` |
 | Audio | `sound_play`, `sound_stop`, `audio_status` |
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
-| Animation | `entity_update {animator}`, `animation_inspect`, `debug_skeleton` (skinned characters; `entity_get` shows `skinned_mesh` and `animator`) |
+| Animation | `entity_update {animator, animation_tree}`, `animation_inspect`, `debug_skeleton`, `character_make` (skinned characters; `entity_get` shows `skinned_mesh`, `animator` and the tree's live state) |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot` (`overlays`), `visual_capture` (`freeze_noise`, `overlays`), `visual_compare`, `render_freeze_noise`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Render debugging | `texture_fetch`, `shader_reload` |
@@ -84,7 +84,11 @@ their root. Clips bind to bones by name, so `asset_import {path, kind: "animatio
 animation-only GLB followed by `entity_update {entity, animator: {add_clips: path}}` gives
 a character new moves. Animators play in play mode and under `runtime_step`; while
 editing, `animator.play` sets `default_clip` instead. `debug_skeleton {enabled: true}`
-draws the bones in screenshots.
+draws the bones in screenshots. FBX (Mixamo), .blend and OBJ files import through
+Blender; `asset_import {path, entity}` puts an animation file's clips straight onto a
+character, and `character_make {entity, script: true}` turns an imported model into a
+playable character (controller, generated animation tree, spring camera, third-person
+script). The workflow is in `docs/characters.md`.
 
 `engine_info.limits` reports renderer and procedural geometry capacities. The renderer
 uses at most four lights of each type, in scene/world iteration order, shared across

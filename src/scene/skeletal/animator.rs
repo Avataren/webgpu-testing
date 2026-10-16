@@ -20,6 +20,11 @@
 //! hips) can be kept, removed (`in_place`) or transferred to the animator entity
 //! (`apply`), so a walk cycle moves the character without foot sliding.
 //!
+//! Several clips can also play as one *blend* ([`Animator::play_blend`]): a group of
+//! clips that fades in and out together, each with its share of the pose, optionally
+//! kept in step (a walk and a run blended by speed put their feet down together). An
+//! [`AnimationTree`](super::AnimationTree) drives an animator through blends.
+//!
 //! Animators run with the scene's animations: in play mode and under explicit
 //! simulation steps, not while editing.
 
@@ -33,11 +38,13 @@ use serde::{Deserialize, Serialize};
 
 use super::clip::{normalize_bone_name, ClipLibrary, SkeletalClip};
 use crate::asset::Assets;
-use crate::scene::components::{Children, Name, Parent, TransformComponent, WorldTransform};
+use crate::scene::components::{
+    Children, GltfSource, Name, Parent, TransformComponent, WorldTransform,
+};
 use crate::scene::transform::Transform;
 
 /// Most clips mixed at once on one layer; older, weaker ones are dropped first.
-const MAX_CLIPS_PER_LAYER: usize = 8;
+const MAX_CLIPS_PER_LAYER: usize = 16;
 /// Most layers per animator.
 pub const MAX_LAYERS: usize = 8;
 
@@ -206,11 +213,81 @@ pub struct PlayingClip {
     last_root: Option<Vec3>,
     /// Times the clip wrapped around during the last advance (negative backwards).
     wraps: i32,
+    /// Its share of the blend it belongs to (1 for a clip played on its own).
+    pub blend: f32,
+    /// The blend it belongs to ([`Animator::play_blend`]); `None` for a clip played on
+    /// its own.
+    pub group: Option<String>,
+    /// Kept in step with the other synced clips of its blend: they share one phase.
+    sync: bool,
+    /// Position in the cycle, 0..1, for synced clips.
+    phase: f32,
 }
 
 impl PlayingClip {
     pub fn fading_out(&self) -> bool {
         self.target_weight == 0.0
+    }
+
+    /// How much it contributes to the pose: its fade times its share of its blend.
+    pub fn effective_weight(&self) -> f32 {
+        self.weight * self.blend
+    }
+
+    /// A clip fading in over `fade` seconds.
+    fn new(name: &str, fade: f32) -> Self {
+        Self {
+            name: name.to_string(),
+            time: 0.0,
+            speed: 1.0,
+            looping: true,
+            weight: if fade > 0.0 { 0.0 } else { 1.0 },
+            target_weight: 1.0,
+            fade_rate: if fade > 0.0 { 1.0 / fade } else { 0.0 },
+            finished: false,
+            last_root: None,
+            wraps: 0,
+            blend: 1.0,
+            group: None,
+            sync: false,
+            phase: 0.0,
+        }
+    }
+}
+
+/// One clip of a blend ([`Animator::play_blend`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlendClip {
+    pub clip: String,
+    /// Its share of the pose; the shares of a blend add up to 1.
+    pub weight: f32,
+    /// Its playback rate; negative plays it backwards (a walk as a backpedal).
+    pub speed: f32,
+}
+
+/// Options for [`Animator::play_blend`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlendOptions {
+    /// Cross-fade from whatever else plays on the layer (seconds).
+    pub fade: f32,
+    pub looping: bool,
+    /// Keep the clips in step: one phase for all, advancing at their weighted duration.
+    pub sync: bool,
+    pub layer: usize,
+    /// Start from the beginning even if the blend is still playing (entering a state
+    /// again).
+    pub restart: bool,
+}
+
+impl Default for BlendOptions {
+    fn default() -> Self {
+        Self {
+            fade: 0.2,
+            looping: true,
+            sync: true,
+            layer: 0,
+            restart: false,
+        }
     }
 }
 
@@ -241,6 +318,10 @@ pub struct ClipInfo {
     pub bound: usize,
     /// Track bones the skeleton does not have.
     pub missing: Vec<String>,
+    /// How fast the root bone travels over the ground in the clip (m/s; about 0 for
+    /// clips animated in place). A locomotion clip played at this ground speed does not
+    /// slide its feet.
+    pub root_speed: f32,
 }
 
 impl Animator {
@@ -274,21 +355,13 @@ impl Animator {
         let playing = match existing {
             Some(index) => &mut layer.clips[index],
             None => {
-                layer.clips.push(PlayingClip {
-                    name: clip.to_string(),
-                    time: 0.0,
-                    speed: 1.0,
-                    looping: true,
-                    weight: if fade > 0.0 { 0.0 } else { 1.0 },
-                    target_weight: 1.0,
-                    fade_rate: 0.0,
-                    finished: false,
-                    last_root: None,
-                    wraps: 0,
-                });
+                layer.clips.push(PlayingClip::new(clip, fade));
                 layer.clips.last_mut().expect("just pushed")
             }
         };
+        playing.group = None;
+        playing.blend = 1.0;
+        playing.sync = false;
         playing.speed = options.speed;
         playing.looping = options.looping;
         if let Some(start) = options.start {
@@ -302,19 +375,79 @@ impl Animator {
         playing.finished = false;
         fade_to(playing, 1.0, fade);
 
-        if layer.clips.len() > MAX_CLIPS_PER_LAYER {
-            // Drop the weakest of the clips on their way out.
-            if let Some(weakest) = layer
-                .clips
-                .iter()
-                .enumerate()
-                .filter(|(_, c)| c.fading_out())
-                .min_by(|a, b| a.1.weight.total_cmp(&b.1.weight))
-                .map(|(i, _)| i)
-            {
-                layer.clips.remove(weakest);
+        drop_weakest(layer);
+    }
+
+    /// Play several clips as one blend called `group` on `options.layer`: they fade in
+    /// together over `options.fade` while everything else on the layer fades out, each
+    /// posing the character by its `weight`. Calling it again with the same group (every
+    /// frame, as a blend space's parameter moves) only updates the weights and rates;
+    /// clips of the group left out stay at weight 0, so they keep their place.
+    pub fn play_blend(&mut self, group: &str, clips: &[BlendClip], options: BlendOptions) {
+        let layer_index = options.layer.min(MAX_LAYERS - 1);
+        while self.state.layers.len() <= layer_index {
+            self.state.layers.push(AnimatorLayer::default());
+        }
+        self.state.started = true;
+        let layer = &mut self.state.layers[layer_index];
+        let fade = options.fade.max(0.0);
+
+        // Entering again: a group that has faded out (or finished) starts over.
+        let members: Vec<&PlayingClip> = layer
+            .clips
+            .iter()
+            .filter(|playing| playing.group.as_deref() == Some(group))
+            .collect();
+        let restart = options.restart
+            && (members.is_empty()
+                || members
+                    .iter()
+                    .all(|playing| playing.fading_out() || playing.finished));
+        let phase = members
+            .iter()
+            .find(|playing| playing.sync)
+            .map_or(0.0, |playing| playing.phase);
+        let phase = if restart { 0.0 } else { phase };
+
+        for playing in layer.clips.iter_mut() {
+            if playing.group.as_deref() == Some(group) {
+                playing.blend = 0.0;
+            } else if !playing.fading_out() {
+                // Only start fades: renewing one every frame would never finish it.
+                fade_to(playing, 0.0, fade);
             }
         }
+        for blend in clips {
+            let index = layer.clips.iter().position(|playing| {
+                playing.group.as_deref() == Some(group) && playing.name == blend.clip
+            });
+            let playing = match index {
+                Some(index) => &mut layer.clips[index],
+                None => {
+                    let mut playing = PlayingClip::new(&blend.clip, fade);
+                    playing.group = Some(group.to_string());
+                    playing.phase = phase;
+                    layer.clips.push(playing);
+                    layer.clips.last_mut().expect("just pushed")
+                }
+            };
+            if restart {
+                playing.time = 0.0;
+                playing.phase = 0.0;
+                playing.last_root = None;
+            }
+            playing.blend = blend.weight.max(0.0);
+            playing.speed = blend.speed;
+            playing.looping = options.looping;
+            playing.sync = options.sync;
+            if restart || playing.fading_out() {
+                playing.finished = false;
+            }
+            if playing.target_weight != 1.0 {
+                fade_to(playing, 1.0, fade);
+            }
+        }
+        drop_weakest(layer);
     }
 
     /// Fade out everything on `layer` (`None` = every layer) over `fade` seconds; the
@@ -364,7 +497,7 @@ impl Animator {
                 .clips
                 .iter()
                 .filter(|clip| !clip.fading_out())
-                .max_by(|a, b| a.weight.total_cmp(&b.weight))
+                .max_by(|a, b| a.effective_weight().total_cmp(&b.effective_weight()))
         });
         let duration = current
             .and_then(|clip| self.clip_duration(&clip.name))
@@ -384,6 +517,33 @@ impl Animator {
             fading,
             speed: current.map_or(0.0, |clip| clip.speed),
         }
+    }
+
+    /// How far the blend `group` on `layer` has played through its cycle (0..1), and
+    /// whether it reached its end (a blend that does not loop), once it has started.
+    pub fn blend_progress(&self, group: &str, layer: usize) -> Option<(f32, bool)> {
+        let layer = self.state.layers.get(layer)?;
+        let strongest = layer
+            .clips
+            .iter()
+            .filter(|playing| playing.group.as_deref() == Some(group))
+            .max_by(|a, b| a.blend.total_cmp(&b.blend))?;
+        let progress = if strongest.sync {
+            strongest.phase
+        } else {
+            let duration = self.clip_duration(&strongest.name).unwrap_or(0.0);
+            if duration > 0.0 {
+                let t = (strongest.time / duration).clamp(0.0, 1.0);
+                if strongest.speed < 0.0 {
+                    1.0 - t
+                } else {
+                    t
+                }
+            } else {
+                1.0
+            }
+        };
+        Some((progress, strongest.finished))
     }
 
     /// Duration of a clip by the name it plays under, once the animator has bound its
@@ -491,15 +651,27 @@ impl Animator {
 }
 
 /// The entity whose [`Animator`] drives `entity`: itself or its nearest ancestor with
-/// one, so scripts may address a character by any part of it.
+/// one, so scripts may address a character by any part of it; failing that, the nearest
+/// one below it (a character's root, whose model is its child).
 pub fn animator_entity(world: &World, entity: Entity) -> Option<Entity> {
     let mut current = Some(entity);
     for _ in 0..256 {
-        let candidate = current?;
+        let Some(candidate) = current else {
+            break;
+        };
         if world.satisfies::<&Animator>(candidate).unwrap_or(false) {
             return Some(candidate);
         }
         current = parent_of(world, candidate);
+    }
+    let mut queue = std::collections::VecDeque::from([entity]);
+    while let Some(current) = queue.pop_front() {
+        if current != entity && world.satisfies::<&Animator>(current).unwrap_or(false) {
+            return Some(current);
+        }
+        if let Ok(children) = world.get::<&Children>(current) {
+            queue.extend(children.0.iter().copied());
+        }
     }
     None
 }
@@ -518,6 +690,24 @@ pub fn find_bone(world: &World, root: Entity, bone: &str) -> Option<Entity> {
         }
     }
     None
+}
+
+/// Keep a layer within [`MAX_CLIPS_PER_LAYER`] by dropping the weakest clip on its way
+/// out.
+fn drop_weakest(layer: &mut AnimatorLayer) {
+    while layer.clips.len() > MAX_CLIPS_PER_LAYER {
+        let Some(weakest) = layer
+            .clips
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.fading_out())
+            .min_by(|a, b| a.1.weight.total_cmp(&b.1.weight))
+            .map(|(i, _)| i)
+        else {
+            break;
+        };
+        layer.clips.remove(weakest);
+    }
 }
 
 fn fade_to(playing: &mut PlayingClip, target: f32, fade: f32) {
@@ -556,12 +746,42 @@ struct BoundClip {
     name: String,
     library: PathBuf,
     clip: Arc<SkeletalClip>,
-    /// (track index, bone slot, translation scale).
-    tracks: Vec<(usize, usize, f32)>,
+    tracks: Vec<BoundTrack>,
     missing: Vec<String>,
     /// Index into `tracks` of the root-motion track: the shallowest bone with a
     /// translation channel.
     root: Option<usize>,
+}
+
+/// A clip track bound to a bone of the skeleton.
+#[derive(Debug, Clone, Copy)]
+struct BoundTrack {
+    /// Index into the clip's tracks.
+    track: usize,
+    /// The bone's slot.
+    slot: usize,
+    /// Multiplies translation keys (target rest length / source rest length).
+    scale: f32,
+    /// The bone's rest in the clip's file: its parent frame (file root to parent) and
+    /// its own rotation. `None` when the file does not have the node.
+    source_rest: Option<(Quat, Quat)>,
+    /// Retargeting, when the skeleton's rest differs from the clip file's: keys become
+    /// `pre * key * post` (translations `pre * key`), so each bone turns away from its
+    /// rest as it does in the clip, in the world. That covers the same rig exported with
+    /// other axes (a Mixamo FBX through Blender, whose bones point along Y, against a
+    /// GLB that kept Mixamo's joint orientations).
+    retarget: Option<(Quat, Quat)>,
+}
+
+impl BoundTrack {
+    fn translation(&self, key: Vec3) -> Vec3 {
+        let key = key * self.scale;
+        self.retarget.map_or(key, |(pre, _)| pre * key)
+    }
+
+    fn rotation(&self, key: Quat) -> Quat {
+        self.retarget.map_or(key, |(pre, post)| pre * key * post)
+    }
 }
 
 impl Binding {
@@ -647,33 +867,38 @@ impl Binding {
                         binding.depth.push(depth);
                         binding.bones.len() - 1
                     });
+                    let source = library.rest.get(&track.key);
                     let scale = translation_scale(
-                        library
-                            .rest
-                            .get(&track.key)
-                            .map(|r| r.transform.translation),
+                        source.map(|r| r.transform.translation),
                         binding.rest[slot].translation,
                     );
-                    tracks.push((track_index, slot, scale));
+                    let source_rest = source.map(|r| (r.parent_rotation, r.transform.rotation));
+                    tracks.push((track_index, slot, scale, source_rest));
                 }
                 // Bones whose rest translation is zero take the scale of the
                 // shallowest bone that has one, so root motion on a bone at the origin
                 // is still converted.
                 let global = tracks
                     .iter()
-                    .filter(|(_, _, scale)| scale.is_some())
-                    .min_by_key(|(_, slot, _)| binding.depth[*slot])
-                    .and_then(|(_, _, scale)| *scale)
+                    .filter(|(_, _, scale, _)| scale.is_some())
+                    .min_by_key(|(_, slot, _, _)| binding.depth[*slot])
+                    .and_then(|(_, _, scale, _)| *scale)
                     .unwrap_or(1.0);
-                let tracks: Vec<(usize, usize, f32)> = tracks
+                let tracks: Vec<BoundTrack> = tracks
                     .into_iter()
-                    .map(|(track, slot, scale)| (track, slot, scale.unwrap_or(global)))
+                    .map(|(track, slot, scale, source_rest)| BoundTrack {
+                        track,
+                        slot,
+                        scale: scale.unwrap_or(global),
+                        source_rest,
+                        retarget: None,
+                    })
                     .collect();
                 let root = tracks
                     .iter()
                     .enumerate()
-                    .filter(|(_, (track, _, _))| clip.tracks[*track].translation.is_some())
-                    .min_by_key(|(_, (_, slot, _))| binding.depth[*slot])
+                    .filter(|(_, bound)| clip.tracks[bound.track].translation.is_some())
+                    .min_by_key(|(_, bound)| binding.depth[bound.slot])
                     .map(|(index, _)| index);
                 binding.clips.push(BoundClip {
                     name: clip.name.clone(),
@@ -686,8 +911,26 @@ impl Binding {
             }
         }
 
+        // The model's own file says how its skeleton's frames turn, whatever the user
+        // has done to its nodes since.
+        let model = world
+            .get::<&GltfSource>(entity)
+            .ok()
+            .map(|source| {
+                let path = source.0.to_string_lossy();
+                PathBuf::from(path.strip_suffix(".import").unwrap_or(&path))
+            })
+            .and_then(|path| {
+                libraries
+                    .iter()
+                    .find(|(library, _)| *library == path)
+                    .map(|(_, library)| Arc::clone(library))
+                    .or_else(|| load(&path).ok())
+            });
+
         binding.finish_names();
         binding.finish_hierarchy(world);
+        binding.finish_frames(world, model.as_deref());
         binding
     }
 
@@ -763,6 +1006,58 @@ impl Binding {
         }
     }
 
+    /// Retarget each track whose bone rests differently here than in the clip's file
+    /// (see [`BoundTrack::retarget`]): with world rest rotations `S` (clip file) and
+    /// `T` (skeleton), a bone keyed `k` under a parent `p` gets
+    /// `T(p)⁻¹ S(p) · k · S(b)⁻¹ T(b)`, which turns it away from its rest as the clip
+    /// does. Identical rigs need nothing.
+    ///
+    /// `model` is the skeleton's own file; without it the skeleton's rest is read from
+    /// the entities.
+    fn finish_frames(&mut self, world: &World, model: Option<&ClipLibrary>) {
+        // From the entities, frames start at the root of the imported file: the
+        // animator, and the nodes of the same file above it, count; the entity the user
+        // places the model with does not.
+        let mut above = Quat::IDENTITY;
+        let mut current = Some(self.animator_entity);
+        let mut guard = 0;
+        while let Some(entity) = current {
+            if guard > 256 || !world.satisfies::<&GltfSource>(entity).unwrap_or(false) {
+                break;
+            }
+            if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+                above = transform.0.rotation * above;
+            }
+            current = parent_of(world, entity);
+            guard += 1;
+        }
+        for clip in &mut self.clips {
+            for bound in &mut clip.tracks {
+                let Some((source_parent, source_rest)) = bound.source_rest else {
+                    continue;
+                };
+                let key = &clip.clip.tracks[bound.track].key;
+                let (target_parent, target_rest) = match model.and_then(|model| model.rest.get(key))
+                {
+                    Some(rest) => (rest.parent_rotation, rest.transform.rotation),
+                    None => {
+                        let (_, chain, _) =
+                            self.parent_to_animator[bound.slot].to_scale_rotation_translation();
+                        ((above * chain).normalize(), self.rest[bound.slot].rotation)
+                    }
+                };
+                let pre = (target_parent.inverse() * source_parent).normalize();
+                let post = ((source_parent * source_rest).inverse()
+                    * (target_parent * target_rest))
+                    .normalize();
+                let turned = |q: Quat| q.angle_between(Quat::IDENTITY) > 0.01;
+                if turned(pre) || turned(post) {
+                    bound.retarget = Some((pre, post));
+                }
+            }
+        }
+    }
+
     fn clip_infos(&self) -> Vec<ClipInfo> {
         self.clips
             .iter()
@@ -774,8 +1069,35 @@ impl Binding {
                 tracks: clip.clip.tracks.len(),
                 bound: clip.tracks.len(),
                 missing: clip.missing.clone(),
+                root_speed: self.root_speed(clip),
             })
             .collect()
+    }
+
+    /// How fast the clip's root bone travels over the ground, start to end, in the
+    /// animator's space (m/s; 0 for clips animated in place).
+    fn root_speed(&self, clip: &BoundClip) -> f32 {
+        let (Some(root), duration) = (clip.root, clip.clip.duration) else {
+            return 0.0;
+        };
+        let bound = clip.tracks[root];
+        let Some(translation) = clip.clip.tracks[bound.track].translation.as_ref() else {
+            return 0.0;
+        };
+        let start_time = translation.times.first().copied().unwrap_or(0.0);
+        let span = duration - start_time;
+        let (Some(start), Some(end)) = (
+            translation.sample_vec3(start_time),
+            translation.sample_vec3(duration),
+        ) else {
+            return 0.0;
+        };
+        if span <= 1.0e-4 {
+            return 0.0;
+        }
+        let travel = self.parent_to_animator[bound.slot]
+            .transform_vector3(bound.translation(end) - bound.translation(start));
+        Vec3::new(travel.x, 0.0, travel.z).length() / span
     }
 
     /// Whether `slot` lies at or below the bone named `mask` (normalized).
@@ -960,8 +1282,13 @@ fn advance_and_pose(
         }
         for playing in &mut layer.clips {
             let duration = binding.clips[binding.names[&playing.name]].clip.duration;
-            advance_clip(playing, dt, speed, duration);
+            if playing.sync && playing.group.is_some() {
+                advance_fade(playing, dt);
+            } else {
+                advance_clip(playing, dt, speed, duration);
+            }
         }
+        advance_synced(layer, &binding, dt, speed);
         layer
             .clips
             .retain(|playing| !(playing.fading_out() && playing.weight <= 0.0));
@@ -989,17 +1316,19 @@ fn advance_and_pose(
         }
         accum.iter_mut().for_each(|a| *a = Accum::ZERO);
         for playing in &mut layer.clips {
-            if playing.weight <= 0.0 {
+            let weight = playing.effective_weight();
+            if weight <= 0.0 {
                 continue;
             }
             let bound = &binding.clips[binding.names[&playing.name]];
-            for (track_position, &(track_index, slot, scale)) in bound.tracks.iter().enumerate() {
-                let track = &bound.clip.tracks[track_index];
+            for (track_position, bound_track) in bound.tracks.iter().enumerate() {
+                let slot = bound_track.slot;
+                let track = &bound.clip.tracks[bound_track.track];
                 let rest = binding.rest[slot];
                 let (t, r, s) = track.sample(playing.time);
                 let mut bone = Transform {
-                    translation: t.map_or(rest.translation, |t| t * scale),
-                    rotation: r.unwrap_or(rest.rotation),
+                    translation: t.map_or(rest.translation, |t| bound_track.translation(t)),
+                    rotation: r.map_or(rest.rotation, |r| bound_track.rotation(r)),
                     scale: s.unwrap_or(rest.scale),
                 };
                 if Some(track_position) == bound.root && animator.root_motion != RootMotion::Keep {
@@ -1008,7 +1337,7 @@ fn advance_and_pose(
                         .translation
                         .as_ref()
                         .and_then(|s| s.sample_vec3(s.times[0]))
-                        .map_or(rest.translation, |t| t * scale);
+                        .map_or(rest.translation, |t| bound_track.translation(t));
                     let to_animator = binding.parent_to_animator[slot];
                     let up = to_animator
                         .inverse()
@@ -1026,20 +1355,20 @@ fn advance_and_pose(
                                     .translation
                                     .as_ref()
                                     .and_then(|s| s.sample_vec3(bound.clip.duration))
-                                    .map_or(start, |t| t * scale)
+                                    .map_or(start, |t| bound_track.translation(t))
                                     - start;
                                 let cycle = end - up * end.dot(up);
                                 horizontal - last + cycle * playing.wraps as f32
                             } else {
                                 horizontal - last
                             };
-                            root_delta += to_animator.transform_vector3(travel) * playing.weight;
+                            root_delta += to_animator.transform_vector3(travel) * weight;
                             has_root_delta = true;
                         }
                         playing.last_root = Some(horizontal);
                     }
                 }
-                accum[slot].add(playing.weight, bone);
+                accum[slot].add(weight, bone);
             }
         }
 
@@ -1075,16 +1404,8 @@ fn advance_and_pose(
 /// Advance a clip by `dt` seconds of real time (fades) scaled by the animator's and the
 /// clip's speed (playback).
 fn advance_clip(playing: &mut PlayingClip, dt: f32, animator_speed: f32, duration: f32) {
+    advance_fade(playing, dt);
     playing.wraps = 0;
-    if playing.fade_rate > 0.0 {
-        let step = playing.fade_rate * dt.max(0.0);
-        if (playing.target_weight - playing.weight).abs() <= step {
-            playing.weight = playing.target_weight;
-            playing.fade_rate = 0.0;
-        } else {
-            playing.weight += step * (playing.target_weight - playing.weight).signum();
-        }
-    }
     if playing.finished || duration <= 0.0 {
         return;
     }
@@ -1100,6 +1421,88 @@ fn advance_clip(playing: &mut PlayingClip, dt: f32, animator_speed: f32, duratio
         playing.finished = true;
     } else {
         playing.time = time.max(0.0);
+    }
+}
+
+/// Move a clip's weight toward its fade target.
+fn advance_fade(playing: &mut PlayingClip, dt: f32) {
+    if playing.fade_rate > 0.0 {
+        let step = playing.fade_rate * dt.max(0.0);
+        if (playing.target_weight - playing.weight).abs() <= step {
+            playing.weight = playing.target_weight;
+            playing.fade_rate = 0.0;
+        } else {
+            playing.weight += step * (playing.target_weight - playing.weight).signum();
+        }
+    }
+}
+
+/// Advance the synced clips of each blend together: one phase, moving at the rate of
+/// their weighted duration, so a walk and a run blended by speed keep step. A clip with
+/// a negative speed runs through the cycle backwards.
+fn advance_synced(layer: &mut AnimatorLayer, binding: &Binding, dt: f32, animator_speed: f32) {
+    let mut groups: Vec<String> = layer
+        .clips
+        .iter()
+        .filter(|playing| playing.sync)
+        .filter_map(|playing| playing.group.clone())
+        .collect();
+    groups.sort();
+    groups.dedup();
+    for group in groups {
+        let duration_of =
+            |playing: &PlayingClip| binding.clips[binding.names[&playing.name]].clip.duration;
+        let members = || {
+            layer
+                .clips
+                .iter()
+                .filter(|playing| playing.sync && playing.group.as_deref() == Some(&group))
+        };
+        let (mut weighted, mut total, mut longest, mut rate) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        for playing in members() {
+            let duration = duration_of(playing);
+            weighted += playing.blend * duration;
+            total += playing.blend;
+            longest = longest.max(duration);
+            rate += playing.blend * playing.speed.abs();
+        }
+        let duration = if total > 1.0e-4 {
+            weighted / total
+        } else {
+            longest
+        };
+        let rate = if total > 1.0e-4 { rate / total } else { 1.0 };
+        let Some(phase) = members().next().map(|playing| playing.phase) else {
+            continue;
+        };
+        let looping = members().all(|playing| playing.looping);
+        let finished = members().all(|playing| playing.finished);
+        let mut next = if duration > 0.0 && !finished {
+            phase + dt * animator_speed * rate / duration
+        } else {
+            phase
+        };
+        let wraps = if looping { next.floor() as i32 } else { 0 };
+        let ended = !looping && next >= 1.0;
+        next = if looping {
+            next.rem_euclid(1.0)
+        } else {
+            next.min(1.0)
+        };
+        for playing in layer
+            .clips
+            .iter_mut()
+            .filter(|playing| playing.sync && playing.group.as_deref() == Some(&group))
+        {
+            let duration = binding.clips[binding.names[&playing.name]].clip.duration;
+            let backwards = playing.speed < 0.0;
+            playing.phase = next;
+            playing.time = if backwards { 1.0 - next } else { next } * duration;
+            playing.wraps = if backwards { -wraps } else { wraps };
+            if ended {
+                playing.finished = true;
+            }
+        }
     }
 }
 
@@ -1196,6 +1599,7 @@ mod tests {
         let rest = |t: Vec3, depth| BoneRest {
             transform: Transform::from_translation(t),
             depth,
+            parent_rotation: Quat::IDENTITY,
         };
         ClipLibrary {
             source: PathBuf::from("walk.glb"),
@@ -1235,6 +1639,167 @@ mod tests {
         assert!(clips.iter().all(|c| c.missing.is_empty()), "{clips:?}");
         assert_eq!(animator.clip_duration("walk/wave"), Some(1.0));
         assert!(animator.library_errors().is_empty());
+    }
+
+    #[test]
+    fn clips_report_how_fast_they_travel() {
+        let (mut rig, mut assets) = setup(Animator::with_library("walk.glb"));
+        let mut animator = rig.world.remove_one::<Animator>(rig.root).unwrap();
+        animator.bind(&rig.world, rig.root, &mut assets);
+        let clips = animator.clips();
+        // 200 cm in 1 s on a 100 cm-tall source is 2 m/s on the 1 m-tall target.
+        let walk = clips.iter().find(|c| c.name == "mixamo.com").unwrap();
+        assert!((walk.root_speed - 2.0).abs() < 1e-3, "{}", walk.root_speed);
+        let wave = clips.iter().find(|c| c.name == "wave").unwrap();
+        assert_eq!(wave.root_speed, 0.0);
+    }
+
+    #[test]
+    fn blends_share_a_phase_and_run_backwards_clips_backwards() {
+        let (mut rig, mut assets) = setup(Animator::with_library("walk.glb"));
+        let mut animator = rig.world.remove_one::<Animator>(rig.root).unwrap();
+        animator.play_blend(
+            "Locomotion",
+            &[
+                BlendClip {
+                    clip: "mixamo.com".into(),
+                    weight: 0.75,
+                    speed: 1.0,
+                },
+                BlendClip {
+                    clip: "wave".into(),
+                    weight: 0.25,
+                    speed: -1.0,
+                },
+            ],
+            BlendOptions {
+                fade: 0.0,
+                ..BlendOptions::default()
+            },
+        );
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        let animator = rig.world.get::<&Animator>(rig.root).unwrap();
+        let clips = &animator.state.layers[0].clips;
+        let walk = clips.iter().find(|c| c.name == "mixamo.com").unwrap();
+        let wave = clips.iter().find(|c| c.name == "wave").unwrap();
+        assert!((walk.time - 0.25).abs() < 1e-4, "{}", walk.time);
+        assert!((wave.time - 0.75).abs() < 1e-4, "{}", wave.time);
+        assert_eq!(walk.effective_weight(), 0.75);
+        let (progress, finished) = animator.blend_progress("Locomotion", 0).unwrap();
+        assert!((progress - 0.25).abs() < 1e-4 && !finished);
+    }
+
+    #[test]
+    fn clips_retarget_to_skeletons_resting_with_other_axes() {
+        // One rig exported twice. The clip's file has no turn above the hips and joints
+        // at rest without rotation. The skeleton's armature turns -90 degrees about X
+        // (its hips rest +90 to stand up again), and its spine joint rests turned about
+        // Z (other bone axes). Posed the same in the world, its keys come out as
+        // `pre * key * post`.
+        let key = Quat::from_rotation_y(0.5);
+        let mut hips = BoneTrack::new("Hips");
+        hips.rotation = Some(linear_quat(&[0.0, 1.0], &[key, key]));
+        hips.translation = Some(linear_vec3(
+            &[0.0, 1.0],
+            &[Vec3::Y * 100.0, Vec3::Y * 100.0],
+        ));
+        let mut spine = BoneTrack::new("Spine");
+        spine.rotation = Some(linear_quat(&[0.0, 1.0], &[key, key]));
+        let rest = |t: Vec3, depth| BoneRest {
+            transform: Transform::from_translation(t),
+            depth,
+            parent_rotation: Quat::IDENTITY,
+        };
+        let library = ClipLibrary {
+            source: PathBuf::from("dance.glb"),
+            clips: vec![Arc::new(SkeletalClip::new("dance", vec![hips, spine]))],
+            rest: HashMap::from([
+                ("hips".to_string(), rest(Vec3::Y * 100.0, 1)),
+                ("spine".to_string(), rest(Vec3::Y * 20.0, 2)),
+            ]),
+        };
+        let quarter = std::f32::consts::FRAC_PI_2;
+        let spine_rest = Quat::from_rotation_z(0.3);
+        let pose_with = |other_axes: bool| {
+            let mut assets = Assets::new();
+            assets.insert_clip_library("dance.glb", library.clone());
+            let mut rig = rig(1.0);
+            if other_axes {
+                let set = |world: &mut World, entity, rotation| {
+                    world
+                        .get::<&mut TransformComponent>(entity)
+                        .unwrap()
+                        .0
+                        .rotation = rotation;
+                };
+                set(&mut rig.world, rig.root, Quat::from_rotation_x(-quarter));
+                set(&mut rig.world, rig.hips, Quat::from_rotation_x(quarter));
+                set(&mut rig.world, rig.spine, spine_rest);
+                // The armature node came from the model's file.
+                rig.world
+                    .insert_one(rig.root, GltfSource(PathBuf::from("soldier.glb")))
+                    .unwrap();
+            }
+            let animator = Animator {
+                default_clip: Some("dance".into()),
+                ..Animator::with_library("dance.glb")
+            };
+            rig.world.insert_one(rig.root, animator).unwrap();
+            update_animators(&mut rig.world, &mut assets, 0.25);
+            (local(&rig.world, rig.hips), local(&rig.world, rig.spine))
+        };
+
+        let (hips, spine) = pose_with(false);
+        assert!(hips.rotation.abs_diff_eq(key, 1e-4), "same rig: as keyed");
+        assert!(spine.rotation.abs_diff_eq(key, 1e-4));
+
+        let (hips, spine) = pose_with(true);
+        let up = Quat::from_rotation_x(quarter);
+        assert!(
+            hips.rotation.abs_diff_eq(up * key, 1e-4),
+            "{:?}",
+            hips.rotation
+        );
+        assert!(
+            hips.translation.abs_diff_eq(up * Vec3::Y, 1e-4),
+            "{}",
+            hips.translation
+        );
+        assert!(
+            spine.rotation.abs_diff_eq(key * spine_rest, 1e-4),
+            "{:?}",
+            spine.rotation
+        );
+    }
+
+    #[test]
+    fn a_blend_entered_with_a_fade_fades_in() {
+        let (mut rig, mut assets) = setup(Animator::with_library("walk.glb"));
+        let mut animator = rig.world.remove_one::<Animator>(rig.root).unwrap();
+        let options = BlendOptions {
+            fade: 0.2,
+            ..BlendOptions::default()
+        };
+        let wave = [BlendClip {
+            clip: "wave".into(),
+            weight: 1.0,
+            speed: 1.0,
+        }];
+        animator.play_blend("Wave", &wave, options);
+        rig.world.insert_one(rig.root, animator).unwrap();
+        for _ in 0..3 {
+            // A tree plays its state's blend every frame.
+            rig.world
+                .get::<&mut Animator>(rig.root)
+                .unwrap()
+                .play_blend("Wave", &wave, options);
+            update_animators(&mut rig.world, &mut assets, 0.1);
+        }
+        let animator = rig.world.get::<&Animator>(rig.root).unwrap();
+        let playing = &animator.state.layers[0].clips[0];
+        assert_eq!(playing.name, "wave");
+        assert_eq!(playing.effective_weight(), 1.0);
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //
 // Each handler takes a context and returns a result indicating what changed.
 
+pub mod animation;
 pub mod camera;
 pub mod components;
 pub mod dispatch;

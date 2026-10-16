@@ -89,6 +89,9 @@ impl SkeletalClip {
 pub struct BoneRest {
     pub transform: Transform,
     pub depth: u32,
+    /// Rotation of the node's parents in the file (scene root to parent), the frame its
+    /// keys are in.
+    pub parent_rotation: Quat,
 }
 
 /// The clips of one glTF/GLB file, and the rest pose of that file's nodes (used to
@@ -123,11 +126,16 @@ impl ClipLibrary {
     ) -> Self {
         let mut rest = HashMap::new();
         let mut depths = vec![0u32; document.nodes().len()];
+        let mut frames = vec![Quat::IDENTITY; document.nodes().len()];
         for scene in document.scenes() {
-            let mut stack: Vec<(gltf::Node, u32)> = scene.nodes().map(|n| (n, 0)).collect();
-            while let Some((node, depth)) = stack.pop() {
+            let mut stack: Vec<(gltf::Node, u32, Quat)> =
+                scene.nodes().map(|n| (n, 0, Quat::IDENTITY)).collect();
+            while let Some((node, depth, frame)) = stack.pop() {
                 depths[node.index()] = depth;
-                stack.extend(node.children().map(|child| (child, depth + 1)));
+                frames[node.index()] = frame;
+                let (_, rotation, _) = node.transform().decomposed();
+                let below = (frame * Quat::from_array(rotation)).normalize();
+                stack.extend(node.children().map(|child| (child, depth + 1, below)));
             }
         }
         for node in document.nodes() {
@@ -140,6 +148,7 @@ impl ClipLibrary {
                         Vec3::from(s),
                     ),
                     depth: depths[node.index()],
+                    parent_rotation: frames[node.index()],
                 });
         }
 

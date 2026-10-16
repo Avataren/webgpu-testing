@@ -24,6 +24,7 @@ use wgpu_cube::renderer::postprocess::{
 };
 use wgpu_cube::renderer::{LightProbeBakeProgress, LightProbeDebugView, Material};
 use wgpu_cube::scene::components::{Billboard, BillboardOrientation, ParticleRenderBlendMode};
+use wgpu_cube::scene::skeletal::{AnimationTree, Animator};
 use wgpu_cube::scene::{
     BoidsBehaviorConfig, CameraComponent, CameraProjection, CanCastShadow, DirectionalLight,
     EnvironmentComponent, LightProbeVolume, MeshComponent, OptimizedBoidsBehaviorConfig,
@@ -37,7 +38,10 @@ use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInsp
 
 use crate::theme::{self, icons};
 
+mod animation;
 mod physics;
+
+pub use animation::{AnimationPanelStatus, TreeLive};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
@@ -181,6 +185,38 @@ pub enum InspectorAction {
         entity: Entity,
         new_name: String,
     },
+    /// Change the animator's saved fields (libraries, default clip, speed, root
+    /// motion), or remove it with `None`.
+    SetAnimator {
+        entity: Entity,
+        animator: Option<Box<Animator>>,
+    },
+    /// Add a clip library (project-relative) to the animator `entity` uses, making one
+    /// if there is none.
+    AddAnimationLibrary {
+        entity: Entity,
+        path: PathBuf,
+    },
+    /// Import an animation file from outside the project (or an FBX) and add it.
+    ImportAnimations {
+        entity: Entity,
+        path: PathBuf,
+    },
+    /// Change the tree's saved fields (keeping its playback), or remove it with `None`.
+    SetAnimationTree {
+        entity: Entity,
+        tree: Option<Box<AnimationTree>>,
+    },
+    /// Replace the tree's states and transitions with a locomotion set built from the
+    /// clips of the animator it drives (adding a tree when there is none).
+    GenerateAnimationTree {
+        entity: Entity,
+    },
+    /// Put a model under a new character entity (controller, tree, camera, script).
+    MakeCharacter {
+        entity: Entity,
+        script: bool,
+    },
 }
 
 /// What the light probe section asks of the renderer.
@@ -272,6 +308,7 @@ pub fn show_entity_inspector(
     data: &SceneEntityInspectorData,
     content_root: Option<&Path>,
     light_probes: &LightProbePanelStatus,
+    animation: &AnimationPanelStatus,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
     let entity = data.entity;
@@ -365,6 +402,15 @@ pub fn show_entity_inspector(
     }
 
     physics::show_physics_sections(ui, entity, components, &mut actions);
+
+    animation::show_animation_sections(
+        ui,
+        entity,
+        components,
+        animation,
+        content_root,
+        &mut actions,
+    );
 
     if let Some(script) = components.script.clone() {
         let (header, action) = show_script_section(ui, entity, &script, content_root);
@@ -514,6 +560,7 @@ fn add_component_menu(
         InspectorAction::AddScript { entity },
     );
     physics::add_physics_menu(ui, entity, components, actions);
+    animation::add_animation_menu(ui, entity, components, actions);
 }
 
 fn show_transform_section(

@@ -17,7 +17,7 @@ use crate::scene::skeletal::{
 };
 use crate::scene::Scene;
 
-use super::super::json::{entity_id, opt_bool, opt_f64, opt_str, round};
+use super::super::json::{entity_from_json, entity_id, opt_bool, opt_f64, opt_str, round};
 use super::{RemoteContext, RemoteResult};
 
 /// Most missing bone names listed per clip.
@@ -54,6 +54,7 @@ pub(super) fn animator_json(scene: &mut Scene, entity: Entity) -> Option<Value> 
                 "library": clip.library.display().to_string(),
                 "tracks": clip.tracks,
                 "bound": clip.bound,
+                "root_speed": round(clip.root_speed),
             });
             if clip.source_name != value["name"] {
                 value["source_name"] = json!(clip.source_name);
@@ -315,6 +316,50 @@ pub(super) fn inspect(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Remote
     // A fresh read, in case the file changed since it was cached.
     ctx.gpu.scene.assets.invalidate_clip_library(&path);
     library_json(&mut ctx.gpu.scene.assets, &path)
+}
+
+/// `character.make {entity, name, camera, script}`: put an imported model under a new
+/// character entity with a CharacterController, a generated AnimationTree, a spring
+/// camera following it and (with `script`) the engine's third-person controls.
+pub(super) fn make_character(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    if ctx.runtime_mode() == Some(RuntimeMode::Playing) {
+        return Err("make characters while editing (runtime_set stop first)".into());
+    }
+    let model = entity_from_json(
+        ctx.gpu.scene.main_world(),
+        params.get("entity").ok_or("missing parameter \"entity\"")?,
+    )?;
+    let script = match params.get("script") {
+        None | Some(Value::Bool(false)) | Some(Value::Null) => None,
+        Some(Value::Bool(true)) => Some(PathBuf::new()),
+        Some(Value::String(path)) => Some(PathBuf::from(path)),
+        Some(_) => return Err("script is true, false or a project-relative path".into()),
+    };
+    let options = crate::physics::MakeCharacterOptions {
+        name: opt_str(params, "name").map(str::to_owned),
+        camera: opt_bool(params, "camera").unwrap_or(true),
+        script,
+    };
+    let made = crate::physics::make_character(&mut ctx.gpu.scene, model, &options)?;
+    ctx.mark_modified();
+    let world = ctx.gpu.scene.main_world();
+    let name_of = |entity: Entity| {
+        world
+            .get::<&crate::scene::Name>(entity)
+            .map(|name| name.0.clone())
+            .unwrap_or_default()
+    };
+    Ok(json!({
+        "character": entity_id(made.character),
+        "name": made.name,
+        "model": {"id": entity_id(made.model), "name": name_of(made.model)},
+        "camera": made.camera.map(|c| json!({"id": entity_id(c), "name": name_of(c)})),
+        "height": round(made.height),
+        "radius": round(made.radius),
+        "animation_tree_states": made.tree_states,
+        "script": made.script.map(|p| p.display().to_string()),
+        "notes": made.notes,
+    }))
 }
 
 /// `debug.skeleton {enabled}`: draw skinned meshes' bones over everything.

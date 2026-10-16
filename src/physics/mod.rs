@@ -17,6 +17,7 @@ mod character;
 mod components;
 mod debug;
 pub mod edit;
+pub mod setup;
 mod shapes;
 mod spring_camera;
 mod world;
@@ -26,6 +27,7 @@ pub use components::{
     BodyKind, CharacterController, Collider, ColliderShape, RigidBody, SpringCamera,
 };
 pub(crate) use debug::{selected_collider_gizmos, simulation_gizmos};
+pub use setup::{make_character, MadeCharacter, MakeCharacterOptions};
 pub use spring_camera::SpringCameraStatus;
 pub use world::{PhysicsCommand, PhysicsEvent, QueryOptions, RayHit, ScenePhysics};
 

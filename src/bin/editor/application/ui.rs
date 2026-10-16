@@ -55,20 +55,42 @@ impl EditorApplication {
 
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            if ui.button("Import glTF...").clicked() {
+                            if ui.button("Import Model...").clicked() {
                                 ui.close();
                                 if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("glTF", &["gltf", "glb"])
+                                    .add_filter("Models", &["gltf", "glb", "fbx", "blend", "obj"])
                                     .pick_file()
                                 {
                                     self.enqueue_command(EditorCommand::ImportPath(path));
+                                }
+                            }
+                            if ui
+                                .button("Import Animations...")
+                                .on_hover_text(
+                                    "Add a file's animations as clips for characters with the \
+                                     same bone names (Mixamo \"Without Skin\" downloads, or \
+                                     animation-only glTF files)",
+                                )
+                                .clicked()
+                            {
+                                ui.close();
+                                if let Some(paths) = rfd::FileDialog::new()
+                                    .add_filter("Animations", &["glb", "gltf", "fbx", "blend"])
+                                    .pick_files()
+                                {
+                                    for path in paths {
+                                        self.enqueue_command(EditorCommand::ImportClips {
+                                            path,
+                                            attach: None,
+                                        });
+                                    }
                                 }
                             }
                         }
 
                         #[cfg(target_arch = "wasm32")]
                         {
-                            ui.add_enabled(false, egui::Button::new("Import glTF..."));
+                            ui.add_enabled(false, egui::Button::new("Import Model..."));
                         }
 
                         ui.separator();

@@ -73,7 +73,7 @@ impl AssetKind {
             "json" if name.ends_with(".mat.json") => Self::Material,
             "json" if in_scenes_folder || name == "scene.json" => Self::Scene,
             "png" | "jpg" | "jpeg" | "tga" | "bmp" | "hdr" | "exr" | "ktx2" => Self::Image,
-            "gltf" | "glb" => Self::Model,
+            "gltf" | "glb" | "fbx" | "blend" | "obj" => Self::Model,
             "wav" | "ogg" | "mp3" | "flac" => Self::Audio,
             "json" | "txt" | "md" | "toml" | "ron" | "yaml" | "yml" | "csv" => Self::Text,
             _ => Self::Other,

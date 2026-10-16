@@ -502,6 +502,7 @@ impl ScenePhysics {
         }
 
         self.write_back(world, &moved_characters);
+        self.feed_animation_trees(world);
         self.collect_collision_events();
         self.place_cameras(world, input, dt);
     }
@@ -905,6 +906,59 @@ impl ScenePhysics {
             if let Some(entry) = self.entries.get_mut(&entity) {
                 entry.written = Some(local);
                 entry.placed = (position, rotation);
+            }
+        }
+    }
+
+    /// Hand each animation tree that follows a character (`from_character`) the
+    /// character's movement: `speed`, `forward_speed` and `side_speed` (relative to its
+    /// facing), `vertical_speed`, `grounded`, `air_time`, `landing_speed`, and the
+    /// triggers `jumped` and `landed`. The trees use them at the next animation update.
+    fn feed_animation_trees(&self, world: &mut World) {
+        use crate::scene::skeletal::AnimationTree;
+        if self.characters.is_empty() {
+            return;
+        }
+        let trees: Vec<Entity> = world
+            .query::<&AnimationTree>()
+            .iter()
+            .filter(|(_, tree)| tree.from_character)
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in trees {
+            // The character: the tree's entity, or the nearest above it.
+            let mut current = Some(entity);
+            let mut character = None;
+            for _ in 0..64 {
+                let Some(candidate) = current else { break };
+                if self.characters.contains_key(&candidate) {
+                    character = Some(candidate);
+                    break;
+                }
+                current = world.get::<&Parent>(candidate).ok().map(|parent| parent.0);
+            }
+            let Some(state) = character.and_then(|character| self.characters.get(&character))
+            else {
+                continue;
+            };
+            let Ok(mut tree) = world.get::<&mut AnimationTree>(entity) else {
+                continue;
+            };
+            let forward = Vec3::new(state.yaw.sin(), 0.0, state.yaw.cos());
+            let right = Vec3::new(-state.yaw.cos(), 0.0, state.yaw.sin());
+            let horizontal = Vec3::new(state.velocity.x, 0.0, state.velocity.z);
+            tree.set("speed", horizontal.length());
+            tree.set("forward_speed", horizontal.dot(forward));
+            tree.set("side_speed", horizontal.dot(right));
+            tree.set("vertical_speed", state.velocity.y);
+            tree.set("grounded", if state.grounded { 1.0 } else { 0.0 });
+            tree.set("air_time", state.air_time);
+            tree.set("landing_speed", state.landing_speed);
+            if state.just_landed {
+                tree.trigger("landed");
+            }
+            if state.just_jumped {
+                tree.trigger("jumped");
             }
         }
     }

@@ -101,7 +101,7 @@ fn is_animation_library(path: &std::path::Path, params: &Value) -> Result<bool, 
 
 /// Copy a clip library (and a .gltf's external buffers) into content/animations and
 /// report its clips.
-fn import_animation_library(
+pub(super) fn import_animation_library(
     project_dir: &std::path::Path,
     source: &std::path::Path,
     params: &Value,
@@ -401,11 +401,47 @@ impl EditorApplication {
                     .and_then(|ext| ext.to_str())
                     .map(str::to_ascii_lowercase)
                     .unwrap_or_default();
+                // Animations can go straight onto a character's animator.
+                let attach = params
+                    .get("entity")
+                    .map(|value| entity_from_json(ctx.gpu.scene.main_world(), value))
+                    .transpose()?;
+                if super::blender_convert::CONVERTIBLE.contains(&extension.as_str()) {
+                    let clips = attach.is_some()
+                        || params.get("kind").and_then(Value::as_str) == Some("animation");
+                    if clips {
+                        self.enqueue_command(EditorCommand::ImportClips {
+                            path: path.clone(),
+                            attach,
+                        });
+                    } else {
+                        self.enqueue_command(EditorCommand::ImportPath(path.clone()));
+                    }
+                    return Ok(json!({
+                        "queued": "asset.import",
+                        "path": path.display().to_string(),
+                        "converting": true,
+                        "note": "Blender converts the file in the background (a few seconds). A model \
+                                 then imports and appears in the scene like a glTF; a file without \
+                                 meshes (or kind: animation) becomes a clip library in \
+                                 content/animations named after the file. Watch logs for the result.",
+                    }));
+                }
                 if !matches!(extension.as_str(), "gltf" | "glb") {
                     return import_file(ctx, &project_dir, &path, &extension, params);
                 }
-                if is_animation_library(&path, params)? {
-                    return import_animation_library(&project_dir, &path, params);
+                if attach.is_some() || is_animation_library(&path, params)? {
+                    let result = import_animation_library(&project_dir, &path, params)?;
+                    if let (Some(entity), Some(library)) = (attach, result["project_path"].as_str())
+                    {
+                        self.enqueue_command(EditorCommand::Inspector(
+                            crate::inspector::InspectorAction::AddAnimationLibrary {
+                                entity,
+                                path: PathBuf::from(library),
+                            },
+                        ));
+                    }
+                    return Ok(result);
                 }
                 self.enqueue_command(EditorCommand::ImportPath(path.clone()));
                 Ok(json!({

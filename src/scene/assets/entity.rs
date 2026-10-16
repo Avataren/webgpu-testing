@@ -83,6 +83,8 @@ pub struct SceneAssetEntity {
     pub character_controller: Option<crate::physics::CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spring_camera: Option<crate::physics::SpringCamera>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation_tree: Option<crate::scene::skeletal::AnimationTree>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -181,6 +183,8 @@ struct SceneAssetEntityData {
     character_controller: Option<crate::physics::CharacterController>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     spring_camera: Option<crate::physics::SpringCamera>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    animation_tree: Option<crate::scene::skeletal::AnimationTree>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -238,6 +242,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             collider: data.collider,
             character_controller: data.character_controller,
             spring_camera: data.spring_camera,
+            animation_tree: data.animation_tree,
             camera: data.camera,
             scene_ref: data.scene_ref,
             skin: data.skin,
@@ -291,6 +296,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             collider: entity.collider,
             character_controller: entity.character_controller,
             spring_camera: entity.spring_camera,
+            animation_tree: entity.animation_tree,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,
@@ -613,6 +619,10 @@ impl SceneAssetEntity {
             .get::<&crate::physics::SpringCamera>(entity)
             .ok()
             .map(|component| (*component).clone());
+        let animation_tree = world
+            .get::<&crate::scene::skeletal::AnimationTree>(entity)
+            .ok()
+            .map(|component| (*component).clone());
         let camera = world
             .get::<&CameraComponent>(entity)
             .ok()
@@ -663,6 +673,7 @@ impl SceneAssetEntity {
             collider,
             character_controller,
             spring_camera,
+            animation_tree,
             camera,
             scene_ref: None,
             skin,

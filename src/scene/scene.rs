@@ -87,6 +87,43 @@ impl Scene {
         }
     }
 
+    /// The clips the animator driving `entity` can play (its own, the nearest one below
+    /// or above), bound now from their libraries; works while editing too.
+    pub fn animator_clips(
+        &mut self,
+        entity: Entity,
+    ) -> Option<Vec<crate::scene::skeletal::ClipInfo>> {
+        use crate::scene::skeletal::{tree_animator, Animator};
+        let world = self.main_world();
+        let owner = tree_animator(world, entity)?;
+        let mut animator = Animator::clone(&*world.get::<&Animator>(owner).ok()?);
+        let libraries: HashMap<std::path::PathBuf, _> = animator
+            .libraries
+            .iter()
+            .map(|path| (path.clone(), self.assets.clip_library(path)))
+            .collect();
+        let world = self.main_world();
+        animator.bind_with(world, owner, &mut |path| {
+            libraries
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| Err(format!("{} not loaded", path.display())))
+        });
+        Some(animator.clips())
+    }
+
+    /// A locomotion [`AnimationTree`](crate::scene::skeletal::AnimationTree) for the
+    /// character `entity` (its root, model or a bone), from its animator's clips.
+    pub fn locomotion_tree(
+        &mut self,
+        entity: Entity,
+    ) -> Result<crate::scene::skeletal::AnimationTree, String> {
+        let clips = self
+            .animator_clips(entity)
+            .ok_or("no Animator on the entity, below it or above it (import a skinned model)")?;
+        crate::scene::skeletal::AnimationTree::locomotion(&clips)
+    }
+
     /// The scene's physics simulation (see [`crate::physics`]).
     pub fn physics(&self) -> &crate::physics::ScenePhysics {
         &self.physics

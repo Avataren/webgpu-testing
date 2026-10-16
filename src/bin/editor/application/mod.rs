@@ -1,7 +1,10 @@
 mod action_handlers;
 mod asset_browser_system;
+#[cfg(not(target_arch = "wasm32"))]
+mod blender_convert;
 mod system;
 pub(crate) use system::*;
+mod animation_panel_system;
 mod camera_system;
 mod core;
 mod history_system;
@@ -470,6 +473,7 @@ impl EditorApplication {
             let game_viewport = &mut shared.viewports.game_viewport;
             let workspace_info = scene_hierarchy_window.workspace_info();
             let light_probe_status = &shared.light_probe_status;
+            let animation_status = &shared.animation_status;
 
             egui::CentralPanel::default_margins()
                 .frame(transparent_frame)
@@ -479,6 +483,7 @@ impl EditorApplication {
                     } else {
                         let mut behavior = EditorBehavior {
                             light_probe_status,
+                            animation_status,
                             scene_viewport,
                             game_viewport,
                             scene_hierarchy: scene_hierarchy_window,

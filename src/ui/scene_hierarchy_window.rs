@@ -205,6 +205,8 @@ pub struct SceneEntityComponentsSummary {
     pub collider: Option<crate::physics::Collider>,
     pub character_controller: Option<crate::physics::CharacterController>,
     pub spring_camera: Option<crate::physics::SpringCamera>,
+    pub animator: Option<crate::scene::skeletal::Animator>,
+    pub animation_tree: Option<crate::scene::skeletal::AnimationTree>,
 }
 
 #[cfg(feature = "egui")]
@@ -313,6 +315,12 @@ impl SceneHierarchySnapshot {
             let spring_camera = entity_ref
                 .get::<&crate::physics::SpringCamera>()
                 .map(|component| (*component).clone());
+            let animator = entity_ref
+                .get::<&crate::scene::skeletal::Animator>()
+                .map(|component| (*component).clone());
+            let animation_tree = entity_ref
+                .get::<&crate::scene::skeletal::AnimationTree>()
+                .map(|component| (*component).clone());
 
             nodes.insert(
                 entity,
@@ -346,6 +354,8 @@ impl SceneHierarchySnapshot {
                     collider,
                     character_controller,
                     spring_camera,
+                    animator,
+                    animation_tree,
                 },
             );
         }

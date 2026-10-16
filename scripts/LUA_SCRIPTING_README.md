@@ -403,8 +403,13 @@ Skinned glTF characters (imported with `asset_import`, or `import_gltf`) get an
 by name, so a clip file made for one character drives any character with the same bone
 names (Mixamo-style packs). Bone names match without case or a namespace prefix:
 `"Hips"` finds `mixamorig:Hips`. Translations are rescaled to the skeleton's proportions.
-Every function takes the character root or any entity below it (its mesh, a bone).
-Animators run in play mode only; while editing, characters keep their rest pose.
+Every function takes the character root or any entity below it (its mesh, a bone): the
+nearest animator up the hierarchy is used, else the nearest below (a character made with
+the editor's "Make Character" has its model below the root). Clips made for another export
+of the same rig (a Mixamo FBX converted by Blender on a Mixamo GLB) are retargeted: each
+bone turns away from its rest pose as it does in the clip, so both rigs need the same rest
+posture (T-pose for Mixamo). Animators run in play mode only; while editing, characters
+keep their rest pose.
 
 - `animator_play(entity, clip[, options])` - Cross-fade to `clip`. Options: `fade` (seconds,
   default 0.2), `loop` (default true), `speed` (default 1; negative plays backwards),
@@ -422,8 +427,9 @@ Animators run in play mode only; while editing, characters keep their rest pose.
   hips' horizontal travel) or `"apply"` (move the entity by it: walks without foot sliding).
 - `animator_state(entity[, layer])` → `{clip, time, duration, playing, looping, finished,
   fading, speed}` or `nil`
-- `animator_clips(entity)` → `{ {name, duration, tracks, bound, missing}, ... }` (after the
-  animator's first frame)
+- `animator_clips(entity)` → `{ {name, duration, tracks, bound, missing, root_speed}, ... }`
+  (after the animator's first frame); `root_speed` is how fast the clip travels over the
+  ground (m/s, about 0 for clips made in place)
 - `find_bone(entity, name)` → the bone entity below `entity`, or `nil`. Parent a sword to
   the hand bone to hold it; it follows the animation.
 
@@ -442,6 +448,47 @@ function on_created(self)
     set_parent(find_entity_by_name("Sword"), find_bone(self, "RightHand"))
 end
 ```
+
+### Animation trees
+Like Godot's AnimationTree, an `AnimationTree` component picks a character's animation from
+parameters, so scripts move the character and never name clips. It has **states**, each
+playing a motion: one clip, a 1D blend space (clips placed along one parameter, e.g. idle
+at 0, walk at 1.4, run at 4.6 by `speed`) or a 2D blend space (clips placed by two
+parameters, e.g. `side_speed` and `forward_speed`, so strafes and a backpedal mix in).
+**Transitions** go from a state (or `*`, any state) to another when their condition holds
+(`"grounded && speed > 1"`, `"!grounded"`, `"landed and landing_speed > 8"`; `&& || !`,
+`and or not`, comparisons, numbers, `true`/`false`), optionally only `after` the state's
+motion has played that far (0..1), cross-fading over `fade` seconds. They are checked in
+order; the first that holds is taken.
+
+With `from_character` (the default) the character's `CharacterController` feeds `speed`,
+`forward_speed`, `side_speed` (along its facing, m/s), `vertical_speed`, `grounded` (0/1),
+`air_time`, `landing_speed` and the triggers `jumped` and `landed`. In the editor, the
+inspector's "Generate from clips" (or "Make Character") builds a locomotion tree from the
+animator's clips by name: idle, walk, run, strafes, a backpedal (or the walk played
+backwards), jump, fall and land, with blend points at the speeds the clips travel. Add
+your own states and transitions in the inspector, and drive them from scripts. These take
+the character's root, its model or a bone:
+
+- `animation_set(entity, name, value)` - Set a parameter (a number, or true/false).
+- `animation_trigger(entity, name)` - Fire a trigger: true for the next evaluation only.
+- `animation_get(entity, name)` → the parameter's value (a number)
+- `animation_state(entity)` → `{state, previous, time, progress}` or `nil`
+- `animation_travel(entity, state[, fade])` - Go to a state now.
+
+```lua
+-- A "Dance" state entered when dancing, left when the character moves:
+--   Locomotion -> Dance   when "dancing"
+--   Dance -> Locomotion   when "!dancing || speed > 0.5"
+function update(self, dt)
+    if is_key_just_pressed("G") then
+        animation_set(self, "dancing", animation_get(self, "dancing") == 0)
+    end
+end
+```
+
+The tree plays on layer 0: `animator_play(e, "Wave", { layer = 1 })` with
+`animator_set_layer(e, 1, { mask = "Spine" })` still waves over whatever it picks.
 
 ### Physics
 Rigid bodies, walking characters and third-person cameras, simulated with Rapier in play
@@ -531,12 +578,46 @@ end
 set_component(player, "CharacterController", { air_jumps = 1 })
 ```
 
-`games/character-playground/content/scripts/lib/third_person.lua` is a complete,
-reusable controller whose every step is a method a game can replace. It has two schemes:
-`"action"` (camera-relative WASD, click to capture the mouse) and `"mmo"` (World of
-Warcraft style: W/S along the facing, A/D turn, Q/E strafe, left drag looks around,
-right drag steers, both buttons run, the camera swings back behind a moving character),
-with the idle/walk/run/strafe/jump/fall/land animation state machine.
+### Third-person controller
+The engine's module `engine.third_person` is a complete keyboard and mouse controller for a
+character with a `CharacterController` and a camera with a `SpringCamera` (the editor's
+"Make Character" writes a script using it). It only steers: the character's
+AnimationTree animates it. Every step is a method a game can replace.
+
+```lua
+local ThirdPerson = require("engine.third_person")
+local controls
+
+function on_created(self)
+    controls = ThirdPerson.new(self, { camera = "PlayerCamera", scheme = "mmo" })
+end
+function update(self, dt) controls:update(dt) end
+function on_jumped(self) controls:jumped() end
+function on_landed(self, speed) controls:landed(speed) end
+function on_destroyed(self, reason) if controls then controls:release() end end
+```
+
+- Schemes: `"action"` (default; WASD relative to the camera, the character turns to run
+  that way, a click captures the mouse to look around, Escape releases it) and `"mmo"`
+  (World of Warcraft style: W/S along the facing, A/D turn, Q/E strafe, left drag looks
+  around and the view swings back behind once the character moves, right drag steers,
+  both buttons run, up and down with either button tilts the camera).
+- Options (`ThirdPerson.defaults`): `camera` (entity or name), `keys` (lists per action:
+  `forward`, `back`, `left`, `right`, `strafe_left`, `strafe_right`, `jump`, `walk`),
+  `always_run` (Shift walks), `capture_mouse`, `turn_rate` (degrees/s), `mouse_sensitivity`
+  (degrees/pixel), `hide_cursor_while_dragging`, `invert_y`, `camera_follow` (how fast the
+  view swings back behind), `diagonal_turn` (degrees the body turns into a diagonal run),
+  `strafes` (false: the character turns to run sideways instead of strafing).
+- Replace a method on the instance (or on `ThirdPerson` for every character): `read_input`,
+  `move_direction`, `mmo_steer`, and the hooks `jumped`, `landed(speed)` for sounds and
+  effects:
+  `local landed = controls.landed; function controls:landed(speed) landed(self, speed); play_sound(...) end`.
+- `controls.state` is the last `character_state`; `controls:release()` gives the cursor
+  back (when switching schemes, or before the script goes away).
+
+To change it beyond that, copy `engine/third_person.lua` from the engine
+(`src/scripting/lua/modules/`) into your scripts folder as `engine/third_person.lua`: a
+project's own file takes its place.
 
 ### Saving data
 - `save_data(key, text)` - Keep a small text value between runs (a high score, settings);
@@ -598,6 +679,8 @@ end
 `name` is a path without `.lua` (`"enemies"`, `"ai.autopilot"` or `"ai/autopilot"`), looked
 up next to the script first, then under the scripts root, also when a module requires
 another. Editing a required or included file hot-reloads every script that uses it.
+Modules under `engine.` come with the engine when the project has no file of that name:
+`engine.third_person` (see "Third-person controller").
 
 ```lua
 -- content/scripts/game.lua

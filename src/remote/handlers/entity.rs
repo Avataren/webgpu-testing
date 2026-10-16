@@ -12,7 +12,7 @@ use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{Billboard, BillboardOrientation, DepthState};
-use crate::scene::skeletal::{Animator, SkinnedMesh};
+use crate::scene::skeletal::{AnimationTree, Animator, SkinnedMesh};
 use crate::scene::{
     CameraComponent, CameraProjection, CanCastShadow, Children, DirectionalLight,
     EnvironmentComponent, GltfSource, LightProbeVolume, MaterialComponent, MeshBounds,
@@ -54,6 +54,7 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "collider",
     "character_controller",
     "spring_camera",
+    "animation_tree",
     "billboard",
     "depth_state",
     "rotate_animation",
@@ -86,6 +87,7 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
             crate::physics::edit::has_component(world, entity, name)
         }
+        "animation_tree" => has::<AnimationTree>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
         "rotate_animation" => has::<RotateAnimation>(world, entity),
@@ -379,6 +381,24 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
         if let Some(value) = crate::physics::edit::component_json(world, entity, name) {
             out[name] = value;
         }
+    }
+    if let Ok(tree) = world.get::<&AnimationTree>(entity) {
+        let mut value = serde_json::to_value(&*tree).unwrap_or(Value::Null);
+        if let Some(state) = &tree.runtime.state {
+            let mut parameters: Vec<(&String, &f32)> = tree.runtime.values.iter().collect();
+            parameters.sort_by(|a, b| a.0.cmp(b.0));
+            value["playing"] = json!({
+                "state": state,
+                "previous": tree.runtime.previous,
+                "time": round(tree.runtime.time_in_state),
+                "progress": round(tree.runtime.progress),
+                "parameters": parameters
+                    .into_iter()
+                    .map(|(name, value)| (name.clone(), json!(round(*value))))
+                    .collect::<serde_json::Map<_, _>>(),
+            });
+        }
+        out["animation_tree"] = value;
     }
     if let Some(status) = scene.physics().character_status(entity) {
         out["character_state"] = json!({
@@ -927,6 +947,7 @@ pub(super) fn apply_patch(
                     value,
                 )?
             }
+            "animation_tree" => patch_animation_tree(ctx, entity, value)?,
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
                 entity,
@@ -1006,6 +1027,48 @@ fn insert<T: hecs::Component>(
         .scene
         .main_world_mut()
         .insert_one(entity, component)
+        .map_err(|err| err.to_string())
+}
+
+/// Add, change or (null) remove an animation tree. `generate: true` first builds a
+/// locomotion tree from the clips of the character's animator (replacing the states and
+/// transitions); the other fields given then apply on top.
+fn patch_animation_tree(
+    ctx: &mut RemoteContext<'_, '_>,
+    entity: Entity,
+    value: &Value,
+) -> Result<(), String> {
+    if value.is_null() {
+        let _ = ctx
+            .gpu
+            .scene
+            .main_world_mut()
+            .remove_one::<AnimationTree>(entity);
+        return Ok(());
+    }
+    let mut fields = value
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("expected an object or null, got {value}"))?;
+    let generate = fields
+        .remove("generate")
+        .is_some_and(|generate| generate.as_bool() == Some(true));
+    let world = ctx.gpu.scene.main_world();
+    let mut tree = world
+        .get::<&AnimationTree>(entity)
+        .map(|tree| (*tree).clone())
+        .unwrap_or_default();
+    if generate {
+        let generated = ctx.gpu.scene.locomotion_tree(entity)?;
+        tree.start = generated.start;
+        tree.states = generated.states;
+        tree.transitions = generated.transitions;
+    }
+    let tree: AnimationTree = patch_serde(&tree, &Value::Object(fields))?;
+    ctx.gpu
+        .scene
+        .main_world_mut()
+        .insert_one(entity, tree)
         .map_err(|err| err.to_string())
 }
 
@@ -1763,6 +1826,7 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
             let _ = crate::physics::edit::patch_component(world, entity, component, &Value::Null);
         }
+        "animation_tree" => remove::<AnimationTree>(world, entity),
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),
         "rotate_animation" => remove::<RotateAnimation>(world, entity),
@@ -1860,6 +1924,7 @@ fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
     copy::<PostProcessVolume>(world, source, &mut builder);
     copy::<LightProbeVolume>(world, source, &mut builder);
     crate::physics::edit::clone_components(world, source, &mut builder);
+    copy::<AnimationTree>(world, source, &mut builder);
     copy::<Billboard>(world, source, &mut builder);
     copy::<DepthState>(world, source, &mut builder);
     copy::<RotateAnimation>(world, source, &mut builder);
