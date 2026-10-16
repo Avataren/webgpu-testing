@@ -50,6 +50,25 @@ pub struct InputState {
 
     // Mouse scroll
     scroll_delta: Vec2,
+
+    /// The window holds the cursor for the game (`set_cursor_locked`): it is hidden and
+    /// mouse movement arrives as raw motion, unbounded by the window's edges.
+    cursor_locked: bool,
+}
+
+/// What scripts last asked for with `set_cursor_locked`; the window applies it while
+/// the game plays (and drops it on Escape, focus loss or leaving play).
+static CURSOR_LOCK_WANTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Ask the window to capture (or release) the cursor for the game.
+pub fn request_cursor_lock(locked: bool) {
+    CURSOR_LOCK_WANTED.store(locked, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the game currently wants the cursor captured.
+pub fn cursor_lock_requested() -> bool {
+    CURSOR_LOCK_WANTED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Default for InputState {
@@ -71,6 +90,7 @@ impl InputState {
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
             scroll_delta: Vec2::ZERO,
+            cursor_locked: false,
         }
     }
 
@@ -222,6 +242,16 @@ impl InputState {
     /// Get the mouse scroll delta for this frame
     pub fn scroll_delta(&self) -> Vec2 {
         self.scroll_delta
+    }
+
+    /// Whether the game holds the cursor (see [`request_cursor_lock`]).
+    pub fn cursor_locked(&self) -> bool {
+        self.cursor_locked
+    }
+
+    /// Set by the window each frame to what it has actually applied.
+    pub fn set_cursor_locked(&mut self, locked: bool) {
+        self.cursor_locked = locked;
     }
 
     /// Reset all input state (useful for focus changes)

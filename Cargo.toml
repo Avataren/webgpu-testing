@@ -40,6 +40,8 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "send", "serialize"]
 thiserror = "1.0"
 toml = "0.8"
 naga = { version = "30", features = ["wgsl-in"] }
+# Rigid-body physics, character controllers and scene queries (pure Rust, builds for wasm).
+rapier3d = "0.36"
 # Native builds add egui's default fonts below; the web player installs only the text fonts.
 egui = { version = "0.36", optional = true, default-features = false }
 # Default features would also enable wgpu's WebGL backend, which the engine never uses.

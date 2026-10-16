@@ -283,6 +283,23 @@ impl LuaScriptInstance {
         })
     }
 
+    /// Call an engine callback `name(self_entity, data)` (`on_landed`,
+    /// `on_trigger_enter`, ...); a script without it is simply skipped.
+    pub(crate) fn call_callback(
+        &mut self,
+        lua: &Lua,
+        entity_bits: i64,
+        name: &str,
+        data: serde_json::Value,
+        commands: Rc<RefCell<ScriptCommands>>,
+        event_queue: Rc<RefCell<Vec<ScriptEvent>>>,
+    ) -> Result<FunctionCallOutcome, LuaScriptingError> {
+        self.with_script_context(entity_bits, commands, event_queue, || {
+            let lua_data = lua.to_value(&data).map_err(LuaScriptingError::Lua)?;
+            self.call_function_with_args(lua, name, (entity_bits, lua_data))
+        })
+    }
+
     fn call_function_with_args<A>(
         &self,
         lua: &Lua,

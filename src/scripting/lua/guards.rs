@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use hecs::World;
 
+use crate::physics::ScenePhysics;
 use crate::scene::InputState;
 
 use super::commands::ScriptCommands;
@@ -68,6 +69,9 @@ thread_local! {
 
     pub(crate) static ACTIVE_INPUT_STATE: RefCell<Option<TrackedPointer<InputState>>> = const { RefCell::new(None) };
     pub(crate) static INPUT_STATE_GENERATION: Cell<Generation> = const { Cell::new(0) };
+
+    pub(crate) static ACTIVE_PHYSICS: RefCell<Option<TrackedPointer<ScenePhysics>>> = const { RefCell::new(None) };
+    pub(crate) static PHYSICS_GENERATION: Cell<Generation> = const { Cell::new(0) };
 
     pub(crate) static ACTIVE_EVENT_QUEUE: RefCell<Option<Rc<RefCell<Vec<ScriptEvent>>>>> = const { RefCell::new(None) };
     pub(crate) static ACTIVE_ENTITY: RefCell<Option<i64>> = const { RefCell::new(None) };
@@ -240,6 +244,58 @@ impl Drop for InputStateGuard<'_> {
         // Reset generation counter when guard is dropped
         INPUT_STATE_GENERATION.with(|gen| gen.set(0));
     }
+}
+
+/// Guard that lets Lua scripts query the scene's physics (raycasts, velocities,
+/// character state) while they run. Same constraints as [`InputStateGuard`]: the
+/// physics must outlive the guard, one guard per thread, single-threaded scripts.
+pub(crate) struct PhysicsGuard<'a> {
+    _marker: PhantomData<(&'a ScenePhysics, Rc<()>)>,
+}
+
+impl<'a> PhysicsGuard<'a> {
+    pub fn enter(physics: &'a ScenePhysics) -> Self {
+        let ptr = physics as *const ScenePhysics;
+        let generation = PHYSICS_GENERATION.with(|gen| {
+            let new_gen = gen.get().wrapping_add(1);
+            gen.set(new_gen);
+            new_gen
+        });
+        ACTIVE_PHYSICS.with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl Drop for PhysicsGuard<'_> {
+    fn drop(&mut self) {
+        ACTIVE_PHYSICS.with(|cell| *cell.borrow_mut() = None);
+        PHYSICS_GENERATION.with(|gen| gen.set(0));
+    }
+}
+
+/// Run `f` with the scene's physics, or report that scripts cannot reach it here (an
+/// editor UI plugin, a test without a scene).
+pub(crate) fn with_active_physics<R>(
+    f: impl FnOnce(&ScenePhysics) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
+    ACTIVE_PHYSICS.with(|cell| {
+        let opt = cell.borrow();
+        let Some(tracked) = opt.as_ref() else {
+            return Err(mlua::Error::RuntimeError("physics not available".into()));
+        };
+        debug_assert_eq!(
+            tracked.generation,
+            PHYSICS_GENERATION.with(|gen| gen.get()),
+            "PhysicsGuard generation mismatch - guard may have been dropped"
+        );
+        // SAFETY: as for `with_active_input_state`: the pointer was set by a live
+        // `PhysicsGuard` that borrows the physics for its lifetime, and scripts run
+        // single-threaded and non-reentrantly.
+        let physics = unsafe { &*tracked.ptr };
+        f(physics)
+    })
 }
 
 pub(crate) struct EventQueueGuard {

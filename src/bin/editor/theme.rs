@@ -73,6 +73,10 @@ pub mod icons {
     pub const ENVIRONMENT: &str = "🌐";
     pub const POST_PROCESS: &str = "🎞";
     pub const LIGHT_PROBES: &str = "🔆";
+    pub const RIGID_BODY: &str = "⚫";
+    pub const COLLIDER: &str = "⬚";
+    pub const CHARACTER: &str = "🏃";
+    pub const SPRING_CAMERA: &str = "📷";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

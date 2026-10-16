@@ -42,6 +42,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/scene/` | `Scene`, `SceneWorkspace`, components, transforms, glTF loading, serialization, snapshots |
 | `src/asset/` | Shared `Assets` (meshes, materials, textures) and handles |
 | `src/procgen/` | Profile lathes, beveled polygon extrusions, mesh composition, voxel meshes, seeded height fields/PBR maps and PCM sound synthesis |
+| `src/physics/` | Rapier physics: `RigidBody`/`Collider`/`CharacterController`/`SpringCamera` components, the per-scene `ScenePhysics`, collider wireframes |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
 | `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
@@ -58,8 +59,8 @@ Each frame, `WindowEvent::RedrawRequested` in `src/app/platform_winit/mod.rs` ru
 
 1. `sync_runtime_state`: apply any pending Editor ↔ Playing transition.
 2. `begin_frame`, then the **update stage** (`scheduler.rs::run_update_stage`):
-   - `Playing`: `Scene::update_with_mode(dt, false)`. This runs game scripts and
-     animations and advances scene time.
+   - `Playing`: `Scene::update_with_mode(dt, false)`. This runs animations, then game
+     scripts, then the physics step (see Physics), and advances scene time.
    - `Editor`: `Scene::run_editor_scripts(dt)`, which ticks only `@editor`/`@tool` scripts.
    - App update systems run (`RenderApplication::update`, plus systems registered on the
      `AppBuilder`), then transforms propagate.
@@ -265,6 +266,65 @@ to flicker, especially at a distant horizon.
   - Copy paths remap joints: `SceneAsset::instantiate` (entity indices),
     `merge_world_as_child` and the remote duplicate. Lua: `animator_*`, `find_bone`.
     MCP: `entity_get`/`entity_update {animator}`, `animation_inspect`, `debug_skeleton`.
+
+## Physics
+
+`src/physics/` integrates [Rapier](https://rapier.rs) 0.36 (pure Rust, so it builds for
+the web too).
+
+- **Components** (saved with the scene, edited in the inspector's Physics menu, over the
+  remote API and through Lua `set_component`): `Collider` (shape; alone it is fixed
+  scenery), `RigidBody` (dynamic, fixed or kinematic), `CharacterController` and
+  `SpringCamera`. `physics::edit` reads and patches them as JSON for both the remote API
+  and Lua.
+- **`ScenePhysics`** (one per `Scene`, main world only, like scripts) is derived state:
+  nothing in it is saved; `reset_script_runtime` (play start) clears it and it is rebuilt
+  from the components, and a scene restored on Stop gets a fresh one. It steps only in
+  play mode, in `Scene::step_physics` after the scripts: it takes the physics commands
+  scripts queued (`ScriptCommands::physics`), syncs bodies with the components, steps,
+  moves characters, writes back, places spring cameras, and hands scripts their callbacks
+  for the next frame (`ScriptingState::queue_callbacks`, only for entities with scripts).
+- **Sync**: each wanted entity's body is keyed by a signature (role, component values,
+  world scale, mesh handles and, for `include_children`, the descendants' meshes and
+  relative transforms); a changed signature rebuilds the body, keeping its velocity.
+  Fixed and kinematic bodies follow the entity's transform (computed through the parent
+  chain, so it is right before transform propagation); dynamic bodies and characters
+  remember the local transform they last wrote, and anything else there is a teleport.
+  Collider user data is the entity's bits.
+- **Stepping**: a frame runs up to 6 steps of at most 1/60 s; kinematic bodies and
+  characters glide to their target over them (`set_next_kinematic_position`), so pushed
+  bodies see smooth motion. Never call `PhysicsWorld::detect_collisions` after inserting
+  bodies: it consumes their "modified" flags without registering them with the island
+  manager, and new dynamic bodies then never move.
+- **Characters** (`character.rs`) move once per frame after the step, by move-and-slide
+  (Rapier's `KinematicCharacterController`, autostep and snapping off) with a *floating*
+  capsule that starts `step_height` above the feet; a sphere swept down from it finds the
+  ground (a steep edge normal is checked with a short ray past the contact), holds the
+  feet on it, snaps them down slopes and stairs, and climbs steps at a capped speed.
+  Rapier's own autostep only nudges the capsule by what is left of a frame's movement, so
+  it failed on ordinary stairs at high frame rates. The body's collider is the full
+  feet-to-head capsule, which is what sensors, props and scene queries meet.
+- **Spring cameras** (`spring_camera.rs`) orbit a pivot above the target, smooth it per
+  axis, take mouse look from `InputState` (while `cursor_locked` or the right button is
+  held) and sweep a ball from the pivot to pull in before fixed scenery; they insert a
+  `LookAtTarget`, so directional shadows stay centred on the character.
+- **Cursor capture**: Lua `set_cursor_locked` sets a global request
+  (`input_state::request_cursor_lock`); the winit loop applies it while playing
+  (`apply_cursor_lock`: `Locked`, else `Confined` plus re-centring on X11), feeds raw
+  `DeviceEvent::MouseMotion` into the mouse delta while captured, puts the cursor back
+  where it was captured on release (drag-to-look), and releases it on Escape (even when
+  egui takes the key), focus loss or leaving play.
+- **Mouse in the editor**: the game's view is an egui panel, so egui takes every pointer
+  event over it. While playing, the winit loop still hands the game cursor movement,
+  presses over the game's view (or with the cursor captured), the releases of those
+  presses and the wheel over the view (`game_takes_pointer`); injected remote input skips
+  this path, so test real mouse handling by hand.
+- **Facing**: characters turn toward their movement unless a script set a facing
+  (`character_face`, `CharacterRuntime::facing`), which is how strafing, backpedalling
+  and mouse steering work.
+- **Debugging**: the editor outlines the selected entity's collider (built from the
+  components); `ScenePhysics::set_debug_draw` (Lua `physics_debug_draw`, remote
+  `debug.physics`) draws every simulated collider, play mode included.
 
 ## Scripting (Lua)
 

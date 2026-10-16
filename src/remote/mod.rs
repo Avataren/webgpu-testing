@@ -37,7 +37,7 @@
 mod capture;
 pub mod handlers;
 mod hub;
-mod json;
+pub(crate) mod json;
 pub mod log_tap;
 pub mod preview;
 mod profile;

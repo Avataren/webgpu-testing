@@ -21,7 +21,7 @@ use crate::scene::components::{
 use crate::scene::transform::Transform;
 use crate::scene::{Camera, InputState};
 use crate::scripting::lua::api::ui::{UiCameraGuard, UiCommand, UiResponse};
-use crate::scripting::lua::guards::InputStateGuard;
+use crate::scripting::lua::guards::{InputStateGuard, PhysicsGuard};
 use crate::scripting::lua::state::UiViewportInfo;
 use crate::scripting::ScriptingState;
 use crate::time::Instant;
@@ -51,6 +51,9 @@ pub struct Scene {
     show_skeletons: bool,
     /// Last [`Scene::set_animation_playback`] state.
     animation_playback: bool,
+    /// Rigid bodies, characters and spring cameras of the main world; stepped in play
+    /// mode after scripts, rebuilt from the components after a reset.
+    physics: crate::physics::ScenePhysics,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -80,7 +83,17 @@ impl Scene {
             script_effects_reset: false,
             show_skeletons: false,
             animation_playback: true,
+            physics: crate::physics::ScenePhysics::new(),
         }
+    }
+
+    /// The scene's physics simulation (see [`crate::physics`]).
+    pub fn physics(&self) -> &crate::physics::ScenePhysics {
+        &self.physics
+    }
+
+    pub fn physics_mut(&mut self) -> &mut crate::physics::ScenePhysics {
+        &mut self.physics
     }
 
     /// Scene time scripts advanced by since the last call: the sum of this frame's play
@@ -416,6 +429,7 @@ impl Scene {
 
     pub fn reset_script_runtime(&mut self) {
         self.runtime.reset_script_runtime();
+        self.physics.reset();
         self.script_effects_reset = true;
     }
 
@@ -725,9 +739,12 @@ impl Scene {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
+            let _physics_guard = PhysicsGuard::enter(&self.physics);
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, true));
         }
+        // The simulation only runs in play mode.
+        self.runtime.scripting_mut().take_physics_commands();
     }
 
     /// Scripts convert between the screen and the world through the camera as it is now,
@@ -758,6 +775,7 @@ impl Scene {
         };
         let world = main_node.instance_mut().world_mut();
         let _input_guard = InputStateGuard::enter(&self.input_state);
+        let _physics_guard = PhysicsGuard::enter(&self.physics);
         self.runtime.scripting_mut().eval(world, code, entity)
     }
 
@@ -882,10 +900,43 @@ impl Scene {
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
+            let _physics_guard = PhysicsGuard::enter(&self.physics);
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, editor_mode));
         } else {
             error!("Cannot run scripts: main scene node is missing");
+        }
+
+        self.step_physics(dt, editor_mode);
+    }
+
+    /// Run the physics after scripts (whose commands it takes), and hand the scripts
+    /// what happened (`on_landed`, `on_trigger_enter`, ...) for their next update.
+    fn step_physics(&mut self, dt: f64, editor_mode: bool) {
+        let commands = self.runtime.scripting_mut().take_physics_commands();
+        if editor_mode || dt <= 0.0 {
+            return;
+        }
+        self.physics.queue(commands);
+        let Some(main_node) = self.nodes.get_mut(self.main_scene) else {
+            return;
+        };
+        let world = main_node.instance_mut().world_mut();
+        let (physics, assets, input) = (&mut self.physics, &self.assets, &self.input_state);
+        frame_timings::time("physics", || physics.step(world, assets, input, dt as f32));
+        let events: Vec<_> = self
+            .physics
+            .take_events()
+            .into_iter()
+            .filter(|event| {
+                world
+                    .satisfies::<&crate::scripting::LuaScriptComponent>(event.entity)
+                    .unwrap_or(false)
+            })
+            .map(|event| (event.entity, event.callback, event.data))
+            .collect();
+        if !events.is_empty() {
+            self.runtime.scripting_mut().queue_callbacks(events);
         }
     }
 

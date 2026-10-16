@@ -9,7 +9,7 @@ use winit::{
     event::{DeviceEvent, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::{Key, NamedKey},
-    window::{Window, WindowId},
+    window::{CursorGrabMode, Window, WindowId},
 };
 
 use crate::app::core::{AppBuilder, AppCore, RenderParams, RenderResult, RuntimeTransition};
@@ -198,6 +198,20 @@ pub struct WinitApp<D: PlatformDriver = DefaultDriver> {
     driver: D,
     /// The graphics settings revision the window and surface last applied.
     applied_graphics: Option<u64>,
+    /// The window holds the cursor for the game (see `apply_cursor_lock`).
+    cursor_locked: bool,
+    /// The platform could only confine the cursor (X11), so it is put back in the middle
+    /// of the window every frame, where it cannot wander onto other UI unseen.
+    cursor_recenter: bool,
+    /// Where the cursor was when the game captured it, to put it back on release (a
+    /// drag-to-look ends where it started).
+    cursor_restore: Option<winit::dpi::PhysicalPosition<f64>>,
+    /// The cursor's last position while not captured.
+    cursor_position: Option<winit::dpi::PhysicalPosition<f64>>,
+    /// Mouse buttons pressed over the game's view while it plays (the editor's UI would
+    /// otherwise keep them, and their release, from the game).
+    #[cfg(feature = "egui")]
+    game_buttons: std::collections::HashSet<u32>,
     /// Reloads shaders when their files change, in builds run from the source tree.
     #[cfg(not(target_arch = "wasm32"))]
     shader_watcher: Option<crate::renderer::shader_source::ShaderWatcher>,
@@ -271,6 +285,102 @@ where
 
         #[cfg(not(feature = "egui"))]
         let _ = transition;
+    }
+
+    /// Capture or release the cursor as the game asks (`set_cursor_locked`), only while
+    /// it plays. A locked cursor is hidden and mouse movement comes from raw motion, so
+    /// mouse look never stops at the window's edge. X11 cannot lock the pointer, so the
+    /// cursor is confined there instead.
+    fn apply_cursor_lock(&mut self) {
+        let playing = self.core.runtime_mode() == crate::app::core::RuntimeMode::Playing;
+        if !playing && crate::scene::input_state::cursor_lock_requested() {
+            crate::scene::input_state::request_cursor_lock(false);
+        }
+        let wanted = playing && crate::scene::input_state::cursor_lock_requested();
+        if wanted != self.cursor_locked {
+            if let Some(window) = self.platform.window().cloned() {
+                let window = window.as_ref();
+                if wanted {
+                    let grabbed = match window.set_cursor_grab(CursorGrabMode::Locked) {
+                        Ok(()) => Ok(false),
+                        Err(_) => window
+                            .set_cursor_grab(CursorGrabMode::Confined)
+                            .map(|()| true),
+                    };
+                    match grabbed {
+                        Ok(recenter) => {
+                            self.cursor_restore = self.cursor_position;
+                            window.set_cursor_visible(false);
+                            self.cursor_locked = true;
+                            self.cursor_recenter = recenter;
+                        }
+                        Err(err) => {
+                            log::warn!("Cannot capture the cursor: {err}");
+                            crate::scene::input_state::request_cursor_lock(false);
+                        }
+                    }
+                } else {
+                    let _ = window.set_cursor_grab(CursorGrabMode::None);
+                    window.set_cursor_visible(true);
+                    self.cursor_locked = false;
+                    self.cursor_recenter = false;
+                    if let Some(position) = self.cursor_restore.take() {
+                        let _ = window.set_cursor_position(position);
+                    }
+                }
+            }
+        }
+        if self.cursor_locked && self.cursor_recenter {
+            if let Some(window) = self.platform.window() {
+                let window = window.as_ref();
+                let size = window.inner_size();
+                let center = winit::dpi::PhysicalPosition::new(
+                    size.width as f64 / 2.0,
+                    size.height as f64 / 2.0,
+                );
+                let _ = window.set_cursor_position(center);
+            }
+        }
+        let locked = self.cursor_locked;
+        self.update_input_state(|input| input.set_cursor_locked(locked));
+    }
+
+    /// Whether a pointer event the editor's UI took should reach the game as well: while
+    /// it plays, movement always does, a press over the game's view (or with the cursor
+    /// captured) does, and so does the release of such a press; the wheel over the view.
+    #[cfg(feature = "egui")]
+    fn game_takes_pointer(&mut self, event: &WindowEvent) -> bool {
+        if self.core.runtime_mode() != crate::app::core::RuntimeMode::Playing {
+            self.game_buttons.clear();
+            return false;
+        }
+        let over_view = self.cursor_locked
+            || self.cursor_position.is_some_and(|position| {
+                self.core
+                    .workspace()
+                    .active_scene()
+                    .and_then(|scene| scene.lua_scripting().view_rect())
+                    .is_some_and(|[x, y, width, height]| {
+                        let (px, py) = (position.x as f32, position.y as f32);
+                        px >= x && py >= y && px < x + width && py < y + height
+                    })
+            });
+        match event {
+            WindowEvent::CursorMoved { .. } => true,
+            WindowEvent::MouseInput { state, button, .. } => {
+                let index = mouse_button_index(*button);
+                match state {
+                    winit::event::ElementState::Pressed if over_view => {
+                        self.game_buttons.insert(index);
+                        true
+                    }
+                    winit::event::ElementState::Pressed => false,
+                    winit::event::ElementState::Released => self.game_buttons.remove(&index),
+                }
+            }
+            WindowEvent::MouseWheel { .. } => over_view,
+            _ => false,
+        }
     }
 
     fn update_input_state<F>(&mut self, update: F)
@@ -412,6 +522,12 @@ where
             platform: PlatformState::default(),
             driver,
             applied_graphics: None,
+            cursor_locked: false,
+            cursor_recenter: false,
+            cursor_restore: None,
+            cursor_position: None,
+            #[cfg(feature = "egui")]
+            game_buttons: std::collections::HashSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
             shader_watcher: None,
         }
@@ -558,6 +674,22 @@ where
             .handle_event(&mut self.platform, event_loop, &event);
         self.ensure_renderer_ready();
 
+        if let WindowEvent::CursorMoved { position, .. } = &event {
+            if !self.cursor_locked {
+                self.cursor_position = Some(*position);
+            }
+        }
+
+        // Escape always gives a captured cursor back, even when the UI takes the key.
+        if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+            if self.cursor_locked
+                && key.state == winit::event::ElementState::Pressed
+                && key.logical_key == Key::Named(NamedKey::Escape)
+            {
+                crate::scene::input_state::request_cursor_lock(false);
+            }
+        }
+
         #[cfg(feature = "egui")]
         if let Some(window_handle) = self.platform.window().cloned() {
             let consumed = self
@@ -567,7 +699,10 @@ where
                 if let WindowEvent::RedrawRequested = event {
                     window_handle.as_ref().request_redraw();
                 }
-                return;
+                // The game's view is part of the UI, which takes the mouse over it.
+                if !self.game_takes_pointer(&event) {
+                    return;
+                }
             }
         }
 
@@ -603,6 +738,7 @@ where
                 if let Some(transition) = self.core.sync_runtime_state() {
                     self.handle_runtime_transition(transition);
                 }
+                self.apply_cursor_lock();
 
                 // Wait for the GPU before the frame reads the clock (see the method).
                 if let Some(renderer) = self.platform.renderer_mut() {
@@ -749,13 +885,18 @@ where
                 }
             }
             WindowEvent::Focused(false) => {
+                crate::scene::input_state::request_cursor_lock(false);
                 self.update_input_state(|input| input.reset());
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let position = Vec2::new(position.x as f32, position.y as f32);
+                // A captured cursor's movement comes from raw motion (`device_event`).
+                let locked = self.cursor_locked;
                 self.update_input_state(|input| {
-                    let previous = input.mouse_position();
-                    input.add_mouse_delta(position - previous);
+                    if !locked {
+                        let previous = input.mouse_position();
+                        input.add_mouse_delta(position - previous);
+                    }
                     input.set_mouse_position(position);
                 });
             }
@@ -781,11 +922,17 @@ where
         &mut self,
         _event_loop: &ActiveEventLoop,
         _device_id: winit::event::DeviceId,
-        _event: DeviceEvent,
+        event: DeviceEvent,
     ) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            if self.cursor_locked {
+                let delta = Vec2::new(delta.0 as f32, delta.1 as f32);
+                self.update_input_state(|input| input.add_mouse_delta(delta));
+            }
+        }
         #[cfg(feature = "egui")]
         {
-            self.editor.handle_device_event(&_event);
+            self.editor.handle_device_event(&event);
         }
     }
 }

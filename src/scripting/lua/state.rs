@@ -71,6 +71,11 @@ enum Hook<'a> {
         callback: &'a str,
         data: &'a serde_json::Value,
     },
+    /// `callback(self_entity, data)`, skipped when the script does not define it.
+    Callback {
+        callback: &'a str,
+        data: &'a serde_json::Value,
+    },
     Coroutines(f64),
 }
 
@@ -81,7 +86,7 @@ impl Hook<'_> {
             Hook::Created => "on_created",
             Hook::Update(_) => "update",
             Hook::Destroyed { .. } => "on_destroyed",
-            Hook::Event { callback, .. } => callback,
+            Hook::Event { callback, .. } | Hook::Callback { callback, .. } => callback,
             Hook::Coroutines(_) => "coroutine",
         }
     }
@@ -140,6 +145,8 @@ struct ScriptOutputs {
     pending_post_process: Vec<PendingPostProcess>,
     /// `set_environment` changes waiting for the scene.
     pending_environment: Vec<serde_json::Value>,
+    /// Physics changes waiting for the scene's simulation.
+    physics_commands: Vec<crate::physics::PhysicsCommand>,
 }
 
 impl ScriptOutputs {
@@ -157,6 +164,7 @@ impl ScriptOutputs {
         self.pending_gltf_imports.extend(result.gltf_imports);
         self.pending_asset_commands.extend(result.asset_commands);
         self.particle_bursts.extend(result.particle_bursts);
+        self.physics_commands.extend(result.physics);
         self.pending_post_process.extend(result.post_process);
         self.pending_environment.extend(result.environment);
 
@@ -229,6 +237,9 @@ fn invoke(
             }
             Hook::Event { callback, data } => {
                 instance.call_event(lua, bits, callback, (*data).clone(), cmds, evts)
+            }
+            Hook::Callback { callback, data } => {
+                instance.call_callback(lua, bits, callback, (*data).clone(), cmds, evts)
             }
             Hook::Coroutines(dt) => instance
                 .process_coroutines(*dt, cmds, evts)
@@ -303,6 +314,8 @@ pub struct ScriptingState {
     ui_responses: HashMap<Entity, HashMap<String, UiResponse>>,
     /// Environment used by [`Self::eval`] when no entity is given; created on first use.
     console: Option<ConsoleScope>,
+    /// Engine callbacks (`on_landed`, `on_trigger_enter`, ...) for the next frame's scripts.
+    pending_callbacks: Vec<(Entity, &'static str, serde_json::Value)>,
 }
 
 impl ScriptingState {
@@ -355,6 +368,7 @@ impl ScriptingState {
             deferred_ui_commands: Vec::new(),
             ui_responses: HashMap::new(),
             console: None,
+            pending_callbacks: Vec::new(),
         })
     }
 
@@ -409,6 +423,7 @@ impl ScriptingState {
         self.elapsed = 0.0;
         self.deferred_ui_commands.clear();
         self.ui_responses.clear();
+        self.pending_callbacks.clear();
     }
 
     /// Hot-reload every script loaded from `path`, preserving script state.
@@ -728,6 +743,25 @@ impl ScriptingState {
             );
         }
 
+        for (entity, callback, data) in std::mem::take(&mut self.pending_callbacks) {
+            if !active.contains(&entity) {
+                continue;
+            }
+            if let Some(slot) = self.slots.get_mut(&entity) {
+                invoke(
+                    &self.runtime,
+                    &mut self.outputs,
+                    world,
+                    entity,
+                    slot,
+                    Hook::Callback {
+                        callback,
+                        data: &data,
+                    },
+                );
+            }
+        }
+
         // Restore state after on_created so restored values win over its defaults.
         self.pending_state_restoration.retain(|entity, state| {
             match self
@@ -945,6 +979,21 @@ impl ScriptingState {
     /// Particle bursts scripts requested since the last call.
     pub fn take_particle_bursts(&mut self) -> Vec<crate::gpu_particles::ParticleBurst> {
         std::mem::take(&mut self.outputs.particle_bursts)
+    }
+
+    /// Physics changes scripts asked for since the last call.
+    pub fn take_physics_commands(&mut self) -> Vec<crate::physics::PhysicsCommand> {
+        std::mem::take(&mut self.outputs.physics_commands)
+    }
+
+    /// Call `callback(self_entity, data)` on each entity's script at the start of the
+    /// next frame's scripts (after `on_created`, before `update`). Scripts that do not
+    /// define the callback are skipped.
+    pub fn queue_callbacks(
+        &mut self,
+        callbacks: impl IntoIterator<Item = (Entity, &'static str, serde_json::Value)>,
+    ) {
+        self.pending_callbacks.extend(callbacks);
     }
 
     /// Whether scripts despawned entities since the last call (so their materials may

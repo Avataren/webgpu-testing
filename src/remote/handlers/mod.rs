@@ -92,6 +92,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "debug.skeleton",
         "Draw the bones of skinned meshes on top of the scene ({enabled})",
     ),
+    (
+        "debug.physics",
+        "Draw every simulated collider ({enabled}); report bodies, steps and gravity",
+    ),
     ("mesh.lathe", "Revolve a radius/height profile into a UV-mapped mesh"),
     ("mesh.extrude", "Extrude a concave XY polygon with bevel, twist and taper"),
     ("mesh.compose", "Combine transformed procedural shapes into one reusable mesh"),
@@ -298,6 +302,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "entity.duplicate" => entity::duplicate(params, ctx),
         "animation.inspect" => animation::inspect(params, ctx),
         "debug.skeleton" => animation::debug_skeleton(params, ctx),
+        "debug.physics" => animation::debug_physics(params, ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
         "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {
             geometry::generate(method, params, ctx)

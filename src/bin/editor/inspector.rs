@@ -37,6 +37,8 @@ use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInsp
 
 use crate::theme::{self, icons};
 
+mod physics;
+
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
@@ -167,6 +169,13 @@ pub enum InspectorAction {
     },
     AddParticleSystem {
         entity: Entity,
+    },
+    /// Add, change (the whole component as JSON) or, with `null`, remove a physics
+    /// component (`rigid_body`, `collider`, `character_controller`, `spring_camera`).
+    SetPhysics {
+        entity: Entity,
+        component: &'static str,
+        value: serde_json::Value,
     },
     RenameEntity {
         entity: Entity,
@@ -355,6 +364,8 @@ pub fn show_entity_inspector(
         );
     }
 
+    physics::show_physics_sections(ui, entity, components, &mut actions);
+
     if let Some(script) = components.script.clone() {
         let (header, action) = show_script_section(ui, entity, &script, content_root);
         removable(&header, entity, RemovableComponent::Script, &mut actions);
@@ -502,6 +513,7 @@ fn add_component_menu(
         &format!("{}  Script", icons::SCRIPT),
         InspectorAction::AddScript { entity },
     );
+    physics::add_physics_menu(ui, entity, components, actions);
 }
 
 fn show_transform_section(

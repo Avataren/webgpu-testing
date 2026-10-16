@@ -34,6 +34,8 @@ pub(crate) struct ScriptCommands {
     pub post_process: Vec<(Option<i64>, serde_json::Value)>,
     /// `set_environment` patches, already checked.
     pub environment: Vec<serde_json::Value>,
+    /// Velocity, impulse, character and spring camera changes for the scene's physics.
+    pub physics: Vec<crate::physics::PhysicsCommand>,
 }
 
 impl ScriptCommands {
@@ -46,6 +48,7 @@ impl ScriptCommands {
             particle_bursts: Vec::new(),
             post_process: Vec::new(),
             environment: Vec::new(),
+            physics: Vec::new(),
         }
     }
 
@@ -433,6 +436,7 @@ impl ScriptCommands {
             && self.assets.is_empty()
             && self.post_process.is_empty()
             && self.environment.is_empty()
+            && self.physics.is_empty()
     }
 
     pub fn apply(&mut self, world: &mut World) -> Result<ScriptApplyResult, LuaScriptingError> {
@@ -440,6 +444,7 @@ impl ScriptCommands {
 
         let mut result = ScriptApplyResult {
             particle_bursts: std::mem::take(&mut self.particle_bursts),
+            physics: std::mem::take(&mut self.physics),
             ..ScriptApplyResult::default()
         };
         let mut deferred_parents: Vec<(Entity, i64)> = Vec::new();
@@ -1115,6 +1120,12 @@ impl ScriptCommands {
                     serde_json::to_value(value).map_err(|err| err.to_string())
                 })
             }
+            ComponentKind::Physics(name) => {
+                if !world.contains(entity) {
+                    return Err("Entity does not exist".to_string());
+                }
+                Ok(crate::physics::edit::component_json(world, entity, name))
+            }
         }
     }
 
@@ -1257,6 +1268,10 @@ impl ScriptCommands {
                     )
                     .map_err(|e| e.to_string())?;
             }
+            // Physics components merge the given fields into what is there.
+            Some(ComponentKind::Physics(name)) => {
+                crate::physics::edit::patch_component(world, entity, name, value)?;
+            }
             Some(_) => {
                 return Err(format!(
                     "Component type cannot be set from JSON: {}",
@@ -1353,6 +1368,14 @@ impl ScriptCommands {
                     .remove_one::<ParticleEmitterComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
+            Some(ComponentKind::Physics(name)) => {
+                crate::physics::edit::patch_component(
+                    world,
+                    entity,
+                    name,
+                    &serde_json::Value::Null,
+                )?;
+            }
             None => {
                 return Err(format!(
                     "Unknown or unsupported component type: {}",
@@ -1381,6 +1404,8 @@ pub(crate) enum ComponentKind {
     Material,
     PrimitiveMesh,
     ParticleEmitter,
+    /// A physics component, by its snake_case name.
+    Physics(&'static str),
 }
 
 pub(crate) fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
@@ -1399,7 +1424,7 @@ pub(crate) fn component_kind_from_name(component_name: &str) -> Option<Component
         "MaterialComponent" | "Material" => Some(ComponentKind::Material),
         "PrimitiveMeshComponent" => Some(ComponentKind::PrimitiveMesh),
         "ParticleEmitterComponent" => Some(ComponentKind::ParticleEmitter),
-        _ => None,
+        other => crate::physics::edit::canonical_name(other).map(ComponentKind::Physics),
     }
 }
 
@@ -1419,6 +1444,9 @@ pub(crate) fn component_matches(world: &World, entity: Entity, kind: ComponentKi
         ComponentKind::Material => world.satisfies::<&MaterialComponent>(entity),
         ComponentKind::PrimitiveMesh => world.satisfies::<&PrimitiveMeshComponent>(entity),
         ComponentKind::ParticleEmitter => world.satisfies::<&ParticleEmitterComponent>(entity),
+        ComponentKind::Physics(name) => {
+            Ok(crate::physics::edit::has_component(world, entity, name))
+        }
     }
     .unwrap_or(false)
 }
@@ -1698,6 +1726,7 @@ pub(crate) struct ScriptApplyResult {
     pub gltf_imports: Vec<PendingGltfImport>,
     pub asset_commands: Vec<PendingAssetCommand>,
     pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
+    pub physics: Vec<crate::physics::PhysicsCommand>,
     pub post_process: Vec<PendingPostProcess>,
     /// `set_environment` patches, in order.
     pub environment: Vec<serde_json::Value>,

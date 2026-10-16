@@ -50,6 +50,10 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "environment",
     "post_process_volume",
     "light_probe_volume",
+    "rigid_body",
+    "collider",
+    "character_controller",
+    "spring_camera",
     "billboard",
     "depth_state",
     "rotate_animation",
@@ -79,6 +83,9 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "environment" => has::<EnvironmentComponent>(world, entity),
         "post_process_volume" => has::<PostProcessVolume>(world, entity),
         "light_probe_volume" => has::<LightProbeVolume>(world, entity),
+        "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
+            crate::physics::edit::has_component(world, entity, name)
+        }
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
         "rotate_animation" => has::<RotateAnimation>(world, entity),
@@ -367,6 +374,20 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     }
     if let Ok(volume) = world.get::<&LightProbeVolume>(entity) {
         out["light_probe_volume"] = serde_json::to_value(&*volume).unwrap_or(Value::Null);
+    }
+    for name in crate::physics::edit::COMPONENT_NAMES {
+        if let Some(value) = crate::physics::edit::component_json(world, entity, name) {
+            out[name] = value;
+        }
+    }
+    if let Some(status) = scene.physics().character_status(entity) {
+        out["character_state"] = json!({
+            "grounded": status.grounded,
+            "velocity": status.velocity.to_array(),
+            "air_time": status.air_time,
+            "sliding": status.sliding,
+            "running": status.running,
+        });
     }
     if let Ok(billboard) = world.get::<&Billboard>(entity) {
         let orientation = match billboard.orientation {
@@ -898,6 +919,14 @@ pub(super) fn apply_patch(
                     Ok(())
                 },
             )?,
+            "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
+                crate::physics::edit::patch_component(
+                    ctx.gpu.scene.main_world_mut(),
+                    entity,
+                    key,
+                    value,
+                )?
+            }
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
                 entity,
@@ -1731,6 +1760,9 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         "environment" => remove::<EnvironmentComponent>(world, entity),
         "post_process_volume" => remove::<PostProcessVolume>(world, entity),
         "light_probe_volume" => remove::<LightProbeVolume>(world, entity),
+        "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
+            let _ = crate::physics::edit::patch_component(world, entity, component, &Value::Null);
+        }
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),
         "rotate_animation" => remove::<RotateAnimation>(world, entity),
@@ -1827,6 +1859,7 @@ fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
     copy::<EnvironmentComponent>(world, source, &mut builder);
     copy::<PostProcessVolume>(world, source, &mut builder);
     copy::<LightProbeVolume>(world, source, &mut builder);
+    crate::physics::edit::clone_components(world, source, &mut builder);
     copy::<Billboard>(world, source, &mut builder);
     copy::<DepthState>(world, source, &mut builder);
     copy::<RotateAnimation>(world, source, &mut builder);

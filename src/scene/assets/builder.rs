@@ -252,6 +252,10 @@ impl SceneAssetEntityBuilder {
             skin: None,
             animator: None,
             light_probe_volume: None,
+            rigid_body: None,
+            collider: None,
+            character_controller: None,
+            spring_camera: None,
             source_entity: None,
         }
     }

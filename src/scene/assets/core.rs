@@ -505,6 +505,19 @@ impl SceneAsset {
                 builder.add(volume.clone());
             }
 
+            if let Some(component) = &entity.rigid_body {
+                builder.add(component.clone());
+            }
+            if let Some(component) = &entity.collider {
+                builder.add(component.clone());
+            }
+            if let Some(component) = &entity.character_controller {
+                builder.add(component.clone());
+            }
+            if let Some(component) = &entity.spring_camera {
+                builder.add(component.clone());
+            }
+
             builders.push(builder);
         }
 

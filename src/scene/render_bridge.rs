@@ -78,6 +78,11 @@ impl RenderBridge {
                     world,
                     world_transform,
                 ));
+                volume_shapes.extend(crate::physics::selected_collider_gizmos(
+                    world,
+                    &scene.assets,
+                    &world_transform,
+                ));
             }
 
             if gizmos_enabled && selected_transform.is_none() {
@@ -94,6 +99,12 @@ impl RenderBridge {
 
         if gizmos_enabled && selected_transform.is_none() {
             selected_transform = scene.selected_gizmo_transform();
+        }
+
+        // Every simulated collider, while physics debug drawing is on (play mode too).
+        if scene.physics().debug_draw() {
+            let node = *scene.node(scene.main_scene()).world_transform();
+            volume_shapes.extend(crate::physics::simulation_gizmos(scene.physics(), &node));
         }
 
         // Picking between frames must see the gizmo at the size it was drawn.

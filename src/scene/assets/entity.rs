@@ -75,6 +75,14 @@ pub struct SceneAssetEntity {
     pub post_process_volume: Option<PostProcessVolume>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light_probe_volume: Option<LightProbeVolume>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rigid_body: Option<crate::physics::RigidBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<crate::physics::Collider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character_controller: Option<crate::physics::CharacterController>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -165,6 +173,14 @@ struct SceneAssetEntityData {
     post_process_volume: Option<PostProcessVolume>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     light_probe_volume: Option<LightProbeVolume>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rigid_body: Option<crate::physics::RigidBody>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    collider: Option<crate::physics::Collider>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    character_controller: Option<crate::physics::CharacterController>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -218,6 +234,10 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             environment: data.environment,
             post_process_volume: data.post_process_volume,
             light_probe_volume: data.light_probe_volume,
+            rigid_body: data.rigid_body,
+            collider: data.collider,
+            character_controller: data.character_controller,
+            spring_camera: data.spring_camera,
             camera: data.camera,
             scene_ref: data.scene_ref,
             skin: data.skin,
@@ -267,6 +287,10 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             environment: entity.environment,
             post_process_volume: entity.post_process_volume,
             light_probe_volume: entity.light_probe_volume,
+            rigid_body: entity.rigid_body,
+            collider: entity.collider,
+            character_controller: entity.character_controller,
+            spring_camera: entity.spring_camera,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,
@@ -573,6 +597,22 @@ impl SceneAssetEntity {
             .get::<&LightProbeVolume>(entity)
             .ok()
             .map(|component| (*component).clone());
+        let rigid_body = world
+            .get::<&crate::physics::RigidBody>(entity)
+            .ok()
+            .map(|component| (*component).clone());
+        let collider = world
+            .get::<&crate::physics::Collider>(entity)
+            .ok()
+            .map(|component| (*component).clone());
+        let character_controller = world
+            .get::<&crate::physics::CharacterController>(entity)
+            .ok()
+            .map(|component| (*component).clone());
+        let spring_camera = world
+            .get::<&crate::physics::SpringCamera>(entity)
+            .ok()
+            .map(|component| (*component).clone());
         let camera = world
             .get::<&CameraComponent>(entity)
             .ok()
@@ -619,6 +659,10 @@ impl SceneAssetEntity {
             environment,
             post_process_volume,
             light_probe_volume,
+            rigid_body,
+            collider,
+            character_controller,
+            spring_camera,
             camera,
             scene_ref: None,
             skin,

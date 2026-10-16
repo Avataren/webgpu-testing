@@ -329,3 +329,22 @@ pub(super) fn debug_skeleton(params: &Value, ctx: &mut RemoteContext<'_, '_>) ->
         "note": "Bones draw as orange overlays in the viewport and in screenshots.",
     }))
 }
+
+/// `debug.physics {enabled}`: draw every simulated collider (play mode), and report what
+/// the simulation holds.
+pub(super) fn debug_physics(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    if let Some(enabled) = opt_bool(params, "enabled") {
+        ctx.gpu.scene.physics_mut().set_debug_draw(enabled);
+    }
+    let physics = ctx.gpu.scene.physics();
+    Ok(json!({
+        "enabled": physics.debug_draw(),
+        "bodies": physics.body_count(),
+        "steps": physics.steps(),
+        "gravity": physics.gravity().to_array(),
+        "note": "The simulation is built when play starts, so bodies is 0 in edit mode. \
+                 Colliders draw as wireframes (green fixed, orange dynamic, blue kinematic, \
+                 cyan characters, yellow sensors); the editor always outlines the selected \
+                 entity's collider.",
+    }))
+}

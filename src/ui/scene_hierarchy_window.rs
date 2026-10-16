@@ -201,6 +201,10 @@ pub struct SceneEntityComponentsSummary {
     pub post_process_volume: Option<PostProcessVolume>,
     pub light_probe_volume: Option<LightProbeVolume>,
     pub billboard: Option<Billboard>,
+    pub rigid_body: Option<crate::physics::RigidBody>,
+    pub collider: Option<crate::physics::Collider>,
+    pub character_controller: Option<crate::physics::CharacterController>,
+    pub spring_camera: Option<crate::physics::SpringCamera>,
 }
 
 #[cfg(feature = "egui")]
@@ -297,6 +301,18 @@ impl SceneHierarchySnapshot {
                 .get::<&LightProbeVolume>()
                 .map(|component| (*component).clone());
             let billboard = entity_ref.get::<&Billboard>().map(|component| *component);
+            let rigid_body = entity_ref
+                .get::<&crate::physics::RigidBody>()
+                .map(|component| (*component).clone());
+            let collider = entity_ref
+                .get::<&crate::physics::Collider>()
+                .map(|component| (*component).clone());
+            let character_controller = entity_ref
+                .get::<&crate::physics::CharacterController>()
+                .map(|component| (*component).clone());
+            let spring_camera = entity_ref
+                .get::<&crate::physics::SpringCamera>()
+                .map(|component| (*component).clone());
 
             nodes.insert(
                 entity,
@@ -326,6 +342,10 @@ impl SceneHierarchySnapshot {
                     post_process_volume,
                     light_probe_volume,
                     billboard,
+                    rigid_body,
+                    collider,
+                    character_controller,
+                    spring_camera,
                 },
             );
         }

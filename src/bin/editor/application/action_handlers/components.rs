@@ -191,6 +191,27 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
 }
 
 /// Handle AddLightProbeVolume action: a volume of the default size around the entity.
+/// Handle SetPhysics: add, replace or (with null) remove a physics component.
+pub fn handle_set_physics(
+    ctx: &mut ActionContext,
+    entity: Entity,
+    component: &'static str,
+    value: serde_json::Value,
+) -> ActionResult {
+    let world = ctx.scene.main_world_mut();
+    let before = wgpu_cube::physics::edit::component_json(world, entity, component);
+    if before.as_ref() == Some(&value) || (before.is_none() && value.is_null()) {
+        return ActionResult::no_change();
+    }
+    match wgpu_cube::physics::edit::patch_component(world, entity, component, &value) {
+        Ok(()) => ActionResult::scene_changed(),
+        Err(err) => {
+            log::warn!("Cannot change {component} of {entity:?}: {err}");
+            ActionResult::no_change()
+        }
+    }
+}
+
 pub fn handle_add_light_probe_volume(ctx: &mut ActionContext, entity: Entity) -> ActionResult {
     let world = ctx.scene.main_world_mut();
     if world.get::<&LightProbeVolume>(entity).is_ok() {

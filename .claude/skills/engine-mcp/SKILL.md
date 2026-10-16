@@ -199,6 +199,18 @@ engine you launched; save first).
   true}` draws bones over the mesh in screenshots. Lua: `animator_play`, `animator_state`,
   `find_bone` (attach props to hands). Verify motion with `runtime_set {mode: "play",
   manual: true}` + `runtime_step` + `screenshot`.
+- Physics (play mode, Rapier): give scenery `collider: {}` (auto-fits primitives and
+  meshes; `include_children: true` on an imported level's root takes its child meshes),
+  props `rigid_body: {mass}` too, moving platforms `rigid_body: {kind: "kinematic"}` (a
+  script moves the transform), trigger volumes `collider: {sensor: true}` (scripts get
+  `on_trigger_enter(self, other)`). A player is a character root with
+  `character_controller: {}` (origin at the feet, model facing +Z) and a camera with
+  `spring_camera: {target: "<name>"}` plus `active_camera: true`; Lua steers it with
+  `character_move` / `character_jump` and reads `character_state`. The reusable
+  third-person controller is `games/character-playground/content/scripts/lib/third_person.lua`
+  (`require("lib.third_person")` after copying it into a project; `scheme = "mmo"` gives World of Warcraft mouse controls). `debug_physics
+  {enabled: true}` draws every collider; the editor outlines the selected one. The
+  simulation is rebuilt when play starts, so check physics in play mode (`playtest`).
 - Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`
   writes tileable PNGs (noise, bricks, checker, wood, marble, voronoi) and matching
   normal, height, metallic/roughness and occlusion maps into `content/textures`.

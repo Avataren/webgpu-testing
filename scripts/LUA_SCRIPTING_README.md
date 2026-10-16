@@ -443,6 +443,101 @@ function on_created(self)
 end
 ```
 
+### Physics
+Rigid bodies, walking characters and third-person cameras, simulated with Rapier in play
+mode after every script's `update`. Entities get them as components (inspector, MCP
+`entity_update`, or `set_component` below):
+
+- `Collider` - what an entity collides as. On its own it is fixed scenery placed by the
+  transform. `shape.kind` is `auto` (fits the mesh: primitives exactly, other meshes as
+  triangles, or as their convex hull on dynamic bodies), `box` (`size`), `sphere`
+  (`radius`), `capsule` / `cylinder` (`radius`, `height`), `mesh` or `convex_hull`; sizes
+  are local units stretched by the entity's scale. `friction`, `restitution`, `density`,
+  `offset`, `sensor` (a trigger volume) and `include_children` (take the meshes below it,
+  for imported models and levels).
+- `RigidBody` - `kind` `dynamic` (moved by the simulation, written back to the transform),
+  `fixed` or `kinematic` (follows its transform and pushes things: platforms, doors);
+  `mass`, `gravity_scale`, `linear_damping`, `angular_damping`, `lock_rotation`, `ccd`.
+- `CharacterController` - a walking capsule whose origin is its feet. Scripts steer it;
+  it handles slopes up to `max_slope`, steps up to `step_height`, gravity, jumps
+  (`jump_height`, `air_jumps`, `coyote_time`, `jump_buffer`), `walk_speed` / `run_speed`,
+  `acceleration`, `air_control`, turning to face its movement, pushing dynamic bodies and
+  riding kinematic platforms. Models should face +Z (glTF's convention), else set
+  `yaw_offset`.
+- `SpringCamera` - put it on a camera: it follows `target` (an entity name; empty means
+  the parent) at `distance` around `pivot_offset`, with lag, mouse look (while the cursor
+  is locked or the right button is held), wheel zoom, and pulls in before scenery.
+
+Functions:
+
+- `physics_raycast(ox, oy, oz, dx, dy, dz[, max_distance[, options]])` → `{entity,
+  distance, point = {x, y, z}, normal = {x, y, z}}` or `nil`. Options: `exclude` (an
+  entity or a list), `sensors = true` (hit trigger volumes too), `ignore_dynamic = true`.
+- `physics_spherecast(ox, oy, oz, dx, dy, dz, radius[, max_distance[, options]])` - the
+  same for a swept ball.
+- `physics_overlap_sphere(x, y, z, radius[, options])` → list of entities.
+- `get_velocity(entity)` / `get_angular_velocity(entity)` → `{x, y, z}` or `nil`.
+- `set_velocity(entity, x, y, z)`, `apply_impulse(entity, x, y, z)` (kg·m/s; on a
+  character it adds m/s to its velocity: launch pads, knockback),
+  `set_angular_velocity(entity, x, y, z)`, `apply_torque_impulse(entity, x, y, z)`.
+- `set_gravity(x, y, z)`, `get_gravity()`; `physics_debug_draw(true)` draws every
+  collider.
+- `character_move(entity, x, z[, run])` - steer: a world-space direction on the ground
+  whose length (0..1) is the share of walk (or run) speed. It holds until changed; send
+  `0, 0` to stop.
+- `character_jump(entity)` - jump now, or as soon as it lands within `jump_buffer`.
+- `character_face(entity, yaw[, instant])` - face `yaw` (radians about +Y; 0 faces +Z, so
+  `math.atan(x, z)` faces a direction), turning at the controller's `turn_speed` or at
+  once. While set it no longer turns toward its movement, so it can strafe and walk
+  backwards; `character_face(entity, nil)` hands the facing back.
+- `character_state(entity)` → `{grounded, velocity, speed, horizontal_speed,
+  vertical_speed, ground_normal, ground_entity, air_time, just_landed, landing_speed,
+  just_jumped, sliding, running, move_input, yaw}`.
+- `spring_camera_state(camera)` → `{yaw, pitch, distance, pivot, forward, right, target}`;
+  `forward` and `right` are the view's horizontal axes, for camera-relative movement.
+- `spring_camera_rotate(camera, yaw_degrees, pitch_degrees)` and
+  `spring_camera_set(camera, {yaw, pitch, distance, target, snap})` (`target` an entity
+  or `false` for the component's; `snap` skips the lag once).
+- `set_cursor_locked(locked)` / `is_cursor_locked()` - capture the mouse for mouse look
+  (hidden, unbounded `get_mouse_delta()`). Releasing puts the cursor back where it was
+  captured, so a drag-to-look can capture on press and release on button up. Escape,
+  losing focus or leaving play releases it too.
+
+Physics callbacks arrive at the start of the next frame (see Lifecycle Hooks):
+`on_collision_enter(self, other)` / `on_collision_exit`, `on_trigger_enter(self, other)` /
+`on_trigger_exit` (sensors and what enters them), and on characters `on_jumped(self)` and
+`on_landed(self, speed)`.
+
+Change a component's settings with `set_component`: only the fields given change.
+
+```lua
+-- A third-person character: steer relative to the camera, jump on Space.
+function update(self, dt)
+    local view = spring_camera_state(find_entity_by_name("PlayerCamera"))
+    local x = (is_key_pressed("D") and 1 or 0) - (is_key_pressed("A") and 1 or 0)
+    local y = (is_key_pressed("W") and 1 or 0) - (is_key_pressed("S") and 1 or 0)
+    if view then
+        character_move(self, view.forward.x * y + view.right.x * x,
+                             view.forward.z * y + view.right.z * x, true)
+    end
+    if is_key_just_pressed("Space") then character_jump(self) end
+end
+
+function on_landed(self, speed)
+    if speed > 8 then play_sound("content/audio/thud.wav") end
+end
+
+-- Double jump power-up
+set_component(player, "CharacterController", { air_jumps = 1 })
+```
+
+`games/character-playground/content/scripts/lib/third_person.lua` is a complete,
+reusable controller whose every step is a method a game can replace. It has two schemes:
+`"action"` (camera-relative WASD, click to capture the mouse) and `"mmo"` (World of
+Warcraft style: W/S along the facing, A/D turn, Q/E strafe, left drag looks around,
+right drag steers, both buttons run, the camera swings back behind a moving character),
+with the idle/walk/run/strafe/jump/fall/land animation state machine.
+
 ### Saving data
 - `save_data(key, text)` - Keep a small text value between runs (a high score, settings);
   `nil` deletes it. Store tables as JSON or a Lua literal.
@@ -653,6 +748,9 @@ if target then look_at(ship, target.x, 0, target.z) end
 - `CanCastShadow` (boolean)
 - `RotateAnimation` (`{ axis = {x, y, z}, speed = number }`)
 - `OrbitAnimation` (`{ center = {x, y, z}, radius = number, speed = number, offset = number }`)
+- `RigidBody`, `Collider`, `CharacterController`, `SpringCamera` (see Physics; a table
+  sets only the fields it holds, so `set_component(e, "Collider", { friction = 0.1 })`
+  keeps the shape)
 
 **Readable/removable components**
 - `Transform` or `TransformComponent` (`{ translation = {x, y, z}, rotation = {x, y, z, w}, scale = {x, y, z} }`,
@@ -885,6 +983,13 @@ function on_destroyed(self_entity, reason)
     -- reload. `reason` is "removed" or "reload". Despawn what on_created spawned here.
     -- Before a reload, whatever it returns is handed to the new code's on_created.
 end
+
+-- Physics callbacks (play mode), delivered at the start of the next frame, before
+-- update. Define only the ones you need.
+function on_collision_enter(self_entity, other) end -- also on_collision_exit
+function on_trigger_enter(self_entity, other) end   -- sensors; also on_trigger_exit
+function on_jumped(self_entity) end                 -- CharacterController only
+function on_landed(self_entity, speed) end          -- downward speed at impact (m/s)
 ```
 
 A script that creates its own entities (bullet pools, effects) should remove them in
