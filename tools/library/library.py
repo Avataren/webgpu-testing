@@ -18,6 +18,7 @@ carries only those.
     library.py remove ID...
     library.py reindex
     library.py save-mixamo-token     (after copy(localStorage.access_token) on mixamo.com)
+    library.py mixamo-catalog [--characters] [--query TEXT]   what Mixamo offers
 
 FBX, .blend and OBJ files go through Blender (found like the editor finds it:
 `BLENDER_PATH`, the PATH, or the usual install places). Every file is split into one
@@ -187,7 +188,7 @@ def clean_clip_name(name):
 # --------------------------------------------------------------------------------------
 
 
-def run_blender(source, out, reference=None, name=None):
+def run_blender(source, out, reference=None, name=None, height_range=None, clips=True):
     # At most 8 threads, at low priority: the machine is shared.
     command = [
         find_blender(), "-b", "--factory-startup", "--threads", "8", "--python",
@@ -197,6 +198,10 @@ def run_blender(source, out, reference=None, name=None):
         command += ["--reference", reference]
     if name:
         command += ["--name", name]
+    if height_range:
+        command += ["--height-range", str(height_range[0]), str(height_range[1])]
+    if not clips:
+        command += ["--clips", "no"]
     result = subprocess.run(
         command, capture_output=True, text=True,
         preexec_fn=(lambda: os.nice(10)) if hasattr(os, "nice") else None,
@@ -273,7 +278,7 @@ def store(root, asset_id, kind, name, glb, thumbnail, fields):
 
 def ingest(root, source, provider="local", license_text="", author="", url="",
            tags=(), name=None, prefix=None, kind=None, character_name=None,
-           source_extra=None, family_hint=None):
+           source_extra=None, family_hint=None, height_range=None, clips=True):
     """Add every animation and the character in `source`; returns the new entries."""
     stem = name or os.path.splitext(os.path.basename(source))[0]
     prefix = prefix or provider
@@ -282,14 +287,16 @@ def ingest(root, source, provider="local", license_text="", author="", url="",
         # Animation-only files are shown on a library character with the same skeleton
         # (a first pass finds out which; Mixamo's is the common case).
         reference = reference_character(root, family_hint) if family_hint else None
-        report = run_blender(source, work, reference=reference, name=name)
+        report = run_blender(source, work, reference=reference, name=name,
+                             height_range=height_range, clips=clips)
         family = skeleton_family(report.get("bones", []))
         if reference is None and report["character"] is None and family:
             reference = reference_character(root, family)
             if reference:
                 shutil.rmtree(work)
                 work = tempfile.mkdtemp(prefix="library-ingest-")
-                report = run_blender(source, work, reference=reference, name=name)
+                report = run_blender(source, work, reference=reference, name=name,
+                                     height_range=height_range, clips=clips)
         source_info = {"provider": provider, "license": license_text}
         if author:
             source_info["author"] = author
@@ -299,26 +306,36 @@ def ingest(root, source, provider="local", license_text="", author="", url="",
         if source_extra:
             source_info.update(source_extra)
         entries = []
+        taken = set()
         character = report["character"]
         if character is not None:
             label = character_name or stem
             entry_kind = kind or ("character" if report.get("bones") else "model")
+            fields = {
+                "tags": sorted(set(tags) | {entry_kind}),
+                "skeleton": family if entry_kind == "character" else None,
+                "height": character["height"],
+                "triangles": character["triangles"],
+                "bones": character["bones"],
+                "source": source_info,
+            }
+            if character.get("scaled"):
+                fields["scaled"] = character["scaled"]
+            asset_id = slug(f"{prefix}-{label}")
+            taken.add(asset_id)
             entries.append(store(
-                root, slug(f"{prefix}-{label}"), entry_kind, label, character["file"],
-                character["thumbnail"],
-                {
-                    "tags": sorted(set(tags) | {entry_kind}),
-                    "skeleton": family if entry_kind == "character" else None,
-                    "height": character["height"],
-                    "triangles": character["triangles"],
-                    "bones": character["bones"],
-                    "source": source_info,
-                },
+                root, asset_id, entry_kind, label, character["file"],
+                character["thumbnail"], fields,
             ))
         for clip in report["clips"]:
             clip_name = clean_clip_name(clip["name"])
+            asset_id = slug(f"{prefix}-{clip_name}")
+            # A clip named like the file's character must not replace it.
+            if asset_id in taken:
+                asset_id = slug(f"{prefix}-{clip_name}-animation")
+            taken.add(asset_id)
             entries.append(store(
-                root, slug(f"{prefix}-{clip_name}"), "animation", clip_name, clip["file"],
+                root, asset_id, "animation", clip_name, clip["file"],
                 clip["thumbnail"],
                 {
                     "tags": tags_for(clip["name"], tags),
@@ -471,6 +488,10 @@ class Mixamo:
 
     def find(self, name, kind="Motion,MotionPack"):
         results = self.search(name, kind)
+        if not results:
+            # Mixamo's search trips over some punctuation ("Ely By K.Atienza"): try the
+            # first word and match the whole name below.
+            results = self.search(name.split()[0], kind, limit=96)
         wanted = name.lower()
         for item in results:
             if (item.get("name") or "").lower() == wanted:
@@ -576,6 +597,29 @@ def save_mixamo_token():
     return f"Saved the Mixamo token ({len(token)} characters) to {TOKEN_PATH}{expires}."
 
 
+def mixamo_catalog(characters=False, query=""):
+    """Names Mixamo offers: every character, or the animations matching `query`."""
+    client = Mixamo()
+    kind = "Character" if characters else "Motion,MotionPack"
+    rows, page = [], 1
+    while True:
+        params = urllib.parse.urlencode(
+            {"page": page, "limit": 96, "order": "", "type": kind, "query": query}
+        )
+        _, result = client.call("GET", f"/products?{params}")
+        for item in result.get("results", []):
+            row = {"name": item.get("name")}
+            if item.get("description") and item.get("description") != item.get("name"):
+                row["description"] = item["description"]
+            rows.append(row)
+        pages = result.get("pagination", {}).get("num_pages", 1)
+        # Animation searches can run to dozens of pages; the first few are the best.
+        if page >= pages or (not characters and page >= 3):
+            break
+        page += 1
+    return rows
+
+
 def fetch_mixamo(root, set_path, only=None, characters=True, animations=True, queries=()):
     with open(set_path, encoding="utf-8") as file:
         wanted = json.load(file)
@@ -604,14 +648,17 @@ def fetch_mixamo(root, set_path, only=None, characters=True, animations=True, qu
                 product = client.find(name, kind="Character")
                 if product is None:
                     raise RuntimeError("not found")
-                url = client.export_character(product["id"], name)
                 path = os.path.join(inbox, f"{slug(name)}.fbx")
-                download(url, path)
+                if not os.path.isfile(path):
+                    url = client.export_character(product["id"], name)
+                    download(url, path)
                 entries += ingest(
                     root, path, provider="mixamo", license_text=MIXAMO_LICENSE,
                     author="Adobe Mixamo", url="https://www.mixamo.com/", tags=["mixamo"],
                     name=name, prefix="mixamo", character_name=name,
                     source_extra={"mixamo_id": product["id"]},
+                    # Mixamo's files come at odd scales (Remy 3.8 m, the pirate 0.65 m).
+                    height_range=(1.0, 2.6), clips=False,
                 )
                 print(f"mixamo character: {name}", file=sys.stderr)
             except Exception as error:  # noqa: BLE001 - report and carry on
@@ -736,6 +783,10 @@ def main():
     commands.add_parser("reindex")
     commands.add_parser("save-mixamo-token")
 
+    catalog = commands.add_parser("mixamo-catalog")
+    catalog.add_argument("--characters", action="store_true")
+    catalog.add_argument("--query", default="")
+
     args = parser.parse_args()
     root = library_root(args.root)
 
@@ -792,6 +843,12 @@ def main():
                 shutil.rmtree(folder)
         write_index(root)
         emit({"removed": args.ids}, f"removed {len(args.ids)}")
+    elif args.command == "mixamo-catalog":
+        rows = mixamo_catalog(args.characters, args.query)
+        emit(rows, "\n".join(
+            row["name"] + (f"  ({row['description']})" if "description" in row else "")
+            for row in rows
+        ) + f"\n{len(rows)} found")
     elif args.command == "save-mixamo-token":
         print(save_mixamo_token())
     elif args.command == "reindex":

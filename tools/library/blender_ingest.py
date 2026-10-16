@@ -2,6 +2,7 @@
 
     blender -b --factory-startup --python blender_ingest.py -- \\
         --input SOURCE --out DIR [--reference CHARACTER.glb] [--name NAME]
+        [--height-range MIN MAX] [--clips no]
 
 SOURCE is an FBX (Mixamo included), glTF/GLB, .blend or OBJ. The script writes to DIR:
 
@@ -10,6 +11,11 @@ SOURCE is an FBX (Mixamo included), glTF/GLB, .blend or OBJ. The script writes t
 - `clip-<n>.glb` (with `clip-<n>.png`): one file per animation, holding the armature and
   that one animation. A single animation in a file is named NAME (or the file name;
   Mixamo calls every clip "mixamo.com").
+
+A character outside --height-range (metres; Mixamo's files come at odd scales) is scaled
+to 1.8 m. Textures are made game-ready: at most 2048 px, and opaque ones stored as JPEG
+(those with transparency, hair and lashes, stay PNG). --clips no skips the animations a
+character file may carry.
 
 Thumbnails are 256x256 Workbench renders from the front: a character in its rest pose,
 an animation at 40% of its length on the file's own character or, for animation-only
@@ -31,13 +37,62 @@ import mathutils
 
 def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    out = {"reference": None, "name": None}
+    out = {"reference": None, "name": None, "height_range": None, "clips": "yes"}
     i = 0
     while i < len(argv):
         key = argv[i].lstrip("-").replace("-", "_")
+        if key == "height_range":
+            out[key] = (float(argv[i + 1]), float(argv[i + 2]))
+            i += 3
+            continue
         out[key] = argv[i + 1]
         i += 2
     return out
+
+
+MAX_TEXTURE = 2048
+TARGET_HEIGHT = 1.8
+
+
+def optimize_textures(work_dir):
+    """At most MAX_TEXTURE px; opaque images are swapped for JPEG files (smaller; the
+    exporter keeps each image's own format), images with transparency stay PNG.
+    Returns how many images changed."""
+    import numpy
+    changed = 0
+    for index, image in enumerate(list(bpy.data.images)):
+        if image.type != "IMAGE" or image.size[0] == 0 or image.users == 0:
+            continue
+        width, height = image.size
+        resized = max(width, height) > MAX_TEXTURE
+        if resized:
+            factor = MAX_TEXTURE / max(width, height)
+            image.scale(max(1, round(width * factor)), max(1, round(height * factor)))
+        opaque = True
+        if image.channels == 4:
+            pixels = numpy.empty(len(image.pixels), dtype=numpy.float32)
+            image.pixels.foreach_get(pixels)
+            opaque = bool((pixels[3::4] > 0.99).all())
+        if not opaque:
+            changed += resized
+            continue
+        # Named after the image: the exporter (and a project's texture folder) use it.
+        name = image.name
+        stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in name) or "texture"
+        path = os.path.join(work_dir, f"{stem}-{index}.jpg")
+        image.file_format = "JPEG"
+        try:
+            image.save(filepath=path, quality=90)
+        except TypeError:  # older Blender: no arguments
+            image.filepath_raw = path
+            image.save()
+        jpeg = bpy.data.images.load(path)
+        jpeg.colorspace_settings.name = image.colorspace_settings.name
+        image.user_remap(jpeg)
+        bpy.data.images.remove(image)
+        jpeg.name = name
+        changed += 1
+    return changed
 
 
 def load(path):
@@ -165,8 +220,22 @@ def setup_render():
     return scene.camera
 
 
+def textured(objects):
+    """Whether the objects' materials use image textures."""
+    for obj in objects:
+        for slot in obj.material_slots:
+            material = slot.material
+            if material and material.use_nodes and any(
+                node.type == "TEX_IMAGE" and node.image for node in material.node_tree.nodes
+            ):
+                return True
+    return False
+
+
 def render(camera, objects, path):
     """Frame `objects` from the front (characters face -Y in Blender) and render."""
+    # Textured models show their textures; plain ones their material colours.
+    bpy.context.scene.display.shading.color_type = "TEXTURE" if textured(objects) else "MATERIAL"
     low, high = bounds(objects)
     if not all(map(math.isfinite, low)):
         return False
@@ -202,6 +271,7 @@ def export(path, objects, animations):
         export_cameras=False,
         export_lights=False,
         export_image_format="AUTO",
+        export_jpeg_quality=90,
     )
 
 
@@ -263,6 +333,19 @@ def main():
                 bone.matrix_basis = mathutils.Matrix.Identity(4)
         bpy.context.view_layer.update()
         low, high = bounds(bodies)
+        scaled = None
+        if opts["height_range"]:
+            lowest, highest = opts["height_range"]
+            height = high.z - low.z
+            if height > 0 and not lowest <= height <= highest:
+                scaled = TARGET_HEIGHT / height
+                for obj in bpy.data.objects:
+                    if obj.parent is None and obj.type in ("ARMATURE", "MESH", "EMPTY"):
+                        obj.scale = obj.scale * scaled
+                        obj.location = obj.location * scaled
+                bpy.context.view_layer.update()
+                low, high = bounds(bodies)
+        optimized = optimize_textures(out)
         export_objects = bodies + rigs
         path = os.path.join(out, "character.glb")
         export(path, export_objects, animations=False)
@@ -275,8 +358,12 @@ def main():
             "triangles": triangles(bodies),
             "bones": len(bone_names),
             "meshes": len(bodies),
+            "scaled": round(scaled, 4) if scaled else None,
+            "textures_optimized": optimized,
         }
 
+    if opts["clips"] == "no":
+        actions = []
     single = len(actions) == 1
     for index, action in enumerate(actions):
         if armature is None:

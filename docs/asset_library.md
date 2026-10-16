@@ -33,6 +33,12 @@ Each asset is one of:
 Packs are split on the way in: a GLB with 46 animations becomes 46 animation assets, so a
 game that uses two of them carries two.
 
+Characters and models are made game-ready on the way in: textures at most 2048 px, opaque
+ones as quality-90 JPEG (those with transparency, hair and lashes, stay PNG), which takes
+a Mixamo character from 50-150 MB to 10-20 MB. Mixamo characters outside 1.0-2.6 m tall
+(its files come at odd scales: Remy 3.8 m, the pirate 0.65 m) are scaled to 1.8 m; the
+asset records `scaled`.
+
 Assets record their **skeleton** naming: `mixamo` (`mixamorig:LeftArm`), `unreal`
 (`upperarm_l`, the Unreal mannequin and Quaternius's Universal Animation Library 2) or
 `rigify` (`DEF-upper_arm.L`). Clips bind to bones by name and, failing that, by humanoid
@@ -87,8 +93,14 @@ description and whether the clip loops. Clip lengths are Mixamo's own: "Waving" 
 0.53 s loop.
 
 `fetch-mixamo` downloads the characters and animations listed in
-`tools/library/mixamo_set.json` (about 90 animations: locomotion, jumps, combat, weapons,
-magic, hits, interactions, emotes; and Y Bot, X Bot, Remy, Kaya). Animations are exported
+`tools/library/mixamo_set.json`: about 100 animations (locomotion, jumps, combat,
+weapons, magic, hits, interactions, emotes) and 44 characters, from the Y Bot / X Bot
+mannequins and stand-ins (Mannequin, Dummy, Passive Marker Man) to knights, archers,
+peasants, monsters, soldiers, zombies, everyday people and two cartoon figures. Every
+Mixamo character shares one skeleton, so every animation plays on every character.
+`mixamo-catalog --characters` lists all of Mixamo's characters (108) and
+`mixamo-catalog --query sword` its animations with their descriptions; add names to the
+set, or fetch them directly with `fetch-mixamo --query NAME --only NAME`. Animations are exported
 for Y Bot without skin, with their ground travel kept (the engine measures it and plays
 clips in place on characters).
 
@@ -120,7 +132,8 @@ from clips", or Make Character sets everything up (see `docs/characters.md`).
 - `library_info {id}` gives the full entry.
 - `library_add {ids, entity}` takes assets into the open project, animations onto
   `entity`'s animator.
-- `library_fetch {source, names}` and `library_ingest {paths}` fill the library.
+- `library_fetch {source, names}` and `library_ingest {paths}` fill the library;
+  `mixamo_catalog {characters, query}` shows what Mixamo offers.
 
 ```
 library_search {query: "sword", kind: "animation"}

@@ -66,7 +66,7 @@ Options and environment:
 | Audio | `sound_play`, `sound_stop`, `audio_status` |
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
 | Animation | `entity_update {animator, animation_tree}`, `animation_inspect`, `debug_skeleton`, `character_make` (skinned characters; `entity_get` shows `skinned_mesh`, `animator` and the tree's live state) |
-| Asset library | `library_search`, `library_info`, `library_add` (editor), `library_fetch`, `library_ingest` (no editor needed) |
+| Asset library | `library_search`, `library_info`, `library_add` (editor), `library_fetch`, `library_ingest`, `mixamo_catalog` (no editor needed) |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot` (`overlays`), `visual_capture` (`freeze_noise`, `overlays`), `visual_compare`, `render_freeze_noise`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Render debugging | `texture_fetch`, `shader_reload` |

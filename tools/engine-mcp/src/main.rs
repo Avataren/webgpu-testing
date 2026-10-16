@@ -473,6 +473,17 @@ impl Server {
                 }
                 self.run_library(&command).map(Output::Json)
             }
+            "mixamo_catalog" => {
+                let mut command = vec!["mixamo-catalog".to_string()];
+                if args["characters"].as_bool() == Some(true) {
+                    command.push("--characters".into());
+                }
+                if let Some(query) = args["query"].as_str() {
+                    command.push("--query".into());
+                    command.push(query.to_string());
+                }
+                self.run_library(&command).map(Output::Json)
+            }
             "library_ingest" => {
                 let mut command = vec!["ingest".to_string()];
                 for path in args["paths"].as_array().ok_or("paths required")? {

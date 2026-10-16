@@ -1254,6 +1254,15 @@ fn additional_tools() -> Vec<Tool> {
             action: Action::Local,
         },
         Tool {
+            name: "mixamo_catalog",
+            description: "What Mixamo offers, to choose names for library_fetch (uses the user's Mixamo token; no editor needed): every character (characters: true; all share Mixamo's skeleton, so every library animation plays on them), or animations matching query with Mixamo's descriptions (several animations share a name; the description tells them apart).",
+            schema: object(json!({
+                "characters": { "type": "boolean" },
+                "query": { "type": "string", "description": "e.g. \"sword\", \"climb\", \"zombie walk\"" }
+            }), &[]),
+            action: Action::Local,
+        },
+        Tool {
             name: "library_ingest",
             description: "Add your own files to the library (no editor needed; Blender required): FBX, glTF/GLB, .blend or OBJ. Each animation becomes its own asset (measured, thumbnailed on a library character with the same rig), meshes become a character (rigged) or model asset.",
             schema: object(json!({

@@ -207,7 +207,8 @@ engine you launched; save first).
   character's animator, or imports characters/models into the scene. Clips work across
   rigs (Mixamo, Unreal-mannequin and Rigify names bind by humanoid role; both rigs in
   T-pose). `library_fetch {source: "mixamo", names}` downloads named Mixamo animations
-  (the user's token; files never committed), `library_ingest {paths}` adds files.
+  (the user's token; files never committed; `mixamo_catalog {query}` finds names, or
+  `{characters: true}` lists the 108 characters), `library_ingest {paths}` adds files.
   Prefer the library over generating or importing animations by hand.
 - Exports carry only what the game uses: `project_content` shows the files a build takes
   (from the main scene's references and scripts' string literals) and what it leaves
