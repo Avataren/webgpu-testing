@@ -8,7 +8,8 @@
 //! ambient occlusion stands down for it.
 //!
 //! Frame order: depth resolve (MSAA only) -> screen-space reflections (added to the scene)
-//! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> composite
+//! -> TAA / motion blur -> SSAO -> bloom -> depth of field -> auto exposure -> local
+//! exposure -> composite
 //! (HDR to display, into an intermediate target) -> final (anti-aliasing, sharpening,
 //! grain and dither, onto the surface).
 //!
@@ -23,6 +24,7 @@ mod bloom;
 mod dof;
 mod exposure;
 mod fsr;
+mod local_exposure;
 mod lut;
 mod path_tracing;
 mod pipelines;
@@ -40,9 +42,9 @@ pub use settings::{
     setting_overridden, AntiAliasing, BloomSettings, ChromaticAberrationSettings, ColorAdjustments,
     DepthOfFieldSettings, ExposureMode, ExposureSettings, FilmGrainSettings, FocusMode,
     GlobalIlluminationSettings, LegacyBloomSettings, LegacyColorGrading, LegacySsaoSettings,
-    LutSettings, MotionBlurSettings, PathTracingSettings, PostProcessEffects, PostProcessSettings,
-    ReflectionSettings, SharpenSettings, SsaoSettings, Tonemapper, Upscaler, UpscalingSettings,
-    VignetteSettings, TRACKBALL_NEUTRAL,
+    LocalExposureSettings, LutSettings, MotionBlurSettings, PathTracingSettings,
+    PostProcessEffects, PostProcessSettings, ReflectionSettings, SharpenSettings, SsaoSettings,
+    Tonemapper, Upscaler, UpscalingSettings, VignetteSettings, TRACKBALL_NEUTRAL,
 };
 
 use crate::renderer::shader_source::wgsl;
@@ -50,6 +52,7 @@ use bloom::{BloomBindGroupInputs, BloomStage};
 use dof::DofStage;
 use exposure::ExposureStage;
 use fsr::{FsrFrame, FsrUpscaler, ReactiveFrame};
+use local_exposure::LocalExposureStage;
 use lut::LutTexture;
 pub(crate) use path_tracing::CausticSources;
 use path_tracing::{PathTracingFrame, PathTracingInputs, PathTracingStage, TraceMode};
@@ -214,6 +217,7 @@ pub struct PostProcess {
     uniform_layout: wgpu::BindGroupLayout,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
+    local_exposure_stage: LocalExposureStage,
     dof_stage: DofStage,
     temporal_stage: TemporalStage,
     /// FSR 3.1 upscaling, built the first time it runs.
@@ -442,6 +446,7 @@ pub(crate) fn postprocess_shader_source() -> String {
         .with_module(wgsl!("postprocess/bloom_downsample.wgsl"))
         .with_module(wgsl!("postprocess/bloom_upsample.wgsl"))
         .with_module(wgsl!("postprocess/auto_exposure.wgsl"))
+        .with_module(wgsl!("postprocess/local_exposure.wgsl"))
         .with_module(wgsl!("postprocess/dof.wgsl"))
         .with_module(wgsl!("postprocess/temporal.wgsl"))
         .with_module(wgsl!("postprocess/composite.wgsl"))
@@ -458,6 +463,7 @@ pub(crate) struct RebuiltPostProcess {
     ssr_stage: SsrStage,
     bloom_stage: BloomStage,
     exposure_stage: ExposureStage,
+    local_exposure_stage: LocalExposureStage,
     dof_stage: DofStage,
     temporal_stage: TemporalStage,
     rt_reflection_stage: Option<RtReflectionStage>,
@@ -503,6 +509,7 @@ impl PostProcess {
             ssr_stage: SsrStage::new(device, layout, &shader),
             bloom_stage: BloomStage::new(device, layout, &shader),
             exposure_stage: ExposureStage::new(device, layout, &shader),
+            local_exposure_stage: LocalExposureStage::new(device, layout, &shader),
             dof_stage: DofStage::new(device, layout, &shader),
             temporal_stage: TemporalStage::new(device, layout, &shader),
             rt_reflection_stage: rebuild(self.rt_reflection_stage.is_some())
@@ -529,6 +536,7 @@ impl PostProcess {
         self.ssr_stage = rebuilt.ssr_stage;
         self.bloom_stage = rebuilt.bloom_stage;
         self.exposure_stage = rebuilt.exposure_stage;
+        self.local_exposure_stage = rebuilt.local_exposure_stage;
         self.dof_stage = rebuilt.dof_stage;
         self.temporal_stage = rebuilt.temporal_stage;
         if rebuilt.rt_reflection_stage.is_some() {
@@ -644,6 +652,8 @@ impl PostProcess {
         let ssr_stage = SsrStage::new(device, &uniform_layout, &postprocess_shader);
         let bloom_stage = BloomStage::new(device, &uniform_layout, &postprocess_shader);
         let exposure_stage = ExposureStage::new(device, &uniform_layout, &postprocess_shader);
+        let local_exposure_stage =
+            LocalExposureStage::new(device, &uniform_layout, &postprocess_shader);
         let dof_stage = DofStage::new(device, &uniform_layout, &postprocess_shader);
         let temporal_stage = TemporalStage::new(device, &uniform_layout, &postprocess_shader);
         let composite_pipeline =
@@ -690,6 +700,7 @@ impl PostProcess {
             uniform_layout,
             bloom_stage,
             exposure_stage,
+            local_exposure_stage,
             dof_stage,
             temporal_stage,
             fsr: None,
@@ -1415,6 +1426,15 @@ impl PostProcess {
                 ),
             );
         }
+        if self.settings.local_exposure_active() {
+            timer.mark(encoder, "post_process");
+            self.local_exposure_stage.render(
+                encoder,
+                &self.uniform_bind_group,
+                self.viewport_resolution,
+            );
+            timer.mark(encoder, "local_exposure");
+        }
 
         let composite_bind_group = self
             .composite_bind_group
@@ -1713,6 +1733,7 @@ impl PostProcess {
         }
         self.bloom_stage.invalidate();
         self.exposure_stage.invalidate();
+        self.local_exposure_stage.invalidate();
         self.dof_stage.invalidate();
         self.temporal_stage.invalidate();
         self.upscaled.invalidate_bind_group();
@@ -1843,6 +1864,11 @@ impl PostProcess {
         );
 
         self.exposure_stage.ensure_bind_group(device, post_input);
+        self.local_exposure_stage.ensure_bind_groups(
+            device,
+            post_input,
+            self.exposure_stage.state_buffer(),
+        );
         self.dof_stage.ensure_bind_groups(
             device,
             post_input,
@@ -1882,6 +1908,10 @@ impl PostProcess {
                 wgpu::BindGroupEntry {
                     binding: 96,
                     resource: wgpu::BindingResource::TextureView(&self.dof_blur.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 97,
+                    resource: wgpu::BindingResource::TextureView(self.local_exposure_stage.view()),
                 },
             ],
         }));
@@ -2210,6 +2240,8 @@ struct PostProcessUniform {
     reflection: [f32; 4],
     upscale: [f32; 4],
     upscale_source: [f32; 4],
+    local_exposure: [f32; 4],
+    local_exposure_grid: [f32; 4],
 }
 
 fn flag(on: bool) -> f32 {
@@ -2378,6 +2410,13 @@ impl PostProcessUniform {
                 flag(settings.taa_active() || settings.upscaling.method == Upscaler::Fsr),
                 inputs.scene_resolution.y / inputs.output_resolution.y.max(1.0),
             ],
+            local_exposure: settings
+                .local_exposure
+                .shader_params(settings.local_exposure_active()),
+            local_exposure_grid: {
+                let (cell, x, y) = local_exposure::grid_layout(resolution);
+                [cell, x as f32, y as f32, 0.0]
+            },
             output: [
                 flag(inputs.encode_srgb),
                 1.0,
@@ -2441,7 +2480,7 @@ mod tests {
     #[test]
     fn uniform_matches_the_shader_layout() {
         // 6 matrices, camera position, 8 vec2 pairs and 23 vec4 blocks.
-        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 848);
+        assert_eq!(std::mem::size_of::<PostProcessUniform>(), 880);
         assert_eq!(std::mem::align_of::<PostProcessUniform>(), 16);
     }
 

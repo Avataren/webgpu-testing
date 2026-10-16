@@ -659,7 +659,6 @@ impl Scene {
             .ensure_gizmo_resources(renderer, &mut self.assets)
     }
 
-
     pub fn world(&self) -> &World {
         self.main_world()
     }
@@ -1725,7 +1724,10 @@ mod tests {
         let err = scene
             .eval_lua("set_environment({ ambient = 1 })", None)
             .unwrap_err();
-        assert!(err.to_string().contains("unknown environment setting"), "{err}");
+        assert!(
+            err.to_string().contains("unknown environment setting"),
+            "{err}"
+        );
     }
 
     #[test]

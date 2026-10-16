@@ -25,6 +25,7 @@ use std::collections::BTreeSet;
 #[serde(default)]
 pub struct PostProcessSettings {
     pub exposure: ExposureSettings,
+    pub local_exposure: LocalExposureSettings,
     pub tonemapping: Tonemapper,
     pub color: ColorAdjustments,
     pub lut: LutSettings,
@@ -59,6 +60,7 @@ impl PostProcessSettings {
         }
         Self {
             exposure: self.exposure.blend(&other.exposure, t),
+            local_exposure: self.local_exposure.blend(&other.local_exposure, t),
             tonemapping: pick(self.tonemapping, other.tonemapping, t),
             color: self.color.blend(&other.color, t),
             lut: self.lut.blend(&other.lut, t),
@@ -106,6 +108,10 @@ impl PostProcessSettings {
     /// Clamp every value into the range the shaders expect.
     pub fn sanitized(mut self) -> Self {
         self.exposure = self.exposure.sanitized();
+        let local = &mut self.local_exposure;
+        local.shadows = finite_or(local.shadows, 0.0).clamp(0.0, 1.0);
+        local.highlights = finite_or(local.highlights, 0.0).clamp(0.0, 1.0);
+        local.detail = finite_or(local.detail, 1.0).clamp(0.0, 2.0);
         self.color = self.color.sanitized();
         let bloom = &mut self.bloom;
         bloom.intensity = finite_or(bloom.intensity, 0.0).max(0.0);
@@ -203,6 +209,12 @@ impl PostProcessSettings {
     pub fn auto_exposure_active(&self) -> bool {
         self.exposure.mode == ExposureMode::Auto
     }
+
+    /// Whether the local exposure passes run this frame.
+    pub fn local_exposure_active(&self) -> bool {
+        let local = &self.local_exposure;
+        local.enabled && (local.shadows > 0.0 || local.highlights > 0.0 || local.detail != 1.0)
+    }
 }
 
 /// How scene brightness is mapped before tonemapping.
@@ -281,6 +293,64 @@ impl ExposureSettings {
     /// The fixed exposure multiplier for manual mode.
     pub fn manual_multiplier(&self) -> f32 {
         2f32.powf(self.compensation)
+    }
+}
+
+/// Exposure that varies across the frame, the way an eye adapts to where it looks: each
+/// region's brightness (from a bilateral grid, so regions end at edges) moves toward
+/// middle grey, and the pixels keep their detail around it. Opens up dark corners of a
+/// sunlit room without flattening the sunlit parts, which one exposure for the whole
+/// frame can't do.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalExposureSettings {
+    pub enabled: bool,
+    /// How far regions darker than middle grey move toward it, 0-1: 0.5 halves their
+    /// distance in stops (a region 6 stops under comes up 3), 1 brings them all the way.
+    pub shadows: f32,
+    /// How far regions brighter than middle grey move toward it, 0-1.
+    pub highlights: f32,
+    /// Contrast of the detail within each region, 0-2: 1 keeps it, more sharpens it.
+    pub detail: f32,
+}
+
+impl Default for LocalExposureSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shadows: 0.5,
+            highlights: 0.25,
+            detail: 1.0,
+        }
+    }
+}
+
+impl LocalExposureSettings {
+    fn blend(&self, other: &Self, t: f32) -> Self {
+        let (from, to, enabled) = fade_pair(self, other, self.enabled, other.enabled, |s| {
+            LocalExposureSettings {
+                shadows: 0.0,
+                highlights: 0.0,
+                detail: 1.0,
+                ..*s
+            }
+        });
+        Self {
+            enabled,
+            shadows: lerp(from.shadows, to.shadows, t),
+            highlights: lerp(from.highlights, to.highlights, t),
+            detail: lerp(from.detail, to.detail, t),
+        }
+    }
+
+    /// The composite pass's parameters: on, the share of the shadows' and highlights'
+    /// distance from middle grey that stays, and detail.
+    pub(super) fn shader_params(&self, active: bool) -> [f32; 4] {
+        if active {
+            [1.0, 1.0 - self.shadows, 1.0 - self.highlights, self.detail]
+        } else {
+            [0.0, 1.0, 1.0, 1.0]
+        }
     }
 }
 
@@ -1661,5 +1731,41 @@ mod tests {
             loaded.global_illumination,
             GlobalIlluminationSettings::default()
         );
+    }
+    #[test]
+    fn local_exposure_fades_in_and_is_clamped() {
+        let off = PostProcessSettings::default();
+        assert!(!off.local_exposure_active());
+        assert_eq!(
+            off.local_exposure.shader_params(false),
+            [0.0, 1.0, 1.0, 1.0]
+        );
+
+        let mut on = off.clone();
+        on.local_exposure.enabled = true;
+        on.local_exposure.shadows = 0.6;
+        on.local_exposure.highlights = 0.2;
+        assert!(on.local_exposure_active());
+        let params = on.local_exposure.shader_params(true);
+        assert!((params[1] - 0.4).abs() < 1e-6 && (params[2] - 0.8).abs() < 1e-6);
+
+        // Fades through its amounts rather than switching.
+        let halfway = off.blend(&on, 0.5);
+        assert!(halfway.local_exposure.enabled);
+        assert!((halfway.local_exposure.shadows - 0.3).abs() < 1e-6);
+        assert!((halfway.local_exposure.highlights - 0.1).abs() < 1e-6);
+        assert_eq!(halfway.local_exposure.detail, 1.0);
+
+        on.local_exposure.shadows = 3.0;
+        on.local_exposure.highlights = f32::NAN;
+        on.local_exposure.detail = -1.0;
+        let fixed = on.sanitized().local_exposure;
+        assert_eq!(
+            (fixed.shadows, fixed.highlights, fixed.detail),
+            (1.0, 0.0, 0.0)
+        );
+        // Volumes saved before it existed load with it off.
+        let loaded: PostProcessSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(loaded.local_exposure, LocalExposureSettings::default());
     }
 }

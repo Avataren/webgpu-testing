@@ -94,6 +94,15 @@ engine you launched; save first).
   for an area with its own look, spawn a `post_process_volume` with a box or sphere
   shape, higher `priority` and a `blend_distance`. `postprocess_get` shows the blended
   result at the camera and each volume's influence.
+- Local exposure (a volume's `local_exposure` group: `enabled`, `shadows` 0.5, `highlights`
+  0.25, `detail` 1) varies exposure across the frame like an eye adapting to where it
+  looks: a bilateral grid of the image's brightness gives each region's brightness (regions
+  end at edges, so no halos), which moves toward middle grey by `shadows` or `highlights`
+  while pixels keep their detail. Use it when one exposure can't show both a sunlit area
+  and the dark corners beside it (an interior lit through windows): auto exposure's
+  `min_ev` only helps when the whole view is dark, and lifting shadows in the grading
+  washes everything out. `engine_stats` `renderer.gpu` shows `local_exposure` (about
+  0.015 ms at 1045x687).
 - The player's graphics settings (the engine's settings page: Escape in games, Window >
   Graphics settings in the editor) decide anti-aliasing, upscaling and the ray-traced
   effects over any volume: `graphics_get` / `graphics_set {anti_aliasing, render_scale,

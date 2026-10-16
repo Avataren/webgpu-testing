@@ -15,6 +15,16 @@ struct ExposureState {
     _padding : vec2<f32>,
 };
 
+// The exposure the composite applies: compensation and post exposure, and with auto
+// exposure the adapted average luminance mapped to middle grey.
+fn exposure_from_state(state : ExposureState) -> f32 {
+    var exposure = post_uniform.exposure_params.x * post_uniform.exposure_params.y;
+    if post_uniform.effects.w > 0.5 && state.initialized > 0.5 {
+        exposure = exposure * 0.18 / exp2(state.average_ev);
+    }
+    return exposure;
+}
+
 @group(1) @binding(110)
 var histogram_scene : texture_2d<f32>;
 @group(1) @binding(111)

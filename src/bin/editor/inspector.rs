@@ -2931,6 +2931,41 @@ fn show_post_process_volume_section(
         post_group(
             ui,
             entity,
+            "Local Exposure",
+            "local_exposure",
+            Some(&mut settings.local_exposure.enabled),
+            &mut rows,
+            |ui, rows| {
+                rows.slider(
+                    ui,
+                    "local_exposure.shadows",
+                    "Shadows",
+                    &mut settings.local_exposure.shadows,
+                    0.0..=1.0,
+                    0.01,
+                );
+                rows.slider(
+                    ui,
+                    "local_exposure.highlights",
+                    "Highlights",
+                    &mut settings.local_exposure.highlights,
+                    0.0..=1.0,
+                    0.01,
+                );
+                rows.slider(
+                    ui,
+                    "local_exposure.detail",
+                    "Detail",
+                    &mut settings.local_exposure.detail,
+                    0.0..=2.0,
+                    0.01,
+                );
+            },
+        );
+
+        post_group(
+            ui,
+            entity,
             "Tonemapping",
             "tonemapping",
             None,

@@ -749,7 +749,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "postprocess_get",
-            description: "Post-processing in effect at the view camera (exposure, tonemapping, color grading, bloom, SSAO, vignette, chromatic aberration, film grain, sharpening, anti-aliasing) and the post-process volumes it is blended from, with each volume's influence at the camera. The scene renders in HDR; these turn it into the displayed image.",
+            description: "Post-processing in effect at the view camera (exposure, local exposure, tonemapping, color grading, bloom, SSAO, vignette, chromatic aberration, film grain, sharpening, anti-aliasing) and the post-process volumes it is blended from, with each volume's influence at the camera. The scene renders in HDR; these turn it into the displayed image.",
             schema: empty(),
             action: Action::Engine("postprocess.get"),
         },
@@ -773,6 +773,12 @@ pub fn tools() -> Vec<Tool> {
                     "speed_up": { "type": "number", "description": "EV/s when the scene gets brighter" },
                     "speed_down": { "type": "number", "description": "EV/s when it gets darker" },
                     "low_percent": { "type": "number" }, "high_percent": { "type": "number" }
+                }},
+                "local_exposure": { "type": "object", "description": "Exposure that varies across the frame like an eye adapting to where it looks: each region's brightness (from a bilateral grid, so regions end at edges) moves toward middle grey and pixels keep their detail around it. Opens up dark corners of a sunlit interior without flattening the sunlit parts. Cost: engine_stats renderer.gpu local_exposure", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "shadows": { "type": "number", "description": "0-1 (default 0.5): how far regions darker than middle grey move toward it; 0.5 halves their distance in stops (6 under comes up 3)" },
+                    "highlights": { "type": "number", "description": "0-1 (default 0.25): how far regions brighter than middle grey move toward it" },
+                    "detail": { "type": "number", "description": "0-2 (default 1): contrast of the detail within each region; 1 keeps it" }
                 }},
                 "tonemapping": { "type": "string", "enum": ["rolloff", "neutral", "aces", "agx", "reinhard", "none"], "description": "rolloff (default) keeps colors below 0.76 exactly and softly compresses highlights; neutral is Khronos PBR Neutral (also darkens darks slightly); aces is contrasty and filmic; agx desaturates highlights naturally; none clips" },
                 "color": { "type": "object", "properties": {

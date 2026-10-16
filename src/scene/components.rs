@@ -350,10 +350,12 @@ mod tests {
         let environment = component.to_environment();
         assert!(environment.is_hdr_enabled());
         assert!(!environment.is_hdr_background_visible());
-        assert!(!EnvironmentComponent::from_environment(&environment)
-            .hdr
-            .unwrap()
-            .background);
+        assert!(
+            !EnvironmentComponent::from_environment(&environment)
+                .hdr
+                .unwrap()
+                .background
+        );
         let old: EnvironmentHdrSettings =
             serde_json::from_str(r#"{"enabled": true, "intensity": 1.0, "path": "a.hdr"}"#)
                 .unwrap();

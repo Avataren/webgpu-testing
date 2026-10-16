@@ -332,8 +332,8 @@ look_at(cam, 0, 0, 0)
 - `set_postprocess(volume_entity, settings)` - Change a specific post-process volume entity
   (a dark cave, underwater), e.g. one found with `find_entity_by_name`.
 
-`settings` takes the groups of the `postprocess_set` tool: `exposure`, `tonemapping`,
-`color`, `bloom`, `ssao`, `ssr`, `depth_of_field`, `motion_blur`, `vignette`,
+`settings` takes the groups of the `postprocess_set` tool: `exposure`, `local_exposure`,
+`tonemapping`, `color`, `bloom`, `ssao`, `ssr`, `depth_of_field`, `motion_blur`, `vignette`,
 `chromatic_aberration`, `film_grain`, `sharpen` and `anti_aliasing`; `postprocess_get`
 lists every field. A `volume = { priority = .., weight = .., enabled = .. }` field edits
 the volume itself. An unknown setting name is an error. Like other changes, it applies

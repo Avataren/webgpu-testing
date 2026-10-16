@@ -90,7 +90,9 @@ impl ScreenScale {
         match self.camera.ortho_height {
             Some(view_height) => view_height / height,
             None => {
-                let depth = (position - self.camera.position).dot(self.forward).max(1e-3);
+                let depth = (position - self.camera.position)
+                    .dot(self.forward)
+                    .max(1e-3);
                 let half_fov = (self.camera.fov_y * 0.5).clamp(1e-4, 1.5);
                 2.0 * depth * half_fov.tan() / height
             }
@@ -175,7 +177,10 @@ impl GizmoLayout {
             .map(|i| {
                 let angle = i as f32 / RING_SEGMENTS as f32 * std::f32::consts::TAU;
                 let offset = (u * angle.cos() + v * angle.sin()) * radius;
-                (self.origin + offset, offset.dot(self.to_eye) >= -1e-4 * radius)
+                (
+                    self.origin + offset,
+                    offset.dot(self.to_eye) >= -1e-4 * radius,
+                )
             })
             .collect()
     }
@@ -332,11 +337,7 @@ fn build_translate(
     );
 }
 
-fn build_rotate(
-    layout: &GizmoLayout,
-    hovered: Option<TransformGizmoHandle>,
-    canvas: &mut Canvas,
-) {
+fn build_rotate(layout: &GizmoLayout, hovered: Option<TransformGizmoHandle>, canvas: &mut Canvas) {
     // A faint disc behind the rings reads as the sphere they lie on.
     canvas.push(GizmoShape::disc(
         layout.origin,
@@ -381,11 +382,7 @@ fn build_rotate(
     }
 }
 
-fn build_scale(
-    layout: &GizmoLayout,
-    hovered: Option<TransformGizmoHandle>,
-    canvas: &mut Canvas,
-) {
+fn build_scale(layout: &GizmoLayout, hovered: Option<TransformGizmoHandle>, canvas: &mut Canvas) {
     for axis in axes_back_to_front(layout) {
         let visibility = layout.axis_visibility(axis);
         if visibility <= 0.0 {
@@ -522,8 +519,7 @@ pub(crate) fn hit_test(
                 }
             }
             for pair in layout.screen_ring_points().windows(2) {
-                if let Some(distance) = distance_to_segment(ray_origin, ray_dir, pair[0], pair[1])
-                {
+                if let Some(distance) = distance_to_segment(ray_origin, ray_dir, pair[0], pair[1]) {
                     consider(
                         TransformGizmoHandle::RotateScreen,
                         distance / unit,
@@ -582,7 +578,12 @@ fn handle_color(color: GizmoColor, hovered: bool) -> GizmoColor {
         return color;
     }
     let lighten = |c: f32| c + (1.0 - c) * HOVER_LIGHTEN;
-    [lighten(color[0]), lighten(color[1]), lighten(color[2]), color[3]]
+    [
+        lighten(color[0]),
+        lighten(color[1]),
+        lighten(color[2]),
+        color[3],
+    ]
 }
 
 fn axis_base(axis: TransformGizmoAxis) -> Vec3 {
@@ -613,7 +614,11 @@ fn third_axis(a: TransformGizmoAxis, b: TransformGizmoAxis) -> TransformGizmoAxi
 
 fn orthonormal_basis(normal: Vec3) -> (Vec3, Vec3) {
     let normal = safe_normalize(normal, Vec3::Z);
-    let helper = if normal.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+    let helper = if normal.y.abs() < 0.9 {
+        Vec3::Y
+    } else {
+        Vec3::X
+    };
     let u = normal.cross(helper).normalize();
     let v = normal.cross(u);
     (u, v)
@@ -719,13 +724,22 @@ mod tests {
             Some(TransformGizmoHandle::TranslateCenter)
         );
         assert_eq!(
-            hit(TransformGizmoMode::Translate, px(plane_middle, plane_middle)),
+            hit(
+                TransformGizmoMode::Translate,
+                px(plane_middle, plane_middle)
+            ),
             Some(TransformGizmoHandle::TranslatePlane(
                 TransformGizmoAxis::X,
                 TransformGizmoAxis::Y
             ))
         );
-        assert_eq!(hit(TransformGizmoMode::Translate, px(AXIS_LENGTH_PX + 30.0, 0.0)), None);
+        assert_eq!(
+            hit(
+                TransformGizmoMode::Translate,
+                px(AXIS_LENGTH_PX + 30.0, 0.0)
+            ),
+            None
+        );
         // The Z axis points at the camera, so it is hidden and not pickable.
         assert_ne!(
             hit(TransformGizmoMode::Translate, px(0.0, 0.0)),

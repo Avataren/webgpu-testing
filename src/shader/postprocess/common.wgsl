@@ -1,6 +1,6 @@
 // Shared by every post-processing pass. Mirrors `PostProcessUniform` in
 // src/renderer/postprocess/mod.rs: matrices, then vec2 pairs, then vec4 blocks, all
-// 16-byte aligned (848 bytes).
+// 16-byte aligned (880 bytes).
 struct PostUniform {
     view_proj : mat4x4<f32>,
     view_proj_inv : mat4x4<f32>,
@@ -74,6 +74,11 @@ struct PostUniform {
     // upscaling: the scene region's size in pixels, whether frames accumulate (TAA on),
     // render scale (scene pixels per output pixel, 1 when not upscaling)
     upscale_source : vec4<f32>,
+    // local exposure: on (1) or off (0), how much of the shadows' and of the highlights'
+    // distance from middle grey stays (1 = all of it), detail (1 = unchanged)
+    local_exposure : vec4<f32>,
+    // local exposure grid: cell size in pixels, cells in use along x and y, unused
+    local_exposure_grid : vec4<f32>,
 };
 
 @group(0) @binding(0)

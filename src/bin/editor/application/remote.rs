@@ -639,7 +639,11 @@ impl EditorApplication {
             Some("translate") => Some(TransformGizmoMode::Translate),
             Some("rotate") => Some(TransformGizmoMode::Rotate),
             Some("scale") => Some(TransformGizmoMode::Scale),
-            Some(other) => return Err(format!("unknown gizmo \"{other}\" (translate, rotate or scale)")),
+            Some(other) => {
+                return Err(format!(
+                    "unknown gizmo \"{other}\" (translate, rotate or scale)"
+                ))
+            }
         };
         let space = match params.get("gizmo_space").and_then(Value::as_str) {
             None => None,

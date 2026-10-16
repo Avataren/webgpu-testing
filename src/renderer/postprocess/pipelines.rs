@@ -8,7 +8,7 @@ pub struct DepthResolvePipeline {
     pub pipeline: wgpu::RenderPipeline,
 }
 
-/// HDR -> display: AO, bloom, exposure, colour correction and tonemapping.
+/// HDR -> display: AO, bloom, exposure, local exposure, colour correction and tonemapping.
 pub struct CompositePipeline {
     pub layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
@@ -110,6 +110,16 @@ pub fn build_composite(
             texture_entry(92),
             sampler_entry(93),
             texture_entry(96),
+            wgpu::BindGroupLayoutEntry {
+                binding: 97,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D3,
+                    multisampled: false,
+                },
+                count: None,
+            },
             wgpu::BindGroupLayoutEntry {
                 binding: 95,
                 visibility: wgpu::ShaderStages::FRAGMENT,

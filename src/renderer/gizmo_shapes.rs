@@ -76,7 +76,11 @@ impl GizmoShape {
 
     /// A line `width` pixels wide with round caps.
     pub fn line(a: Vec3, b: Vec3, width: f32, color: GizmoColor) -> Self {
-        Self::new([a, b, Vec3::ZERO, Vec3::ZERO], [KIND_LINE, width, 0.0, 0.0], color)
+        Self::new(
+            [a, b, Vec3::ZERO, Vec3::ZERO],
+            [KIND_LINE, width, 0.0, 0.0],
+            color,
+        )
     }
 
     /// A filled disc of `radius` pixels.
@@ -109,7 +113,13 @@ impl GizmoShape {
 
     /// A filled triangle pointing from `from` towards `tip`, its point on `tip`:
     /// `length` pixels long and `half_width` pixels to each side.
-    pub fn arrow_head(from: Vec3, tip: Vec3, length: f32, half_width: f32, color: GizmoColor) -> Self {
+    pub fn arrow_head(
+        from: Vec3,
+        tip: Vec3,
+        length: f32,
+        half_width: f32,
+        color: GizmoColor,
+    ) -> Self {
         Self::new(
             [from, tip, Vec3::ZERO, Vec3::ZERO],
             [KIND_ARROW, length, half_width, 0.0],

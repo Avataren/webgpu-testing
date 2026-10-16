@@ -69,8 +69,7 @@ pub(crate) fn register_postprocess_api(lua: &Lua) -> LuaResult<()> {
                 object @ Value::Object(_) => object,
                 _ => {
                     return Err(mlua::Error::RuntimeError(
-                        "set_environment expects a table, e.g. { ambient_intensity = 0.05 }"
-                            .into(),
+                        "set_environment expects a table, e.g. { ambient_intensity = 0.05 }".into(),
                     ))
                 }
             };

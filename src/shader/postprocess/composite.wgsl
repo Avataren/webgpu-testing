@@ -1,6 +1,6 @@
-// HDR composite: scene * AO + bloom, exposure, vignette, colour correction and
-// tonemapping. Writes display-referred linear colour (0-1) to the intermediate target the
-// final pass anti-aliases, sharpens and outputs.
+// HDR composite: scene * AO + bloom, exposure, local exposure, vignette, colour
+// correction and tonemapping. Writes display-referred linear colour (0-1) to the
+// intermediate target the final pass anti-aliases, sharpens and outputs.
 
 @group(1) @binding(90)
 var composite_scene : texture_2d<f32>;
@@ -16,6 +16,8 @@ var<storage, read> composite_exposure : ExposureState;
 var composite_lut : texture_3d<f32>;
 @group(1) @binding(96)
 var composite_dof : texture_2d<f32>;
+@group(1) @binding(97)
+var composite_local_exposure : texture_3d<f32>;
 
 fn sample_hdr(scene_uv : vec2<f32>) -> vec3<f32> {
     let uv = clamp(scene_uv, vec2<f32>(0.0), vec2<f32>(1.0));
@@ -56,12 +58,35 @@ fn sample_with_aberration(viewport_uv : vec2<f32>) -> vec3<f32> {
 }
 
 fn exposure_multiplier() -> f32 {
-    var exposure = post_uniform.exposure_params.x * post_uniform.exposure_params.y;
-    if post_uniform.effects.w > 0.5 && composite_exposure.initialized > 0.5 {
-        // Map the adapted average luminance to middle grey.
-        exposure = exposure * 0.18 / exp2(composite_exposure.average_ev);
+    return exposure_from_state(composite_exposure);
+}
+
+// Local exposure (see local_exposure.wgsl): the grid gives the brightness of the region
+// this pixel belongs to; that moves toward middle grey by the shadow or highlight amount,
+// and the pixel keeps its detail (its own brightness relative to the region's), scaled.
+fn apply_local_exposure(color : vec3<f32>, viewport_uv : vec2<f32>) -> vec3<f32> {
+    let params = post_uniform.local_exposure;
+    let luminance = luminance_rec709(color);
+    if params.x < 0.5 || !(luminance > 0.0) {
+        return color;
     }
-    return exposure;
+    let l = log2(luminance);
+    let grid = post_uniform.local_exposure_grid;
+    let cells = clamp(
+        viewport_uv * post_uniform.resolution / grid.x,
+        vec2<f32>(0.5),
+        max(grid.yz - 0.5, vec2<f32>(0.5)),
+    );
+    let depth = clamp(local_exposure_depth(l), 0.0, 1.0);
+    let uvw = vec3<f32>(cells / f32(LOCAL_EXPOSURE_MAX_CELLS), depth);
+    let sums = textureSampleLevel(composite_local_exposure, composite_sampler, uvw, 0.0).rg;
+    // Where the grid saw no pixels this bright nearby, the pixel is its own region.
+    let region = (sums.x + l * 1e-3) / (sums.y + 1e-3);
+    let middle_grey = log2(0.18);
+    let from_grey = region - middle_grey;
+    let kept = select(params.y, params.z, from_grey > 0.0);
+    let target_log = middle_grey + from_grey * kept + (l - region) * params.w;
+    return color * exp2(clamp(target_log - l, -8.0, 8.0));
 }
 
 fn apply_vignette(color : vec3<f32>, viewport_uv : vec2<f32>) -> vec3<f32> {
@@ -302,6 +327,7 @@ fn fs_composite(in : VertexOutput) -> @location(0) vec4<f32> {
     let viewport_uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
     var color = sample_with_aberration(viewport_uv);
     color = color * exposure_multiplier();
+    color = apply_local_exposure(color, viewport_uv);
     color = apply_vignette(color, viewport_uv);
     color = grade_hdr(color);
     color = tonemap(color);
