@@ -80,6 +80,8 @@ struct RtSurface {
     // log2 of the triangle's uv extent per meter (half the log of the area ratio): with
     // the ray cone's width it picks the texture level.
     uv_density : f32,
+    // Whether the ray hit the side the normal points away from (the normal is flipped).
+    back_facing : bool,
 };
 
 // The hit triangle's interpolated attributes, with the normal in world space and facing
@@ -102,7 +104,8 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     } else {
         normal = normal * inverseSqrt(length_sq);
     }
-    if dot(normal, direction) > 0.0 {
+    let back_facing = dot(normal, direction) > 0.0;
+    if back_facing {
         normal = -normal;
     }
 
@@ -124,6 +127,7 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     out.material_index = instance.material_index;
     out.instance_flags = instance.flags;
     out.uv_density = 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12));
+    out.back_facing = back_facing;
     return out;
 }
 
@@ -229,6 +233,9 @@ struct RtMaterial {
     // Index of refraction, for transmissive surfaces.
     ior : f32,
     unlit : bool,
+    // The ray hit the back of a single-sided surface (inside a closed mesh, or behind a
+    // wall); double-sided surfaces have no back.
+    back_facing : bool,
 };
 
 // A hit surface's material data, from the particle materials for a particle system.
@@ -267,6 +274,7 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
             * material.emissive_strength;
     }
     out.unlit = (flags & FLAG_UNLIT) != 0u;
+    out.back_facing = surface.back_facing && (flags & FLAG_DOUBLE_SIDED) == 0u;
     out.transmission = clamp(material.transmission, 0.0, 1.0);
     out.ior = max(material.ior, 1.0);
     out.metallic = material.metallic_factor;

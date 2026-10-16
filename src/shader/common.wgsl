@@ -295,6 +295,13 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
         environment_light = calculate_environment_lighting(
             N, V, lit_color, metallic, roughness, occlusion
         );
+        // Inside a light probe grid (light_probes.wgsl) the probes bring it instead: the
+        // sky and flat ambient only where they get in, plus the light bounced off the
+        // scene.
+        let probed = light_probe_environment_lighting(
+            in.world_pos, N, V, lit_color, metallic, roughness, occlusion
+        );
+        environment_light = mix(environment_light, probed.rgb, probed.w);
     }
     
     // Conditionally use lighting based on material flags

@@ -404,6 +404,7 @@ impl AppCore {
             None => post_settings,
         };
         renderer.set_postprocess_settings(&post_settings);
+        renderer.set_light_probe_grid(crate::scene::light_probe_grid(scene.main_world()));
         renderer.set_camera(&camera, aspect);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.

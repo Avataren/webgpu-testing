@@ -149,14 +149,27 @@ fn rt_light(material : RtMaterial, position : vec3<f32>, direction : vec3<f32>) 
     let direct = rt_direct_lighting(
         position, material.normal, v, lit_color, material.metallic, material.roughness
     );
+    // Inside a light probe grid the probes give the environment's light: smooth, and also
+    // for surfaces the screen does not show (which rt_gi_light leaves dark).
     var ambient : vec3<f32>;
     if environment_diffuse_traced() {
-        ambient = rt_gi_light(position, material.normal) * lit_color * (1.0 - material.metallic);
+        let probes = light_probe_irradiance_at(position, material.normal, v);
+        let diffuse_color = lit_color * (1.0 - material.metallic);
+        var light = probes.rgb;
+        if probes.w < 1.0 {
+            light = mix(rt_gi_light(position, material.normal), probes.rgb, probes.w);
+        }
+        ambient = light * diffuse_color;
     } else {
         ambient = calculate_environment_lighting(
             material.normal, v, lit_color, material.metallic, material.roughness,
             material.occlusion
         );
+        let probed = light_probe_environment_lighting(
+            position, material.normal, v, lit_color, material.metallic, material.roughness,
+            material.occlusion
+        );
+        ambient = mix(ambient, probed.rgb, probed.w);
     }
     return ambient + direct + material.emissive;
 }

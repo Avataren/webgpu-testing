@@ -16,6 +16,7 @@ mod importer;
 pub mod input_state;
 pub(crate) mod internal;
 pub mod library;
+mod light_probes;
 pub mod loader;
 pub mod picking;
 mod post_process;
@@ -49,6 +50,7 @@ pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use input_state::{ButtonState, InputState};
 pub use library::SceneLibrary;
+pub use light_probes::light_probe_grid;
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub use post_process::{blend_post_process_volumes, volume_influence};
@@ -69,11 +71,11 @@ pub use workspace::{
 pub use components::{
     BoidsBehaviorConfig, CameraComponent, CanCastShadow, Children, DirectionalLight,
     EditorEntityId, EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource,
-    MaterialComponent, MeshBounds, MeshComponent, Name, OptimizedBoidsBehaviorConfig,
-    OrbitAnimation, Parent, ParticleBehaviorConfig, ParticleBehaviorPreset, ParticleColorGradient,
-    ParticleColorKeyframe, ParticleEmissionShape, ParticleEmitterComponent, ParticleFloatRange,
-    ParticleRenderBlendMode, ParticleSizeCurve, ParticleSizeKeyframe, ParticleSystemComponent,
-    ParticleVec3Range, PhysicsBehaviorConfig, PointLight, PostProcessVolume,
-    PrimitiveMeshComponent, RotateAnimation, SelectedInEditor, SpotLight, StarfieldBehaviorConfig,
-    TransformComponent, Visible, VolumeShape, WorldTransform,
+    LightProbeVolume, MaterialComponent, MeshBounds, MeshComponent, Name,
+    OptimizedBoidsBehaviorConfig, OrbitAnimation, Parent, ParticleBehaviorConfig,
+    ParticleBehaviorPreset, ParticleColorGradient, ParticleColorKeyframe, ParticleEmissionShape,
+    ParticleEmitterComponent, ParticleFloatRange, ParticleRenderBlendMode, ParticleSizeCurve,
+    ParticleSizeKeyframe, ParticleSystemComponent, ParticleVec3Range, PhysicsBehaviorConfig,
+    PointLight, PostProcessVolume, PrimitiveMeshComponent, RotateAnimation, SelectedInEditor,
+    SpotLight, StarfieldBehaviorConfig, TransformComponent, Visible, VolumeShape, WorldTransform,
 };

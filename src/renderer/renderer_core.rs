@@ -139,6 +139,8 @@ struct FramePlan {
     /// transparent surfaces, shader materials, custom shadow passes or lit particles.
     /// Maps the ray-traced mask replaces can then be skipped.
     only_main_pass_reads_shadow_maps: bool,
+    /// The light probe grid traces its update.
+    light_probes: bool,
     /// The acceleration structures for this frame are built.
     ray_traced: bool,
     /// Ray-traced reflections and refraction see GPU particle systems.
@@ -147,7 +149,7 @@ struct FramePlan {
 
 impl FramePlan {
     fn needs_acceleration_structures(&self) -> bool {
-        self.post_ray_tracing || self.rt_shadows || self.refraction
+        self.post_ray_tracing || self.rt_shadows || self.refraction || self.light_probes
     }
 
     fn trace_rt_shadows(&self) -> bool {
@@ -186,6 +188,7 @@ pub struct Renderer {
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
+    light_probes: crate::renderer::light_probes::LightProbes,
     environment: EnvironmentResources,
     shadows: ShadowResources,
     postprocess: PostProcess,
@@ -258,8 +261,14 @@ impl Renderer {
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
         let shadows =
             ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
-        let lights_buffer =
-            LightsBuffer::new(&context.device, &context.queue, &shadows, &environment);
+        let mut light_probes = crate::renderer::light_probes::LightProbes::new(&context.device);
+        let lights_buffer = LightsBuffer::new(
+            &context.device,
+            &context.queue,
+            &shadows,
+            &environment,
+            &light_probes,
+        );
         let (pipeline, texture_binder) = RenderPipeline::new(
             &context,
             &camera_buffer,
@@ -340,6 +349,14 @@ impl Renderer {
             ) {
                 log::warn!("Path tracing unavailable: {error}");
             }
+            if let Err(error) = light_probes.enable_ray_tracing(
+                &context.device,
+                &lights_buffer.bind_layout,
+                scene.layout(),
+                textures_layout,
+            ) {
+                log::warn!("Light probes cannot update by ray tracing: {error}");
+            }
         }
         let rt_shadows = ray_tracing.as_ref().and_then(|scene| {
             crate::renderer::raytracing::RtShadowStage::new(
@@ -362,6 +379,7 @@ impl Renderer {
             objects_buffer,
             camera_buffer,
             lights_buffer,
+            light_probes,
             environment,
             shadows,
             postprocess,
@@ -596,6 +614,7 @@ impl Renderer {
             ));
         }
         self.shadows.fetchable_textures(&mut out);
+        self.light_probes.fetchable_textures(&mut out);
         self.postprocess.fetchable_textures(&mut out);
         out
     }
@@ -1039,6 +1058,9 @@ impl Renderer {
         self.gpu_timer
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, plan.trace_rt_shadows());
+        if plan.ray_traced && plan.light_probes {
+            self.run_light_probes(&mut frame_state);
+        }
         // Traced global illumination brings the diffuse light the main pass would take
         // from the environment, and ray-traced reflections the sky's reflection.
         let gi = plan.trace_global_illumination();
@@ -1485,6 +1507,7 @@ impl Renderer {
                 && batches.materials.iter().any(Material::is_transmissive),
             path_tracing: self.postprocess.wants_path_tracing(),
             global_illumination: self.postprocess.wants_global_illumination(),
+            light_probes: self.light_probes.wants_update(),
             only_main_pass_reads_shadow_maps: !custom_shadow_enabled
                 && !particles_lit
                 && !shader_materials
@@ -1577,6 +1600,41 @@ impl Renderer {
         }
         self.lights_buffer
             .set_rt_shadow_bits(&self.context.queue, bits);
+    }
+
+    /// Trace this frame's slice of the light probe grid (before the main pass reads it).
+    fn run_light_probes(&mut self, frame: &mut FrameState) {
+        let Some(scene) = self
+            .ray_tracing
+            .as_ref()
+            .and_then(|scene| scene.bind_group())
+        else {
+            return;
+        };
+        self.light_probes.update(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            &self.lights_buffer.bind_group,
+            scene,
+            self.texture_binder.global_bind_group(),
+        );
+        self.gpu_timer.mark(&mut frame.encoder, "light_probes");
+    }
+
+    /// Light surfaces inside `grid` from its probes (`None`: no grid). Call every frame
+    /// with the scene's light probe volume; a changed layout starts the probes over.
+    pub fn set_light_probe_grid(&mut self, grid: Option<crate::renderer::LightProbeGrid>) {
+        self.light_probes
+            .set_grid(&self.context.device, &self.context.queue, grid);
+        if self.light_probes.take_bindings_changed() {
+            self.lights_buffer.set_light_probes(
+                &self.context.device,
+                &self.shadows,
+                &self.environment,
+                &self.light_probes,
+            );
+        }
     }
 
     fn run_path_tracing(&mut self, frame: &mut FrameState, lights: &LightsData) -> TracedLighting {

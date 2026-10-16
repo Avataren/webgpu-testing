@@ -251,6 +251,7 @@ impl SceneAssetEntityBuilder {
             scene_ref: self.scene_ref,
             skin: None,
             animator: None,
+            light_probe_volume: None,
             source_entity: None,
         }
     }

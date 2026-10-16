@@ -198,6 +198,95 @@ impl PostProcessVolume {
 }
 
 // ============================================================================
+// Light Probe Volume Component
+// ============================================================================
+
+/// A grid of light probes filling a box: each probe keeps the light arriving from every
+/// direction (irradiance) and how far it sees (so light does not leak through walls), and
+/// surfaces inside the box take their indirect diffuse light from the probes around them
+/// instead of from the environment.
+///
+/// The box is centred on the entity and axis aligned: its size scales with the entity,
+/// its rotation is ignored. With hardware ray tracing the probes trace the scene every
+/// frame, so their light follows moving lights and geometry. The renderer uses the first
+/// enabled volume it finds.
+///
+/// # Examples
+///
+/// ```
+/// use wgpu_cube::scene::LightProbeVolume;
+///
+/// let volume = LightProbeVolume { size: [5.0, 3.0, 5.0], ..Default::default() };
+/// assert_eq!(volume.probe_counts([1.0; 3]), [11, 7, 11]);
+/// ```
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LightProbeVolume {
+    pub enabled: bool,
+    /// Full size of the box in the entity's local space (m).
+    pub size: [f32; 3],
+    /// Distance between neighbouring probes (m); a box edge gets one probe more than it
+    /// has spacings.
+    pub spacing: f32,
+    /// Rays each probe traces per update (32-256).
+    pub rays_per_probe: u32,
+    /// The share of a probe's previous light kept per update (0-0.995): higher is
+    /// smoother and slower to follow changes.
+    pub hysteresis: f32,
+    /// Scales the indirect light the probes give.
+    pub intensity: f32,
+}
+
+impl Default for LightProbeVolume {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            size: [10.0, 4.0, 10.0],
+            spacing: 0.5,
+            rays_per_probe: 128,
+            hysteresis: 0.97,
+            intensity: 1.0,
+        }
+    }
+}
+
+impl LightProbeVolume {
+    /// Most probes along one axis.
+    pub const MAX_PROBES_PER_AXIS: u32 = 64;
+    /// Most probes in one volume; the spacing grows to stay within it.
+    pub const MAX_PROBES: u32 = 16384;
+
+    /// The box's world size for an entity scaled by `scale`.
+    pub fn world_size(&self, scale: [f32; 3]) -> Vec3 {
+        (Vec3::from(self.size) * Vec3::from(scale)).abs()
+    }
+
+    /// The spacing in use: the volume's, or larger where it would place more probes than
+    /// the limits allow.
+    pub fn effective_spacing(&self, scale: [f32; 3]) -> f32 {
+        let size = self.world_size(scale);
+        let mut spacing = self.spacing.max(0.05);
+        let longest = size.max_element();
+        spacing = spacing.max(longest / (Self::MAX_PROBES_PER_AXIS - 1) as f32);
+        loop {
+            let counts = (size / spacing).ceil() + Vec3::ONE;
+            if counts.x * counts.y * counts.z <= Self::MAX_PROBES as f32 {
+                return spacing;
+            }
+            spacing *= 1.1;
+        }
+    }
+
+    /// Probes along x, y and z.
+    pub fn probe_counts(&self, scale: [f32; 3]) -> [u32; 3] {
+        let size = self.world_size(scale);
+        let spacing = self.effective_spacing(scale);
+        let counts = ((size / spacing).ceil() + Vec3::ONE).max(Vec3::splat(2.0));
+        [counts.x as u32, counts.y as u32, counts.z as u32]
+    }
+}
+
+// ============================================================================
 // Environment Component
 // ============================================================================
 

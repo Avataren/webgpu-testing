@@ -501,6 +501,10 @@ impl SceneAsset {
                 builder.add(volume.clone());
             }
 
+            if let Some(volume) = &entity.light_probe_volume {
+                builder.add(volume.clone());
+            }
+
             builders.push(builder);
         }
 

@@ -215,6 +215,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "particle_emitter": { "type": ["object", "null"], "description": "Particle emitter settings as entity_get shows them, or null" },
         "environment": { "type": ["object", "null"], "description": "Environment component (see environment_get for fields), or null" },
         "post_process_volume": { "type": ["object", "null"], "description": "Post-process volume, or null to remove: {enabled, shape: {kind: infinite} | {kind: box, size: [x,y,z]} | {kind: sphere, radius}, priority, weight, blend_distance, overrides: [setting paths] or null for all, settings: {...as postprocess_set}}. A volume spawned into a scene that already has one overrides only the settings given. Infinite volumes apply everywhere; bounded ones inside their shape (following the entity's transform) and fade out over blend_distance. Only given fields change." },
+        "light_probe_volume": { "type": ["object", "null"], "description": "Light probe grid for indirect diffuse light (GI), or null to remove: {enabled, size: [x,y,z] box in metres centred on the entity (scales with it, rotation ignored), spacing (m, default 0.5), rays_per_probe (32-256, default 128), hysteresis (0-0.995, default 0.97), intensity}. Surfaces inside take their diffuse ambient from the probes, which see walls, so sky light enters only through openings. Probes update by ray tracing each frame (needs capabilities.ray_tracing); fit the box to the room or level. Inspect with texture_fetch probes.irradiance / probes.distance. Only given fields change." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
             "speed": { "type": "number", "description": "Radians per second" }
@@ -249,7 +250,7 @@ pub fn tools() -> Vec<Tool> {
         json!({
             "type": "string",
             "enum": ["empty", "cube", "sphere", "plane", "cylinder", "cone", "torus",
-                     "point_light", "directional_light", "spot_light", "camera", "particles", "environment", "post_process_volume"],
+                     "point_light", "directional_light", "spot_light", "camera", "particles", "environment", "post_process_volume", "light_probe_volume"],
             "description": "What to create (default empty). Primitive sizes at scale 1: cube 1x1x1 centred (-0.5..0.5); sphere radius 1; cylinder radius 1, length 1 along Z (z -0.5..0.5); cone base radius 1 at z = -1 and tip at the origin, so it points toward +Z, opposite to forward: give ships and arrows a 180 degree yaw; torus ring radius 1 (to the tube centre) with tube radius 0.35 (1.35 outer), axis along Z, and the tube scales with the ring. The plane is 1x1 in XY facing +Z, so use rotation [-90, 0, 0] and a large scale for a floor. entity_get shows local_bounds."
         }),
     );
@@ -441,7 +442,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },

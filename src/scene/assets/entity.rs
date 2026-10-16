@@ -12,9 +12,10 @@ use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::Material;
 use crate::scene::components::{
     Billboard, CameraComponent, CanCastShadow, Children, DirectionalLight, EditorEntityId,
-    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, MaterialComponent,
-    MeshBounds, MeshComponent, Name, Parent, ParticleEmitterComponent, ParticleSystemComponent,
-    PointLight, PostProcessVolume, PrimitiveMeshComponent, SpotLight, TransformComponent, Visible,
+    EnvironmentComponent, GltfMaterial, GltfNode, GltfPrimitive, GltfSource, LightProbeVolume,
+    MaterialComponent, MeshBounds, MeshComponent, Name, Parent, ParticleEmitterComponent,
+    ParticleSystemComponent, PointLight, PostProcessVolume, PrimitiveMeshComponent, SpotLight,
+    TransformComponent, Visible,
 };
 use crate::scene::skeletal::{Animator, SkinnedMesh};
 use crate::scene::transform::Transform;
@@ -72,6 +73,8 @@ pub struct SceneAssetEntity {
     pub environment: Option<EnvironmentComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_process_volume: Option<PostProcessVolume>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_probe_volume: Option<LightProbeVolume>,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +163,8 @@ struct SceneAssetEntityData {
     environment: Option<EnvironmentComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     post_process_volume: Option<PostProcessVolume>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    light_probe_volume: Option<LightProbeVolume>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,6 +217,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             particle_behavior: data.particle_behavior,
             environment: data.environment,
             post_process_volume: data.post_process_volume,
+            light_probe_volume: data.light_probe_volume,
             camera: data.camera,
             scene_ref: data.scene_ref,
             skin: data.skin,
@@ -260,6 +266,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             particle_behavior: entity.particle_behavior,
             environment: entity.environment,
             post_process_volume: entity.post_process_volume,
+            light_probe_volume: entity.light_probe_volume,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,
@@ -562,6 +569,10 @@ impl SceneAssetEntity {
             .get::<&PostProcessVolume>(entity)
             .ok()
             .map(|component| (*component).clone());
+        let light_probe_volume = world
+            .get::<&LightProbeVolume>(entity)
+            .ok()
+            .map(|component| (*component).clone());
         let camera = world
             .get::<&CameraComponent>(entity)
             .ok()
@@ -607,6 +618,7 @@ impl SceneAssetEntity {
             particle_behavior,
             environment,
             post_process_volume,
+            light_probe_volume,
             camera,
             scene_ref: None,
             skin,

@@ -414,6 +414,10 @@ pub(crate) struct LightsBuffer {
     fallback_mask_view: wgpu::TextureView,
     /// Directional lights whose shadows the main pass reads from the mask (`counts.w`).
     rt_shadow_bits: u32,
+    /// The light probe grid (bindings 12-14): its uniform and current atlases.
+    probe_buffer: wgpu::Buffer,
+    probe_irradiance: wgpu::TextureView,
+    probe_distance: wgpu::TextureView,
 }
 
 impl LightsBuffer {
@@ -422,7 +426,18 @@ impl LightsBuffer {
         queue: &wgpu::Queue,
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
+        probes: &crate::renderer::light_probes::LightProbes,
     ) -> Self {
+        let probe_texture = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("LightsBindLayout"),
             entries: &[
@@ -534,6 +549,18 @@ impl LightsBuffer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                probe_texture(13),
+                probe_texture(14),
             ],
         });
 
@@ -574,6 +601,9 @@ impl LightsBuffer {
         );
         let fallback_mask_view = fallback_mask.create_view(&Default::default());
 
+        let probe_buffer = probes.grid_buffer().clone();
+        let probe_irradiance = probes.irradiance_view().clone();
+        let probe_distance = probes.distance_view().clone();
         let bind_group = Self::create_bind_group(
             device,
             &layout,
@@ -582,6 +612,8 @@ impl LightsBuffer {
             shadows,
             environment,
             &fallback_mask_view,
+            [&probe_buffer, &probe_buffer],
+            [&probe_irradiance, &probe_distance],
         );
 
         Self {
@@ -595,6 +627,9 @@ impl LightsBuffer {
             _fallback_mask: fallback_mask,
             fallback_mask_view,
             rt_shadow_bits: 0,
+            probe_buffer,
+            probe_irradiance,
+            probe_distance,
         }
     }
 
@@ -606,6 +641,8 @@ impl LightsBuffer {
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
         rt_shadow_mask: &wgpu::TextureView,
+        probe_buffers: [&wgpu::Buffer; 2],
+        probe_views: [&wgpu::TextureView; 2],
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("LightsBindGroup"),
@@ -658,6 +695,18 @@ impl LightsBuffer {
                 wgpu::BindGroupEntry {
                     binding: 11,
                     resource: wgpu::BindingResource::TextureView(rt_shadow_mask),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: probe_buffers[0].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(probe_views[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: wgpu::BindingResource::TextureView(probe_views[1]),
                 },
             ],
         })
@@ -728,6 +777,22 @@ impl LightsBuffer {
             self.rt_shadow_mask
                 .as_ref()
                 .unwrap_or(&self.fallback_mask_view),
+            [&self.probe_buffer, &self.probe_buffer],
+            [&self.probe_irradiance, &self.probe_distance],
         );
+    }
+
+    /// Bind the light probe grid's current atlases (after they were recreated).
+    pub(crate) fn set_light_probes(
+        &mut self,
+        device: &wgpu::Device,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+        probes: &crate::renderer::light_probes::LightProbes,
+    ) {
+        self.probe_buffer = probes.grid_buffer().clone();
+        self.probe_irradiance = probes.irradiance_view().clone();
+        self.probe_distance = probes.distance_view().clone();
+        self.rebuild_bind_group(device, shadows, environment);
     }
 }

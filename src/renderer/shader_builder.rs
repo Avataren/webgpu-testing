@@ -259,6 +259,7 @@ impl ShaderBuilder {
 
     fn ensure_with_environment(&mut self) {
         self.ensure_module(wgsl!("environment.wgsl"));
+        self.ensure_module(wgsl!("light_probes.wgsl"));
     }
 
     fn apply_markers(mut self, shader_source: &str) -> Self {

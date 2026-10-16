@@ -9,6 +9,7 @@ pub mod gizmo_shapes;
 mod gpu_timer;
 pub mod hdr_output;
 pub(crate) mod internal;
+pub mod light_probes;
 pub mod lights;
 pub mod material;
 pub mod objects;
@@ -41,6 +42,7 @@ pub use compute_resources::{
 };
 pub use depth::Depth;
 pub use gpu_timer::GpuTimings;
+pub use light_probes::LightProbeGrid;
 pub use lights::{
     DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
     MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
