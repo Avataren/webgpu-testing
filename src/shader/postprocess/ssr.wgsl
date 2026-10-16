@@ -230,10 +230,8 @@ fn fs_ssr_blur_vertical(in : VertexOutput) -> @location(0) vec4<f32> {
     return ssr_blur(in.uv, in.position.xy, vec2<f32>(0.0, 1.0));
 }
 
-// Added to the scene (taking the ambient a metal no longer needs off): smoother surfaces
-// and grazing views reflect more (Schlick's Fresnel from the surface's specular colour, so
-// metals reflect fully and in their own colour; dielectrics get a floor so a surface seen
-// head-on still shows a sheen).
+// Added to the scene (taking the ambient a metal no longer needs off), weighted by
+// ssr_apply_weight.
 @fragment
 fn fs_ssr_apply(in : VertexOutput) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(in.position.xy);
@@ -246,10 +244,8 @@ fn fs_ssr_apply(in : VertexOutput) -> @location(0) vec4<f32> {
     let v = normalize(post_uniform.camera_position.xyz - position.xyz);
     let n_dot_v = clamp(dot(n, v), 0.0, 1.0);
     let f0 = ssr_specular_color(position);
-    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - n_dot_v, 5.0);
-    let metalness = clamp((max(f0.r, max(f0.g, f0.b)) - 0.04) / 0.5, 0.0, 1.0);
-    let sheen = 0.2 * (1.0 - metalness);
-    let weight = post_uniform.ssr.x * smoothness * smoothness * (sheen + (1.0 - sheen) * fresnel);
+    let metalness = ssr_metalness(f0);
+    let weight = ssr_apply_weight(position, n_dot_v);
     let reflection = textureSampleLevel(ssr_reflection, ssr_apply_sampler, viewport_to_scene_uv(in.uv), 0.0);
     // The main pass lit a metal with the flat ambient light too, its stand-in for the
     // surroundings the metal reflects (ambient times base colour, which is F0). Where a

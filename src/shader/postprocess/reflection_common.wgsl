@@ -50,6 +50,23 @@ fn ssr_specular_color(position : vec4<f32>) -> vec3<f32> {
     return vec3<f32>(0.04) + 0.96 * encoded * encoded;
 }
 
+// How metallic a specular colour is: 0 at the dielectric 0.04, 1 from 0.54 up.
+fn ssr_metalness(f0 : vec3<f32>) -> f32 {
+    return clamp((max(f0.r, max(f0.g, f0.b)) - 0.04) / 0.5, 0.0, 1.0);
+}
+
+// How much of a reflection fs_ssr_apply adds to a surface: smoother surfaces and grazing
+// views reflect more (Schlick's Fresnel from the surface's specular colour, so metals
+// reflect fully and in their own colour; dielectrics get a floor so a surface seen head-on
+// still shows a sheen).
+fn ssr_apply_weight(position : vec4<f32>, n_dot_v : f32) -> vec3<f32> {
+    let smoothness = ssr_smoothness(position);
+    let f0 = ssr_specular_color(position);
+    let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - n_dot_v, 5.0);
+    let sheen = 0.2 * (1.0 - ssr_metalness(f0));
+    return post_uniform.ssr.x * smoothness * smoothness * (sheen + (1.0 - sheen) * fresnel);
+}
+
 // Full-resolution pixels per reflection texel: 2 for the default half-resolution trace,
 // 1 with ssr.full_resolution.
 fn ssr_texel_scale() -> f32 {

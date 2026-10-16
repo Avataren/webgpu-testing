@@ -274,6 +274,26 @@ fn rt_second_bounce(
     return (color * (sheen + (1.0 - sheen) * fresnel) - replaced) * fade;
 }
 
+// The sky's reflection a ray that leaves the scene brings while the main pass leaves it
+// out (environment_specular_traced): as much as the main pass would have added
+// (calculate_environment_specular: the sky blurred by roughness, times the specular colour
+// and a strength that falls with roughness), divided by the weight fs_ssr_apply gives
+// what this pass returns. Weighted as a found reflection instead, with its sheen floor and
+// the sharp sky, a rough surface reflecting a window glowed grey. `surface` is the
+// G-buffer position, `view` the direction from the camera.
+fn rt_sky_reflection(surface : vec4<f32>, n : vec3<f32>, view : vec3<f32>, r : vec3<f32>) -> vec3<f32> {
+    if !environment_hdr_enabled() {
+        return vec3<f32>(0.0);
+    }
+    let roughness = 1.0 - ssr_smoothness(surface);
+    let lod = environment_settings.flags_intensity.w * roughness * roughness;
+    let sky = sample_environment_hdr(r, lod) * environment_hdr_intensity();
+    let strength = max(pow(1.0 - roughness, 4.0), 0.05);
+    let main_pass = sky * ssr_specular_color(surface) * strength;
+    let weight = ssr_apply_weight(surface, clamp(dot(n, -view), 0.0, 1.0));
+    return main_pass / max(weight, vec3<f32>(1e-4));
+}
+
 @fragment
 fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
     let dims = vec2<i32>(textureDimensions(rt_gbuffer_position));
@@ -316,7 +336,7 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         // it is added here, where the ray reaches it.
         var light = particles.rgb;
         if environment_specular_traced() {
-            light += rt_environment(r) * particles.a;
+            light += rt_sky_reflection(position, n, v, r) * particles.a;
         }
         if all(light <= vec3<f32>(0.0)) {
             return vec4<f32>(0.0);
