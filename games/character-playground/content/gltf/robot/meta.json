@@ -1,0 +1,32 @@
+{
+  "robot.glb.import": {
+    "materials": {
+      "0": "content/materials/robot_glb_000.mat.json",
+      "1": "content/materials/robot_glb_001.mat.json",
+      "2": "content/materials/robot_glb_002.mat.json",
+      "3": "content/materials/robot_glb_003.mat.json",
+      "4": "content/materials/robot_glb_004.mat.json",
+      "5": "content/materials/robot_glb_005.mat.json"
+    },
+    "materials_by_key": {
+      "material:0": "content/materials/robot_glb_000.mat.json",
+      "material:1": "content/materials/robot_glb_001.mat.json",
+      "material:2": "content/materials/robot_glb_002.mat.json",
+      "material:3": "content/materials/robot_glb_003.mat.json",
+      "material:4": "content/materials/robot_glb_004.mat.json",
+      "material:5": "content/materials/robot_glb_005.mat.json",
+      "node:21/primitive:0": "content/materials/robot_glb_000.mat.json",
+      "node:21/primitive:0/material:0": "content/materials/robot_glb_000.mat.json",
+      "node:21/primitive:1": "content/materials/robot_glb_001.mat.json",
+      "node:21/primitive:1/material:1": "content/materials/robot_glb_001.mat.json",
+      "node:21/primitive:2": "content/materials/robot_glb_002.mat.json",
+      "node:21/primitive:2/material:2": "content/materials/robot_glb_002.mat.json",
+      "node:21/primitive:3": "content/materials/robot_glb_003.mat.json",
+      "node:21/primitive:3/material:3": "content/materials/robot_glb_003.mat.json",
+      "node:21/primitive:4": "content/materials/robot_glb_004.mat.json",
+      "node:21/primitive:4/material:4": "content/materials/robot_glb_004.mat.json",
+      "node:21/primitive:5": "content/materials/robot_glb_005.mat.json",
+      "node:21/primitive:5/material:5": "content/materials/robot_glb_005.mat.json"
+    }
+  }
+}

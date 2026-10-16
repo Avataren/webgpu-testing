@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "character-playground",
+    "description": ""
+  },
+  "scenes": [
+    {
+      "id": "Playground.scene",
+      "name": "Playground",
+      "relative_path": "content/scenes/Playground.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    },
+    {
+      "id": "robot.scene",
+      "name": "robot (Imported)",
+      "relative_path": "content/scenes/robot.scene.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.019607843831181526,
+      0.027450980618596077,
+      0.05882352963089943,
+      1.0
+    ],
+    "ambient_intensity": 0.35,
+    "hdr": null
+  },
+  "engine_camera": {
+    "eye": [
+      0.0,
+      3.0,
+      15.0
+    ],
+    "target": [
+      0.0,
+      2.7126522,
+      14.042173
+    ],
+    "up": [
+      0.0,
+      0.9578264,
+      -0.2873479
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 1.0471976,
+      "near": 0.05,
+      "far": 300.0
+    }
+  },
+  "imports": [
+    {
+      "package": "content/gltf/robot",
+      "metadata": [
+        "content/gltf/robot/meshes/mesh_0000.json",
+        "content/gltf/robot/meshes/mesh_0001.json",
+        "content/gltf/robot/meshes/mesh_0002.json",
+        "content/gltf/robot/meshes/mesh_0003.json",
+        "content/gltf/robot/meshes/mesh_0004.json",
+        "content/gltf/robot/meshes/mesh_0005.json",
+        "content/gltf/robot/meta.json",
+        "content/gltf/robot/scene.asset.json"
+      ]
+    }
+  ]
+}

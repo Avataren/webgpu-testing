@@ -1,0 +1,13 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.18,
+    "image": false,
+    "lowpass_hz": 1800,
+    "name": "land",
+    "preset": "hit",
+    "seed": 5,
+    "volume": 0.45
+  },
+  "version": 1
+}

@@ -1,0 +1,27 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "ao_strength": 0,
+    "colors": [
+      "#41464e",
+      "#4b515a"
+    ],
+    "entity": "Floor",
+    "image": false,
+    "maps": [
+      "base_color"
+    ],
+    "name": "proto_floor",
+    "normal_strength": 0,
+    "overwrite": true,
+    "pattern": "checker",
+    "roughness": 0.85,
+    "roughness_variation": 0,
+    "scale": 60,
+    "size": [
+      1920,
+      1920
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,12 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "duration": 0.35,
+    "image": false,
+    "name": "boing",
+    "preset": "powerup",
+    "seed": 7,
+    "volume": 0.5
+  },
+  "version": 1
+}

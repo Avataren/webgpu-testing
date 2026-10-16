@@ -1,0 +1,11 @@
+{
+  "generator": "audio.generate",
+  "parameters": {
+    "image": false,
+    "name": "jump",
+    "preset": "jump",
+    "seed": 3,
+    "volume": 0.5
+  },
+  "version": 1
+}
