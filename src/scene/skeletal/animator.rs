@@ -36,7 +36,7 @@ use glam::{Mat4, Quat, Vec3};
 use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 
-use super::clip::{normalize_bone_name, ClipLibrary, SkeletalClip};
+use super::clip::{normalize_bone_name, skeleton_facing, ClipLibrary, SkeletalClip};
 use crate::asset::Assets;
 use crate::scene::components::{
     Children, GltfSource, Name, Parent, TransformComponent, WorldTransform,
@@ -751,6 +751,8 @@ struct BoundClip {
     /// Index into `tracks` of the root-motion track: the shallowest bone with a
     /// translation channel.
     root: Option<usize>,
+    /// Turns the skeleton's file to face the way the clip's file does (about Y).
+    align: Quat,
 }
 
 /// A clip track bound to a bone of the skeleton.
@@ -846,7 +848,48 @@ impl Binding {
             })
             .collect();
 
+        // The model's own file says how its skeleton rests and turns, whatever the user
+        // has done to its nodes since.
+        let model = world
+            .get::<&GltfSource>(entity)
+            .ok()
+            .map(|source| {
+                let path = source.0.to_string_lossy();
+                PathBuf::from(path.strip_suffix(".import").unwrap_or(&path))
+            })
+            .and_then(|path| {
+                libraries
+                    .iter()
+                    .find(|(library, _)| *library == path)
+                    .map(|(_, library)| Arc::clone(library))
+                    .or_else(|| load(&path).ok())
+            });
+        // Which way the skeleton faces in its file, to line clips from files facing
+        // elsewhere up with it.
+        let facing = match &model {
+            Some(model) => skeleton_facing(|key| model.rest.get(key).map(|rest| rest.position)),
+            None => {
+                let frame = file_frame(world, entity);
+                let rest_of = |bone: Entity| {
+                    previous_rest.get(&bone).copied().unwrap_or_else(|| {
+                        world
+                            .get::<&TransformComponent>(bone)
+                            .map(|t| t.0)
+                            .unwrap_or_default()
+                    })
+                };
+                skeleton_facing(|key| {
+                    let &(bone, _) = skeleton.get(key)?;
+                    Some(frame.transform_point3(rest_position(world, bone, entity, &rest_of)))
+                })
+            }
+        };
+
         for (path, library) in &libraries {
+            let align = align_facing(
+                facing,
+                skeleton_facing(|key| library.rest.get(key).map(|rest| rest.position)),
+            );
             for clip in &library.clips {
                 let mut tracks = Vec::new();
                 let mut missing = Vec::new();
@@ -907,26 +950,10 @@ impl Binding {
                     tracks,
                     missing,
                     root,
+                    align,
                 });
             }
         }
-
-        // The model's own file says how its skeleton's frames turn, whatever the user
-        // has done to its nodes since.
-        let model = world
-            .get::<&GltfSource>(entity)
-            .ok()
-            .map(|source| {
-                let path = source.0.to_string_lossy();
-                PathBuf::from(path.strip_suffix(".import").unwrap_or(&path))
-            })
-            .and_then(|path| {
-                libraries
-                    .iter()
-                    .find(|(library, _)| *library == path)
-                    .map(|(_, library)| Arc::clone(library))
-                    .or_else(|| load(&path).ok())
-            });
 
         binding.finish_names();
         binding.finish_hierarchy(world);
@@ -1008,9 +1035,10 @@ impl Binding {
 
     /// Retarget each track whose bone rests differently here than in the clip's file
     /// (see [`BoundTrack::retarget`]): with world rest rotations `S` (clip file) and
-    /// `T` (skeleton), a bone keyed `k` under a parent `p` gets
-    /// `T(p)⁻¹ S(p) · k · S(b)⁻¹ T(b)`, which turns it away from its rest as the clip
-    /// does. Identical rigs need nothing.
+    /// `T` (skeleton), and `F` turning the skeleton's file to face the way the clip's
+    /// does, a bone keyed `k` under a parent `p` gets `T(p)⁻¹ F⁻¹ S(p) · k · S(b)⁻¹ F T(b)`:
+    /// it turns away from its rest as the clip's bone does, measured in the character's
+    /// own frame (forward is forward in both). Identical rigs need nothing.
     ///
     /// `model` is the skeleton's own file; without it the skeleton's rest is read from
     /// the entities.
@@ -1018,20 +1046,9 @@ impl Binding {
         // From the entities, frames start at the root of the imported file: the
         // animator, and the nodes of the same file above it, count; the entity the user
         // places the model with does not.
-        let mut above = Quat::IDENTITY;
-        let mut current = Some(self.animator_entity);
-        let mut guard = 0;
-        while let Some(entity) = current {
-            if guard > 256 || !world.satisfies::<&GltfSource>(entity).unwrap_or(false) {
-                break;
-            }
-            if let Ok(transform) = world.get::<&TransformComponent>(entity) {
-                above = transform.0.rotation * above;
-            }
-            current = parent_of(world, entity);
-            guard += 1;
-        }
+        let (_, above, _) = file_frame(world, self.animator_entity).to_scale_rotation_translation();
         for clip in &mut self.clips {
+            let align = clip.align;
             for bound in &mut clip.tracks {
                 let Some((source_parent, source_rest)) = bound.source_rest else {
                     continue;
@@ -1046,8 +1063,9 @@ impl Binding {
                         ((above * chain).normalize(), self.rest[bound.slot].rotation)
                     }
                 };
-                let pre = (target_parent.inverse() * source_parent).normalize();
+                let pre = (target_parent.inverse() * align.inverse() * source_parent).normalize();
                 let post = ((source_parent * source_rest).inverse()
+                    * align
                     * (target_parent * target_rest))
                     .normalize();
                 let turned = |q: Quat| q.angle_between(Quat::IDENTITY) > 0.01;
@@ -1108,6 +1126,66 @@ impl Binding {
 
 fn parent_of(world: &World, entity: Entity) -> Option<Entity> {
     world.get::<&Parent>(entity).ok().map(|parent| parent.0)
+}
+
+/// The transform from the animator's space to its imported file's root: the animator
+/// and the nodes of the same file above it (the entity the user places the model with
+/// does not count).
+fn file_frame(world: &World, animator: Entity) -> Mat4 {
+    let mut frame = Mat4::IDENTITY;
+    let mut current = Some(animator);
+    let mut guard = 0;
+    while let Some(entity) = current {
+        if guard > 256 || !world.satisfies::<&GltfSource>(entity).unwrap_or(false) {
+            break;
+        }
+        if let Ok(transform) = world.get::<&TransformComponent>(entity) {
+            frame = transform.0.matrix() * frame;
+        }
+        current = parent_of(world, entity);
+        guard += 1;
+    }
+    frame
+}
+
+/// Where `bone` rests in the animator's space, from the rest transforms below it.
+fn rest_position(
+    world: &World,
+    bone: Entity,
+    animator: Entity,
+    rest_of: &dyn Fn(Entity) -> Transform,
+) -> Vec3 {
+    let mut chain = Mat4::IDENTITY;
+    let mut current = bone;
+    for _ in 0..256 {
+        if current == animator {
+            break;
+        }
+        chain = rest_of(current).matrix() * chain;
+        match parent_of(world, current) {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    chain.transform_point3(Vec3::ZERO)
+}
+
+/// The turn about Y that makes a skeleton facing `target` face `source` (identity when
+/// either is unknown). Characters face along an axis, so near-quarter turns snap to it.
+fn align_facing(target: Option<Vec3>, source: Option<Vec3>) -> Quat {
+    let (Some(target), Some(source)) = (target, source) else {
+        return Quat::IDENTITY;
+    };
+    let yaw = |v: Vec3| v.x.atan2(v.z);
+    let angle = yaw(source) - yaw(target);
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let snapped = (angle / quarter).round() * quarter;
+    let angle = if (angle - snapped).abs() < 0.2 {
+        snapped
+    } else {
+        angle
+    };
+    Quat::from_rotation_y(angle)
 }
 
 fn name_key(world: &World, entity: Entity) -> Option<String> {
@@ -1600,6 +1678,7 @@ mod tests {
             transform: Transform::from_translation(t),
             depth,
             parent_rotation: Quat::IDENTITY,
+            position: t,
         };
         ClipLibrary {
             source: PathBuf::from("walk.glb"),
@@ -1710,6 +1789,7 @@ mod tests {
             transform: Transform::from_translation(t),
             depth,
             parent_rotation: Quat::IDENTITY,
+            position: t,
         };
         let library = ClipLibrary {
             source: PathBuf::from("dance.glb"),
@@ -1770,6 +1850,65 @@ mod tests {
             spine.rotation.abs_diff_eq(key * spine_rest, 1e-4),
             "{:?}",
             spine.rotation
+        );
+    }
+
+    #[test]
+    fn clips_from_a_file_facing_the_other_way_lean_the_same_way() {
+        // The clip's file faces +Z (left leg at +X) and leans the hips forward; the
+        // skeleton's file faces -Z (left leg at -X). It must lean towards its own front,
+        // -Z, not back.
+        let lean = Quat::from_rotation_x(0.3);
+        let mut hips = BoneTrack::new("Hips");
+        hips.rotation = Some(linear_quat(&[0.0, 1.0], &[lean, lean]));
+        let rest = |name: &str, t: Vec3, depth| {
+            (
+                name.to_string(),
+                BoneRest {
+                    transform: Transform::from_translation(t),
+                    depth,
+                    parent_rotation: Quat::IDENTITY,
+                    position: t,
+                },
+            )
+        };
+        let library = ClipLibrary {
+            source: PathBuf::from("lean.glb"),
+            clips: vec![Arc::new(SkeletalClip::new("lean", vec![hips]))],
+            rest: HashMap::from([
+                rest("hips", Vec3::Y, 1),
+                rest("leftupleg", Vec3::new(0.1, 0.9, 0.0), 2),
+                rest("rightupleg", Vec3::new(-0.1, 0.9, 0.0), 2),
+            ]),
+        };
+        let mut assets = Assets::new();
+        assets.insert_clip_library("lean.glb", library);
+        let mut rig = rig(1.0);
+        for (name, x) in [("mixamorig:LeftUpLeg", -0.1), ("mixamorig:RightUpLeg", 0.1)] {
+            let leg = rig.world.spawn((
+                Name::new(name),
+                TransformComponent(Transform::from_translation(Vec3::new(x, -0.1, 0.0))),
+                Parent(rig.hips),
+            ));
+            rig.world
+                .get::<&mut Children>(rig.hips)
+                .unwrap()
+                .0
+                .push(leg);
+        }
+        let animator = Animator {
+            default_clip: Some("lean".into()),
+            ..Animator::with_library("lean.glb")
+        };
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        let hips = local(&rig.world, rig.hips);
+        let up = hips.rotation * Vec3::Y;
+        assert!(up.z < -0.25, "leans towards -Z: {up}");
+        assert!(
+            hips.rotation.abs_diff_eq(lean.inverse(), 1e-4),
+            "{:?}",
+            hips.rotation
         );
     }
 

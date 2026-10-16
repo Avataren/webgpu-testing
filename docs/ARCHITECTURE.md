@@ -268,11 +268,15 @@ to flicker, especially at a distant horizon.
   - Rest-relative retargeting (`Binding::finish_frames`): a clip from another export of
     the rig (a Mixamo FBX through Blender, whose bones point along Y, on a GLB that kept
     Mixamo's joint orientations and turns its armature -90 degrees) has its keys turned
-    `pre * key * post`, with `pre = T(parent)⁻¹ S(parent)` and `post = S(bone)⁻¹ T(bone)`
-    from the world rest rotations in the clip's file (`BoneRest::parent_rotation`) and in
-    the model's own file (found through the animator's `GltfSource`, else read from the
-    entities). Each bone then turns away from its rest as in the clip. Identical rigs get
-    no correction; different rest postures (T versus A) are not handled.
+    `pre * key * post`, with `pre = T(parent)⁻¹ F⁻¹ S(parent)` and
+    `post = S(bone)⁻¹ F T(bone)` from the world rest rotations in the clip's file
+    (`BoneRest::parent_rotation`) and in the model's own file (found through the
+    animator's `GltfSource`, else read from the entities), and `F` the turn about Y that
+    makes the model's file face the way the clip's file does (`skeleton_facing`, from the
+    rest positions of the left and right legs: the three.js Soldier faces -Z, Mixamo
+    files +Z). Each bone then turns away from its rest as in the clip, in the character's
+    own frame. Identical rigs get no correction; different rest postures (T versus A)
+    are not handled.
   - Blends (`Animator::play_blend`): a group of clips posed by weight with one shared
     phase (a walk and a run keep step), negative speed plays backwards, each clip's
     `root_speed` (ground travel per second) is measured from its root track.

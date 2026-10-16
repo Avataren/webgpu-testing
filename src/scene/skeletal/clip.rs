@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3};
 
 use crate::scene::animation::{AnimationInterpolation, AnimationOutput, AnimationSampler};
 use crate::scene::transform::Transform;
@@ -92,6 +92,31 @@ pub struct BoneRest {
     /// Rotation of the node's parents in the file (scene root to parent), the frame its
     /// keys are in.
     pub parent_rotation: Quat,
+    /// Where the node rests in the file's space.
+    pub position: Vec3,
+}
+
+/// Which way a skeleton faces at rest (a horizontal unit vector, Y up), from where its
+/// left and right legs (or shoulders, arms, feet) sit; `position` gives a bone's rest
+/// position by normalized name. `None` without such a pair.
+pub fn skeleton_facing(position: impl Fn(&str) -> Option<Vec3>) -> Option<Vec3> {
+    const PAIRS: [(&str, &str); 8] = [
+        ("leftupleg", "rightupleg"),
+        ("leftthigh", "rightthigh"),
+        ("thigh.l", "thigh.r"),
+        ("thigh_l", "thigh_r"),
+        ("leftshoulder", "rightshoulder"),
+        ("leftarm", "rightarm"),
+        ("upperarm.l", "upperarm.r"),
+        ("leftfoot", "rightfoot"),
+    ];
+    PAIRS.iter().find_map(|(left, right)| {
+        let lateral = position(left)? - position(right)?;
+        // Facing +Z with Y up, the left side is +X.
+        let forward = lateral.cross(Vec3::Y);
+        let forward = Vec3::new(forward.x, 0.0, forward.z);
+        (forward.length() > 1e-5).then(|| forward.normalize())
+    })
 }
 
 /// The clips of one glTF/GLB file, and the rest pose of that file's nodes (used to
@@ -126,15 +151,15 @@ impl ClipLibrary {
     ) -> Self {
         let mut rest = HashMap::new();
         let mut depths = vec![0u32; document.nodes().len()];
-        let mut frames = vec![Quat::IDENTITY; document.nodes().len()];
+        // Each node's parents' accumulated transform (scene root to parent).
+        let mut parents = vec![Mat4::IDENTITY; document.nodes().len()];
         for scene in document.scenes() {
-            let mut stack: Vec<(gltf::Node, u32, Quat)> =
-                scene.nodes().map(|n| (n, 0, Quat::IDENTITY)).collect();
-            while let Some((node, depth, frame)) = stack.pop() {
+            let mut stack: Vec<(gltf::Node, u32, Mat4)> =
+                scene.nodes().map(|n| (n, 0, Mat4::IDENTITY)).collect();
+            while let Some((node, depth, parent)) = stack.pop() {
                 depths[node.index()] = depth;
-                frames[node.index()] = frame;
-                let (_, rotation, _) = node.transform().decomposed();
-                let below = (frame * Quat::from_array(rotation)).normalize();
+                parents[node.index()] = parent;
+                let below = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
                 stack.extend(node.children().map(|child| (child, depth + 1, below)));
             }
         }
@@ -148,7 +173,11 @@ impl ClipLibrary {
                         Vec3::from(s),
                     ),
                     depth: depths[node.index()],
-                    parent_rotation: frames[node.index()],
+                    parent_rotation: parents[node.index()]
+                        .to_scale_rotation_translation()
+                        .1
+                        .normalize(),
+                    position: parents[node.index()].transform_point3(Vec3::from(t)),
                 });
         }
 

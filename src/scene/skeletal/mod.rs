@@ -19,7 +19,9 @@ pub use animator::{
     AnimatorStatus, BlendClip, BlendOptions, ClipInfo, PlayOptions, PlayingClip, RootMotion,
     MAX_LAYERS,
 };
-pub use clip::{node_name, normalize_bone_name, BoneRest, BoneTrack, ClipLibrary, SkeletalClip};
+pub use clip::{
+    node_name, normalize_bone_name, skeleton_facing, BoneRest, BoneTrack, ClipLibrary, SkeletalClip,
+};
 pub use skin::{skeleton_segments, SkinnedMesh, MAX_JOINTS};
 pub use tree::{
     check_condition, tree_animator, tree_entity, AnimationTree, AnimationTreeState,
