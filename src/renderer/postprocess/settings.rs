@@ -833,7 +833,8 @@ pub struct GlobalIlluminationSettings {
     /// about a quarter of the rays.
     pub half_resolution: bool,
     /// Surfaces a path bounces off (1 to 8); light from surfaces seen last frame also
-    /// carries every earlier bounce.
+    /// carries every earlier bounce. Four by default: much of a room's bounce light comes
+    /// off walls the camera doesn't see, whose paths end at this limit.
     pub bounces: u32,
     /// Most frames the denoiser accumulates.
     pub max_history: u32,
@@ -844,7 +845,7 @@ impl Default for GlobalIlluminationSettings {
         Self {
             enabled: false,
             half_resolution: true,
-            bounces: 2,
+            bounces: 4,
             max_history: 32,
         }
     }
