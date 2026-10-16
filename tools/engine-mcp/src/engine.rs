@@ -337,6 +337,12 @@ impl Engine {
         self.process.is_some()
     }
 
+    /// The pid of the engine this server launched, while it runs.
+    pub fn managed_pid(&mut self) -> Option<u32> {
+        self.poll_exit();
+        self.process.as_ref().map(|process| process.child.id())
+    }
+
     /// Find a cargo whose rustc satisfies the engine's `rust-version`.
     pub fn toolchain(&self) -> Result<Toolchain, String> {
         let manifest = fs::read_to_string(self.repo.join("Cargo.toml"))

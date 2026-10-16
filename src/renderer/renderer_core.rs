@@ -249,6 +249,10 @@ pub struct Renderer {
     pending_view_proj: Option<Mat4>,
     /// Position in the TAA jitter sequence.
     jitter_index: u32,
+    /// Hold every per-frame noise source still (TAA jitter, grain and dither phase, live
+    /// light probe updates), so an unchanged view renders the same image every frame:
+    /// for captures compared across builds. See [`Self::set_frozen_noise`].
+    frozen_noise: bool,
     /// Whether ray-traced effects can run, or why not.
     ray_tracing_support: crate::renderer::raytracing::RayTracingSupport,
     /// The last frames' scene submissions, oldest first, for [`Self::wait_for_frame_slot`].
@@ -425,6 +429,7 @@ impl Renderer {
             prev_view_proj: None,
             pending_view_proj: None,
             jitter_index: 0,
+            frozen_noise: false,
             ray_tracing_support,
             frames_in_flight: std::collections::VecDeque::new(),
         }
@@ -859,7 +864,9 @@ impl Renderer {
             .map(|region| (region.width(), region.height()))
             .unwrap_or((1, 1));
         let jitter = if self.jitters() {
-            self.jitter_index = self.jitter_index.wrapping_add(1);
+            if !self.frozen_noise {
+                self.jitter_index = self.jitter_index.wrapping_add(1);
+            }
             taa_jitter(
                 self.jitter_index,
                 self.jitter_period(),
@@ -1226,6 +1233,22 @@ impl Renderer {
         self.jitter_index
     }
 
+    /// Hold the per-frame noise sources still (or let them run again): the TAA jitter
+    /// stays at its current phase, film grain and dither keep their pattern, and light
+    /// probes stop tracing new rays (a bake in progress pauses too). With the scene and
+    /// camera unchanged, every frame then renders the same image, so captures from
+    /// different builds or settings can be compared exactly. Temporal histories keep
+    /// accumulating, so give them a few frames to settle after freezing. Capture-only: it
+    /// slightly reduces anti-aliasing quality while on.
+    pub fn set_frozen_noise(&mut self, frozen: bool) {
+        self.frozen_noise = frozen;
+        self.postprocess.set_frozen_clock(frozen);
+    }
+
+    pub fn frozen_noise(&self) -> bool {
+        self.frozen_noise
+    }
+
     /// Frames after which the TAA jitter repeats: [`TAA_JITTER_FRAMES`] at native
     /// resolution, more when upscaling (as FSR: 8 x the pixel ratio), so the jittered
     /// samples cover each scene pixel's share of output pixels.
@@ -1529,7 +1552,8 @@ impl Renderer {
                 && batches.materials.iter().any(Material::is_transmissive),
             path_tracing: self.postprocess.wants_path_tracing(),
             global_illumination: self.postprocess.wants_global_illumination(),
-            light_probes: self.light_probes.wants_update(),
+            // Frozen noise also holds the probes' random rays still.
+            light_probes: !self.frozen_noise && self.light_probes.wants_update(),
             only_main_pass_reads_shadow_maps: !custom_shadow_enabled
                 && !particles_lit
                 && !shader_materials

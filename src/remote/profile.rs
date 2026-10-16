@@ -32,6 +32,48 @@ pub(crate) fn summarize(samples: &[Value], baseline: Option<&Value>) -> Value {
         .into_iter()
         .map(|(name, values)| (name, distribution(values)))
         .collect::<serde_json::Map<_, _>>();
+    // GPU stage times (timestamp queries; a frame or two behind the sample, and the same
+    // frame can be read twice, which the percentiles tolerate) and renderer counters.
+    let mut gpu_stages: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    let mut gpu_totals = Vec::new();
+    for sample in samples {
+        let gpu = &sample["renderer"]["gpu"];
+        if let Some(total) = gpu["total_ms"].as_f64() {
+            gpu_totals.push(total);
+        }
+        for entry in gpu["stages_ms"].as_array().into_iter().flatten() {
+            if let (Some(name), Some(ms)) = (entry[0].as_str(), entry[1].as_f64()) {
+                gpu_stages.entry(name.to_owned()).or_default().push(ms);
+            }
+        }
+    }
+    let gpu_stages = gpu_stages
+        .into_iter()
+        .map(|(name, values)| (name, distribution(values)))
+        .collect::<serde_json::Map<_, _>>();
+    let mut counters = serde_json::Map::new();
+    for key in [
+        "draw_calls",
+        "opaque_draw_calls",
+        "shadow_draw_calls",
+        "shadow_views_rendered",
+        "shadow_views_cached",
+        "culled_instances",
+        "instances",
+        "batches",
+    ] {
+        let values: Vec<f64> = samples
+            .iter()
+            .filter_map(|sample| sample["renderer"][key].as_f64())
+            .collect();
+        if let (Some(min), Some(max), Some(last)) = (
+            values.iter().copied().reduce(f64::min),
+            values.iter().copied().reduce(f64::max),
+            values.last(),
+        ) {
+            counters.insert(key.into(), json!({"min": min, "max": max, "last": last}));
+        }
+    }
     let first = samples.first().cloned().unwrap_or(Value::Null);
     let last = samples.last().cloned().unwrap_or(Value::Null);
     let mut growth = serde_json::Map::new();
@@ -51,7 +93,8 @@ pub(crate) fn summarize(samples: &[Value], baseline: Option<&Value>) -> Value {
         }
     }
     let mut result = json!({"samples":samples.len(),"frame_time_ms":distribution(times),"stages_ms":stages,"growth":growth,
-        "first":first,"last":last,"timing_scope":"CPU frame/stage timings; render_gpu measures submission, not GPU execution. Vsync and window waits affect frame time."});
+        "gpu_total_ms":distribution(gpu_totals),"gpu_stages_ms":gpu_stages,"renderer_counters":counters,
+        "first":first,"last":last,"timing_scope":"stages_ms are CPU frame/stage timings (render_gpu measures submission, not GPU execution; vsync and window waits affect frame time); gpu_stages_ms and gpu_total_ms are GPU milliseconds from timestamp queries, read a frame or two behind each sample; renderer_counters are min/max/last over the samples."});
     let mut slow_scripts = Vec::new();
     if let Some(scripts) = last["script_timings"].as_array() {
         for script in scripts {
@@ -100,5 +143,31 @@ mod tests {
         assert_eq!(result["frame_time_ms"]["p95"], 95.0);
         assert_eq!(result["growth"]["/entities"]["change"], 99);
         assert_eq!(result["comparison"]["p95"]["change_ms"], 45.0);
+    }
+
+    #[test]
+    fn gpu_stages_and_renderer_counters_are_summarized() {
+        let samples = (1..=10)
+            .map(|i| {
+                json!({
+                    "frame_time_ms": 5.0,
+                    "renderer": {
+                        "draw_calls": 100 + i,
+                        "shadow_views_cached": 13,
+                        "gpu": {"total_ms": i as f64, "stages_ms": [["main", 0.5], ["shadows", i as f64 / 10.0]]}
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        let result = summarize(&samples, None);
+        assert_eq!(result["gpu_total_ms"]["max"], 10.0);
+        assert_eq!(result["gpu_stages_ms"]["main"]["median"], 0.5);
+        assert_eq!(result["gpu_stages_ms"]["shadows"]["p95"], 1.0);
+        assert_eq!(result["renderer_counters"]["draw_calls"]["min"], 101.0);
+        assert_eq!(result["renderer_counters"]["draw_calls"]["last"], 110.0);
+        assert_eq!(
+            result["renderer_counters"]["shadow_views_cached"]["max"],
+            13.0
+        );
     }
 }

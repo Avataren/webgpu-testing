@@ -1002,6 +1002,142 @@ fn region_json(grid: &Grid, cell: usize, noise: Option<&Stats>, score: Option<f6
     Value::Object(out)
 }
 
+/// `visual.compare`: the same comparison as a `visual.capture`, over images already on
+/// disk, so captures of two builds (or two sessions) can be compared. `a` and `b` are
+/// PNG files, or `visual.capture` directories (their `manifest.json` names the images;
+/// `variant` picks one of its variants, else the first). With several images per side,
+/// the last of each is compared and the others give the noise between consecutive
+/// frames, as in a capture. Difference images go to `dir`.
+pub(super) fn compare_files(params: &Value) -> Result<Value, String> {
+    use super::json::{opt_str, req_str};
+    let a = req_str(params, "a")?;
+    let b = req_str(params, "b")?;
+    let variant = opt_str(params, "variant");
+    let (cols, rows) = super::visual::parse_grid(params)?;
+    let threshold = super::visual::bounded(params, "threshold", 4, 0, 255)? as u8;
+    let gain = super::visual::parse_gain(params)?;
+    let a_paths = image_set(a, variant)?;
+    let b_paths = image_set(b, variant)?;
+    let count = a_paths.len().min(b_paths.len());
+    let dir = match opt_str(params, "dir") {
+        Some(dir) => PathBuf::from(dir),
+        None => super::visual::default_dir(),
+    };
+    std::fs::create_dir_all(&dir)
+        .map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+    let options = Options {
+        cols,
+        rows,
+        threshold,
+        gain,
+        frames: count as u64,
+        settle_frames: 0,
+    };
+    let mut recorder = Recorder::new(options, vec!["a".into(), "b".into()], Some(dir.clone()));
+    let mut used = [Vec::new(), Vec::new()];
+    for (variant, paths) in [(0usize, &a_paths), (1, &b_paths)] {
+        for (index, path) in paths[paths.len() - count..].iter().enumerate() {
+            let image = image::open(path)
+                .map_err(|err| format!("cannot read {}: {err}", path.display()))?
+                .to_rgba8();
+            used[variant].push(json!(path.display().to_string()));
+            recorder.push(variant, FrameKind::Image, index as u64, image);
+        }
+    }
+    let outcome = recorder.finish();
+    let side = |index: usize, used: &[Value]| {
+        let mut entry = json!({ "images": used });
+        if let Some((short, _)) = outcome.variants.get(index) {
+            if let (Some(target), Some(extra)) = (entry.as_object_mut(), short.as_object()) {
+                target.extend(extra.clone());
+            }
+        }
+        entry
+    };
+    Ok(json!({
+        "a": side(0, &used[0]),
+        "b": side(1, &used[1]),
+        "frames_compared": count,
+        "compare": outcome.options,
+        "warnings": outcome.warnings,
+        "dir": dir.display().to_string(),
+        "meaning": "b is compared with a (the reference) as a visual.capture variant with its \
+                    baseline: mean and smooth (8x8 block mean) difference in 8-bit levels, max, \
+                    over_pct (share of pixels over threshold), and with two or more images a \
+                    side, noise between consecutive images and whether b differs beyond it \
+                    (differs, score, regions_above_noise). Captures made with the same camera, \
+                    size and settings compare meaningfully; use freeze_noise on the captures \
+                    for an exact comparison.",
+    }))
+}
+
+/// The images `spec` names, oldest first: a PNG file, or a `visual.capture` directory's
+/// variant (`variant`, else its first).
+fn image_set(spec: &str, variant: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    let path = PathBuf::from(spec);
+    if path.is_file() {
+        return Ok(vec![path]);
+    }
+    if !path.is_dir() {
+        return Err(format!("{spec} is neither a file nor a directory"));
+    }
+    let manifest_path = path.join("manifest.json");
+    let manifest: Value = std::fs::read_to_string(&manifest_path)
+        .map_err(|err| {
+            format!(
+                "{} is not a visual.capture directory ({err})",
+                path.display()
+            )
+        })
+        .and_then(|text| {
+            serde_json::from_str(&text).map_err(|err| format!("{}: {err}", manifest_path.display()))
+        })?;
+    let variants = manifest["variants"]
+        .as_array()
+        .ok_or_else(|| format!("{} lists no variants", manifest_path.display()))?;
+    let chosen = match variant {
+        Some(name) => variants
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(name))
+            .ok_or_else(|| {
+                let names: Vec<&str> = variants
+                    .iter()
+                    .filter_map(|entry| entry["name"].as_str())
+                    .collect();
+                format!(
+                    "{} has no variant {name:?}; it has {}",
+                    path.display(),
+                    names.join(", ")
+                )
+            })?,
+        None => variants
+            .first()
+            .ok_or_else(|| format!("{} lists no variants", manifest_path.display()))?,
+    };
+    let images: Vec<PathBuf> = chosen["images"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|image| image["path"].as_str())
+        .map(|file| {
+            let file = PathBuf::from(file);
+            if file.is_absolute() {
+                file
+            } else {
+                path.join(file)
+            }
+        })
+        .collect();
+    if images.is_empty() {
+        return Err(format!(
+            "variant {:?} of {} has no saved images",
+            chosen["name"].as_str().unwrap_or("?"),
+            path.display()
+        ));
+    }
+    Ok(images)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1716,5 +1852,38 @@ mod tests {
             .unwrap();
         assert_eq!(path, dir.join("bright_diff.png").display().to_string());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn saved_images_compare_like_a_capture() {
+        let dir = std::env::temp_dir().join(format!("visual-compare-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.png");
+        let b = dir.join("b.png");
+        let mut image = flat(64, 48, 100);
+        image.save(&a).unwrap();
+        for y in 0..48 {
+            for x in 32..64 {
+                image.put_pixel(x, y, Rgba([140, 100, 100, 255]));
+            }
+        }
+        image.save(&b).unwrap();
+        let out = dir.join("out");
+        let result = compare_files(&json!({
+            "a": a.display().to_string(),
+            "b": b.display().to_string(),
+            "dir": out.display().to_string(),
+            "grid": 2,
+        }))
+        .unwrap();
+        assert_eq!(result["frames_compared"], 1);
+        assert_eq!(result["b"]["compare"]["max"], 40);
+        assert_eq!(result["b"]["compare"]["over_pct"], 50.0);
+        assert_eq!(result["a"]["compare"]["role"], "reference");
+        assert!(out.join("b_diff.png").is_file());
+        assert!(
+            compare_files(&json!({ "a": a.display().to_string(), "b": "/nonexistent" })).is_err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

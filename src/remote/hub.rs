@@ -1,6 +1,7 @@
 //! Per-application remote-control state shared by the frame loop and request handlers.
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,7 +12,7 @@ use glam::Vec2;
 use serde_json::{json, Value};
 
 use crate::app::{GpuUpdateContext, RuntimeMode, RuntimeStateHandle};
-use crate::renderer::RenderRegion;
+use crate::renderer::{GpuTimings, RenderRegion, RendererStats};
 use crate::scene::{Camera, CameraComponent, InputState, Scene};
 
 use super::capture::FrameCapture;
@@ -25,6 +26,18 @@ pub type RemoteHubHandle = Rc<RefCell<RemoteHub>>;
 
 /// Default longest side of screenshots returned to clients, in pixels.
 const DEFAULT_SCREENSHOT_MAX_SIZE: u32 = 1280;
+/// Frames of renderer figures kept for `stats {history}`.
+pub(crate) const HISTORY_FRAMES: usize = 240;
+
+/// The renderer's figures for one frame, as `stats` reports them, kept so a client can
+/// see the frames around a change rather than only the latest.
+#[derive(Clone)]
+pub(crate) struct FrameRecord {
+    pub frame: u64,
+    pub dt: f64,
+    pub stats: RendererStats,
+    pub gpu: Option<GpuTimings>,
+}
 
 /// Sends the answer to one request back to the connection that made it.
 pub(crate) struct Reply(Sender<Result<Value, String>>);
@@ -84,6 +97,8 @@ pub(super) struct CaptureRequest {
     pub(super) settle_frames: u32,
     /// Displayed 8-bit values to report from the captured image.
     pub(super) probe: PixelProbe,
+    /// Keep the engine's overlays (FPS readout, editor grid) out of the captured frame.
+    pub(super) hide_overlays: bool,
 }
 
 /// Pixels of a screenshot to report as numbers: the final 8-bit values as displayed, after
@@ -211,6 +226,8 @@ pub struct CaptureOverride {
     /// Render the scene at this aspect ratio, in the largest region of that shape that
     /// fits the viewport.
     pub aspect: Option<f32>,
+    /// Leave the editor grid and the engine's overlays out of the frame.
+    pub hide_overlays: bool,
 }
 
 struct Waiter {
@@ -253,6 +270,8 @@ pub struct RemoteHub {
     /// Post-processing every frame is rendered with, over what the scene's volumes blend
     /// to. Render-only: it never touches the scene.
     pub(super) post_process_override: Option<PostProcessOverride>,
+    /// The last frames' renderer figures, oldest first.
+    history: VecDeque<FrameRecord>,
 }
 
 impl RemoteHub {
@@ -287,7 +306,28 @@ impl RemoteHub {
             profile: None,
             visual: None,
             post_process_override: None,
+            history: VecDeque::with_capacity(HISTORY_FRAMES),
         }
+    }
+
+    /// Keep the last rendered frame's renderer figures (call once per frame).
+    pub(crate) fn record_frame(&mut self, stats: RendererStats, gpu: Option<GpuTimings>) {
+        if self.history.len() >= HISTORY_FRAMES {
+            self.history.pop_front();
+        }
+        self.history.push_back(FrameRecord {
+            frame: self.frame,
+            dt: self.last_dt,
+            stats,
+            gpu,
+        });
+    }
+
+    /// The last `frames` recorded frames, oldest first.
+    pub(crate) fn history(&self, frames: usize) -> impl Iterator<Item = &FrameRecord> {
+        self.history
+            .iter()
+            .skip(self.history.len().saturating_sub(frames))
     }
 
     pub fn port(&self) -> u16 {
@@ -414,6 +454,30 @@ impl RemoteHub {
     /// Call once per frame before rendering. A screenshot with its own camera or aspect
     /// ratio gets a frame to itself; [`Self::complete_captures`] then answers only that one.
     pub fn capture_frame_override(&mut self) -> Option<CaptureOverride> {
+        // The overlays stay off from the frame after a clean capture is asked for (its
+        // UI is built before this runs) until it is answered.
+        let hide_overlays = self
+            .captures
+            .first()
+            .is_some_and(|request| request.hide_overlays)
+            || self
+                .visual
+                .as_ref()
+                .is_some_and(|capture| capture.hides_overlays());
+        super::set_overlays_hidden(hide_overlays);
+        let with_overlays = |over: Option<CaptureOverride>| {
+            if hide_overlays {
+                let mut over = over.unwrap_or(CaptureOverride {
+                    camera: None,
+                    aspect: None,
+                    hide_overlays: true,
+                });
+                over.hide_overlays = true;
+                Some(over)
+            } else {
+                over
+            }
+        };
         // A held view renders through the capture's camera for its settle frames first,
         // capturing nothing (later screenshots wait so they never see that camera).
         self.settling = false;
@@ -426,10 +490,11 @@ impl RemoteHub {
             self.settling = true;
             self.capturing_own_frame = false;
             if request.needs_own_frame() {
-                return Some(CaptureOverride {
+                return with_overlays(Some(CaptureOverride {
                     camera: request.view,
                     aspect: request.aspect,
-                });
+                    hide_overlays: false,
+                }));
             }
         }
         let request = self
@@ -437,10 +502,11 @@ impl RemoteHub {
             .first()
             .filter(|request| request.needs_own_frame());
         self.capturing_own_frame = request.is_some();
-        match request {
+        with_overlays(match request {
             Some(request) => Some(CaptureOverride {
                 camera: request.view,
                 aspect: request.aspect,
+                hide_overlays: false,
             }),
             // A visual capture renders every frame through its locked view, so the
             // temporal anti-aliasing history never sees another camera.
@@ -451,8 +517,9 @@ impl RemoteHub {
                 .map(|view| CaptureOverride {
                     camera: Some(view),
                     aspect: None,
+                    hide_overlays: false,
                 }),
-        }
+        })
     }
 
     /// The render-only post-processing override in effect, if any.
@@ -580,6 +647,13 @@ impl RemoteHub {
                     .map_or(DEFAULT_SCREENSHOT_MAX_SIZE, |size| {
                         size.clamp(16, 8192) as u32
                     });
+                // A clean frame needs the UI built after the request arrived, so it is
+                // captured a frame later at the earliest.
+                let hide_overlays = opt_bool(params, "overlays") == Some(false);
+                let settle_frames = opt_u64(params, "settle_frames")
+                    .unwrap_or(0)
+                    .min(600)
+                    .max(u64::from(hide_overlays)) as u32;
                 self.captures.push(CaptureRequest {
                     // An aspect ratio only describes the scene view, so crop to it.
                     viewport_only: viewport_only || aspect.is_some(),
@@ -593,8 +667,9 @@ impl RemoteHub {
                     view: None,
                     aspect,
                     pixels: None,
-                    settle_frames: opt_u64(params, "settle_frames").unwrap_or(0).min(600) as u32,
+                    settle_frames,
                     probe,
+                    hide_overlays,
                     reply: request.reply,
                 });
                 None
@@ -608,10 +683,15 @@ impl RemoteHub {
                 let frames = opt_u64(params, "frames").unwrap_or(0).min(100_000);
                 let seconds = opt_f64(params, "seconds").unwrap_or(0.0).clamp(0.0, 240.0);
                 let start = Instant::now();
+                // `until_frame` waits for an absolute frame number (as `stats` and `wait`
+                // report them), e.g. the frame after a change is known to apply.
+                let until_frame = opt_u64(params, "until_frame")
+                    .unwrap_or(0)
+                    .max(self.frame + frames.max(1));
                 self.waiters.push(Waiter {
                     reply: request.reply,
                     // A wait always spans at least one full frame.
-                    until_frame: self.frame + frames.max(1),
+                    until_frame,
                     deadline: (seconds > 0.0)
                         .then(|| start + std::time::Duration::from_secs_f64(seconds)),
                     start_frame: self.frame,
@@ -631,6 +711,10 @@ pub fn process_requests(
     app: &mut dyn RemoteApp,
 ) {
     let mut hub = hub.borrow_mut();
+    hub.record_frame(
+        ctx.renderer.last_frame_stats(),
+        ctx.renderer.gpu_timings().cloned(),
+    );
     let requests = hub.drain_requests();
     hub.step_visual_capture(ctx);
     if let Some(mut capture) = hub.profile.take() {

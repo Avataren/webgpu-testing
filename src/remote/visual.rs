@@ -253,12 +253,30 @@ pub(crate) struct VisualCapture {
     mode: RuntimeMode,
     time_scale: f64,
     manual: bool,
+    /// Hold the renderer's per-frame noise still while capturing (see
+    /// `Renderer::set_frozen_noise`).
+    freeze_noise: bool,
+    /// Whether this capture froze it (and so unfreezes it when done).
+    froze_noise: bool,
+    /// Keep the FPS readout and editor grid out of the frames.
+    hide_overlays: bool,
 }
 
 impl VisualCapture {
     /// The camera the capture renders through.
     pub(crate) fn view(&self) -> Option<Camera> {
         self.view
+    }
+
+    pub(crate) fn hides_overlays(&self) -> bool {
+        self.hide_overlays
+    }
+
+    /// Let the renderer's noise run again if the capture stopped it.
+    fn release_renderer(&mut self, ctx: &mut GpuUpdateContext<'_>) {
+        if std::mem::take(&mut self.froze_noise) {
+            ctx.renderer.set_frozen_noise(false);
+        }
     }
 }
 
@@ -291,6 +309,8 @@ fn parse_inner(params: &Value) -> Result<VisualCapture, String> {
     let max_size = bounded(params, "max_size", 8192, 16, 8192)? as u32;
     let compare = flag(params, "compare", true)?;
     let settle_check = flag(params, "settle_check", true)?;
+    let freeze_noise = flag(params, "freeze_noise", false)?;
+    let hide_overlays = !flag(params, "overlays", false)?;
     let (cols, rows) = parse_grid(params)?;
     let threshold = bounded(params, "threshold", DEFAULT_THRESHOLD, 0, 255)? as u8;
     let gain = parse_gain(params)?;
@@ -423,10 +443,19 @@ fn parse_inner(params: &Value) -> Result<VisualCapture, String> {
         mode: RuntimeMode::Editor,
         time_scale: 1.0,
         manual: false,
+        freeze_noise,
+        froze_noise: false,
+        hide_overlays,
     })
 }
 
-fn bounded(params: &Value, key: &str, default: u64, min: u64, max: u64) -> Result<u64, String> {
+pub(super) fn bounded(
+    params: &Value,
+    key: &str,
+    default: u64,
+    min: u64,
+    max: u64,
+) -> Result<u64, String> {
     let Some(value) = params.get(key).filter(|value| !value.is_null()) else {
         return Ok(default);
     };
@@ -445,7 +474,7 @@ fn flag(params: &Value, key: &str, default: bool) -> Result<bool, String> {
 }
 
 /// `grid`: a number for that many columns and rows, or `[columns, rows]`.
-fn parse_grid(params: &Value) -> Result<(u32, u32), String> {
+pub(super) fn parse_grid(params: &Value) -> Result<(u32, u32), String> {
     let error = || format!("grid must be a number or [columns, rows], each from 1 to {MAX_GRID}");
     let side = |value: &Value| {
         value
@@ -461,7 +490,7 @@ fn parse_grid(params: &Value) -> Result<(u32, u32), String> {
     }
 }
 
-fn parse_gain(params: &Value) -> Result<f32, String> {
+pub(super) fn parse_gain(params: &Value) -> Result<f32, String> {
     match params.get("diff_gain") {
         None | Some(Value::Null) => Ok(DEFAULT_DIFF_GAIN as f32),
         Some(value) => value
@@ -472,7 +501,7 @@ fn parse_gain(params: &Value) -> Result<f32, String> {
     }
 }
 
-fn default_dir() -> PathBuf {
+pub(super) fn default_dir() -> PathBuf {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
@@ -507,6 +536,7 @@ impl RemoteHub {
             Ok(false) => self.visual = Some(capture),
             Ok(true) => {
                 capture.restore(self);
+                capture.release_renderer(ctx);
                 let result = capture.finish(self, ctx);
                 if let Some(reply) = capture.reply.take() {
                     reply.send(result);
@@ -514,11 +544,13 @@ impl RemoteHub {
             }
             Err(message) => {
                 capture.restore(self);
+                capture.release_renderer(ctx);
                 if let Some(reply) = capture.reply.take() {
                     reply.send(Err(message));
                 }
             }
         }
+        super::set_overlays_hidden(false);
     }
 }
 
@@ -577,7 +609,10 @@ impl VisualCapture {
             return true;
         };
         let renderer = &ctx.renderer;
-        if renderer.postprocess_settings().anti_aliasing != AntiAliasing::Taa {
+        // With the jitter held still every frame is at the same phase already.
+        if renderer.frozen_noise()
+            || renderer.postprocess_settings().anti_aliasing != AntiAliasing::Taa
+        {
             return true;
         }
         renderer.jitter_index().wrapping_add(1) % renderer.jitter_period() == target
@@ -593,6 +628,10 @@ impl VisualCapture {
         self.started_frame = hub.frame();
         self.scene_time_at_start = scene.time();
         self.previous_override = hub.post_process_override.clone();
+        if self.freeze_noise && !ctx.renderer.frozen_noise() {
+            ctx.renderer.set_frozen_noise(true);
+            self.froze_noise = true;
+        }
         if let Some(runtime) = hub.runtime_handle() {
             self.mode = runtime.active_mode();
             self.time_scale = runtime.time_scale();
@@ -639,6 +678,7 @@ impl VisualCapture {
             pixels: pixel_sender,
             settle_frames: 0,
             probe: Default::default(),
+            hide_overlays: self.hide_overlays,
         });
         self.pending = Some(PendingImage {
             receiver,
@@ -818,6 +858,10 @@ impl VisualCapture {
                 "engine_frames": hub.frame() - self.started_frame,
             },
             "simulation": simulation,
+            "render": {
+                "noise_frozen": self.freeze_noise,
+                "overlays_hidden": self.hide_overlays,
+            },
             "warnings": warnings,
             "variants": variants,
         });

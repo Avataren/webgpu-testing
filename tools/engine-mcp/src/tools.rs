@@ -39,7 +39,7 @@ impl Tool {
                 vec!["ok", "project", "files_checked", "errors", "warnings"],
             ),
             "profile_capture" => (
-                json!({"samples":{"type":"integer"},"frame_time_ms":{"type":"object"},"stages_ms":{"type":"object"},"growth":{"type":"object"},"slow_scripts":{"type":"array","items":{"type":"object"}}}),
+                json!({"samples":{"type":"integer"},"frame_time_ms":{"type":"object"},"stages_ms":{"type":"object"},"gpu_total_ms":{"type":["object","null"]},"gpu_stages_ms":{"type":"object"},"renderer_counters":{"type":"object"},"growth":{"type":"object"},"slow_scripts":{"type":"array","items":{"type":"object"}}}),
                 vec![
                     "samples",
                     "frame_time_ms",
@@ -82,10 +82,12 @@ impl Tool {
                 | "prefab_inspect"
                 | "project_validate"
                 | "profile_capture"
+                | "visual_compare"
+                | "engine_profile_cpu"
         );
         json!({"readOnlyHint": read_only, "destructiveHint": !read_only,
             "openWorldHint": matches!(self.name, "web_playtest" | "engine_call"),
-            "idempotentHint": read_only && self.name != "profile_capture"})
+            "idempotentHint": read_only && !matches!(self.name, "profile_capture" | "engine_profile_cpu")})
     }
 }
 
@@ -307,7 +309,20 @@ pub fn tools() -> Vec<Tool> {
                 "restart": { "type": "boolean", "description": "Stop an engine this server started before launching" },
                 "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Child environment overrides, e.g. DISPLAY=:0 or WAYLAND_DISPLAY plus XDG_RUNTIME_DIR. Desktop environment is checked before building on Linux. Omitted values inherit from the MCP server." },
                 "monitor": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Monitor for the window: 1-based number, output name (e.g. HDMI-A-0) or primary. Defaults to settings.json / ENGINE_MONITOR; respect the user's choice and don't override it without reason." },
+                "window_size": { "type": "array", "items": { "type": "integer", "minimum": 16 }, "minItems": 2, "maxItems": 2, "description": "[width, height] the window opens at (ENGINE_WINDOW_SIZE), e.g. [800, 450] for a light test window; the default is settings.json's resolution" },
+                "binary": { "type": "string", "description": "Run this executable instead of building target: an engine built elsewhere, e.g. a baseline commit's target/baseline/release/editor or examples/sponza, for A/B comparisons. Launched with the same environment and port handling (ENGINE_SHADER_RELOAD=0, so it keeps its built-in shaders); target still names what it is (editor, player or an example) and build is ignored" },
                 "timeout_seconds": { "type": "number", "description": "How long to wait for the engine to start (default 120)" }
+            }), &[]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "engine_profile_cpu",
+            description: "Sample the running engine's CPU with perf for a few seconds and return the hottest symbols (self time, by shared object), for finding where CPU frame time goes when engine_stats' render_gpu or ui_build look high. Needs Linux perf and a process this server launched (or pid). Returns the top symbols with their share of samples; functions are demangled Rust paths.",
+            schema: object(json!({
+                "seconds": { "type": "number", "minimum": 1, "maximum": 30, "default": 4, "description": "How long to sample" },
+                "top": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25, "description": "Symbols to return" },
+                "pid": { "type": "integer", "description": "Process to sample instead of the engine this server launched" },
+                "callers": { "type": "boolean", "default": false, "description": "Attribute time to callers too (perf --children), to see which frame stage a hot leaf belongs to" }
             }), &[]),
             action: Action::Local,
         },
@@ -381,8 +396,11 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "engine_stats",
-            description: "Frame time, fps, CPU time per frame stage, GPU time per render stage (renderer.gpu, from timestamp queries; native only), entity/script counts, draw calls and asset counts.",
-            schema: empty(),
+            description: "Frame time, fps, CPU time per frame stage, GPU time per render stage (renderer.gpu, from timestamp queries; native only), entity/script counts, draw calls (with shadow views rendered/cached and culled instances) and asset counts. history: N adds one row per frame for the last N frames (draw calls, shadow views, culled instances, GPU stage times), oldest first, to see the frames around a change instead of only the latest; compact drops the explanatory notes.",
+            schema: object(json!({
+                "history": { "type": "integer", "minimum": 1, "maximum": 240, "description": "Also return the renderer figures of the last N frames, one row each" },
+                "compact": { "type": "boolean", "description": "Leave out the notes that explain the fields" }
+            }), &[]),
             action: Action::Engine("stats"),
         },
         Tool {
@@ -563,7 +581,8 @@ pub fn tools() -> Vec<Tool> {
             description: "Let the engine run for a number of frames and/or seconds, then return. Use after play, input or script changes before inspecting or taking a screenshot.",
             schema: object(json!({
                 "frames": { "type": "integer" },
-                "seconds": { "type": "number", "description": "Up to 240" }
+                "seconds": { "type": "number", "description": "Up to 240" },
+                "until_frame": { "type": "integer", "description": "Return once the engine has completed this absolute frame number (as engine_stats and wait report it), e.g. a frame after a change was applied" }
             }), &[]),
             action: Action::Engine("wait"),
         },
@@ -919,9 +938,31 @@ pub fn tools() -> Vec<Tool> {
                 "settle_check": { "type": "boolean", "default": true, "description": "Read back the last 16 settle frames of each variant to see whether TAA history stopped changing (costs one GPU readback per frame; false skips it)" },
                 "camera": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "object" }], "description": "The view to lock: \"game\", a camera entity, or a pose {position, target, fov_deg} (as for screenshot). Default: the current view camera." },
                 "dir": { "type": "string", "description": "Directory for the PNGs and manifest.json (default: a new folder under the system temp directory)" },
-                "max_size": { "type": "integer", "minimum": 16, "maximum": 8192, "default": 8192, "description": "Longest side in pixels; larger frames are scaled down" }
+                "max_size": { "type": "integer", "minimum": 16, "maximum": 8192, "default": 8192, "description": "Longest side in pixels; larger frames are scaled down" },
+                "freeze_noise": { "type": "boolean", "default": false, "description": "Hold the renderer's per-frame noise still while capturing (TAA jitter phase, grain and dither pattern, live light probe updates), so an unchanged view renders the same image every frame and captures compare exactly, also across builds (visual_compare). Temporal history still needs settle_frames" },
+                "overlays": { "type": "boolean", "default": false, "description": "Keep the FPS readout and editor grid in the frames (off by default, so they do not count as differences)" }
             }), &[]),
             action: Action::Engine("visual.capture"),
+        },
+        Tool {
+            name: "visual_compare",
+            description: "Compare two saved captures without rendering, with visual_capture's metrics: a and b are PNG files or visual_capture directories (variant picks one of a directory's variants, else the first). b is compared with a as a variant with its baseline: mean and smooth (8x8 block mean) difference in 8-bit levels, max, share of pixels over threshold, per region; with two or more images a side, the noise between consecutive images and whether b differs beyond it. Writes b_diff.png (amplified) to dir. For comparing builds: capture the same frozen view in each (visual_capture, ideally freeze_noise: true, or screenshot {save_path, overlays: false}), then compare the files or directories.",
+            schema: object(json!({
+                "a": { "type": "string", "description": "Reference: a PNG file or a visual_capture directory" },
+                "b": { "type": "string", "description": "The capture to compare with it" },
+                "variant": { "type": "string", "description": "For directories: the variant to take the images from (default the first, usually baseline)" },
+                "grid": { "anyOf": [{ "type": "integer", "minimum": 1, "maximum": 16 }, { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 16 }, "minItems": 2, "maxItems": 2 }], "default": 4, "description": "Regions to compare: N for N x N, or [columns, rows]" },
+                "threshold": { "type": "integer", "minimum": 0, "maximum": 255, "default": 4, "description": "A pixel counts as different above this many 8-bit levels" },
+                "diff_gain": { "type": "number", "minimum": 1, "maximum": 255, "default": 16, "description": "Amplification of the difference image" },
+                "dir": { "type": "string", "description": "Where the difference image goes (default: a new folder under the system temp directory)" }
+            }), &["a", "b"]),
+            action: Action::Engine("visual.compare"),
+        },
+        Tool {
+            name: "render_freeze_noise",
+            description: "Hold the renderer's per-frame noise still (enabled: true) or let it run again (false): the TAA jitter stays at its phase, film grain and dither keep their pattern, and light probes stop tracing new rays (a bake pauses too). With the scene and camera unchanged every frame then renders the same image, so screenshots taken in different builds or sessions compare exactly (visual_compare). Temporal history keeps accumulating, so wait a few frames after freezing. Capture-only: anti-aliasing is slightly worse while on, so turn it off afterwards.",
+            schema: object(json!({ "enabled": { "type": "boolean", "default": true } }), &[]),
+            action: Action::Engine("render.freeze_noise"),
         },
         Tool {
             name: "texture_fetch",
@@ -1089,6 +1130,9 @@ pub fn tools() -> Vec<Tool> {
                 tool.schema["properties"]["dry_run"] = json!({"type":"boolean","description":"Validate a speculative scene transaction without committing (implies atomic)"});
                 tool.schema["properties"]["calls"]["items"]["properties"]["as"] = json!({"type":"string","description":"Name this result for later {$ref: alias/id} references"});
             }
+            "screenshot" => {
+                tool.schema["properties"]["overlays"] = json!({"type":"boolean","default":true,"description":"false keeps the FPS readout and the editor grid out of the frame (captured a frame later, so the UI can be rebuilt without them): for clean images and build-to-build comparisons with visual_compare"});
+            }
             "runtime_set" => {
                 tool.schema["properties"]["manual"] = json!({"type":"boolean","description":"Before play: freeze automatic Lua/animation updates; advance using runtime_step"});
                 tool.schema["properties"]["seed"] = json!({"type":"integer","minimum":0,"description":"Seed Lua's PRNG before scripts load and on_created runs"});
@@ -1130,7 +1174,7 @@ fn additional_tools() -> Vec<Tool> {
         Tool{name:"prefab_create",description:"Editor: save an entity hierarchy as a portable scene document, embedding procedural geometry and resetting its root transform. Registers the document for scene_instance. Save the project to persist registration.",schema:object(json!({"entity":entity_ref(),"name":{"type":"string"}}),&["entity","name"]),action:Action::Engine("prefab.create")},
         Tool{name:"prefab_inspect",description:"Editor: inspect a prefab source, linked instance entities and serialized instance overrides.",schema:object(json!({"document_id":{"type":"string"}}),&["document_id"]),action:Action::Engine("prefab.inspect")},
         Tool{name:"prefab_update",description:"Editor: replace a prefab source with a selected hierarchy. New instances use the new source; existing instances keep current values until recreated or reopened. Save the project to persist registration.",schema:object(json!({"entity":entity_ref(),"document_id":{"type":"string"}}),&["entity","document_id"]),action:Action::Engine("prefab.update")},
-        Tool{name:"profile_capture",description:"Sample consecutive engine frames and report median/p95/p99 CPU frame and stage times, script cost and entity/asset growth. Optional baseline compares frame latency. Measure player performance; GPU execution timestamps are not included.",schema:object(json!({"frames":{"type":"integer","minimum":2,"maximum":10000,"default":300},"baseline":{"type":"object"}}),&[]),action:Action::Engine("profile.capture")},
+        Tool{name:"profile_capture",description:"Sample consecutive engine frames and report median/p95/p99/max of CPU frame and stage times, of the GPU time per render stage and in total (gpu_stages_ms, gpu_total_ms, from timestamp queries; native only), the renderer counters' min/max/last (draw calls, shadow views rendered/cached, culled instances), script cost and entity/asset growth. Optional baseline compares frame latency. Prefer the GPU percentiles over a single engine_stats reading when another process shares the GPU.",schema:object(json!({"frames":{"type":"integer","minimum":2,"maximum":10000,"default":300},"baseline":{"type":"object"}}),&[]),action:Action::Engine("profile.capture")},
         Tool{name:"mesh_sweep",description:"Sweep a circular or polygon cross-section along an open 3D polyline, with transported frames, UVs, normals, tangents and caps. Sharp bends may self-intersect. Geometry is persisted by project_save.",schema:object(Value::Object(sweep),&["path"]),action:Action::Engine("mesh.sweep")},
         Tool{name:"mesh_heightfield",description:"Generate XZ terrain with upward slope normals from explicit heights, an image or seeded fractal noise. UVs/tangents and embedded geometry persist with project_save. Shares the procedural vertex budget.",schema:object(Value::Object(terrain),&[]),action:Action::Engine("mesh.heightfield")},
         Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files. The browser block is a preflight for web builds: assets web_build would not serve (only project.json and content/ are staged), files differing only in case, and Lua calls that need a file system.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},

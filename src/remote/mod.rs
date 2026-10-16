@@ -61,6 +61,19 @@ pub const DEFAULT_EDITOR_PORT: u16 = 47811;
 /// Environment variable that enables the server on a port, or disables it with `off`.
 pub const PORT_ENV_VAR: &str = "ENGINE_REMOTE_PORT";
 
+static OVERLAYS_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the engine's own overlays (the FPS readout) stay off the frame being built,
+/// because a capture asked for a clean image (`screenshot` / `visual.capture` with
+/// `overlays: false`). The UI checks it when it draws them.
+pub fn overlays_hidden() -> bool {
+    OVERLAYS_HIDDEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn set_overlays_hidden(hidden: bool) {
+    OVERLAYS_HIDDEN.store(hidden, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Hooks an application implements to extend or observe remote control.
 ///
 /// [`crate::RenderApplication`] forwards to this; plain [`crate::AppBuilder`] users can

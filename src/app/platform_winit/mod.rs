@@ -682,6 +682,7 @@ where
                         render_region,
                         camera_override,
                         post_process_override,
+                        hide_overlays: capture_override.is_some_and(|over| over.hide_overlays),
                     };
 
                     let result =

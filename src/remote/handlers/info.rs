@@ -76,6 +76,64 @@ fn fps(dt: f64) -> Value {
 }
 
 pub(super) fn stats(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    stats_with(&json!({}), ctx)
+}
+
+/// `stats` with its parameters: `compact` drops the explanatory notes, `history: N`
+/// adds the renderer figures of the last N frames (oldest first), so the frames around
+/// a change can be read rather than only the latest.
+pub(super) fn stats_with(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
+    let compact = super::super::json::opt_bool(params, "compact").unwrap_or(false);
+    let history = super::super::json::opt_u64(params, "history")
+        .map(|frames| frames.clamp(1, crate::remote::hub::HISTORY_FRAMES as u64) as usize);
+    let mut result = stats_now(ctx)?;
+    if compact {
+        if let Some(object) = result.as_object_mut() {
+            object.remove("frame_breakdown_note");
+            if let Some(gpu) = object
+                .get_mut("renderer")
+                .and_then(|renderer| renderer.get_mut("gpu"))
+                .and_then(Value::as_object_mut)
+            {
+                gpu.remove("note");
+            }
+        }
+    }
+    if let Some(frames) = history {
+        let rows: Vec<Value> = ctx
+            .hub
+            .history(frames)
+            .map(|record| {
+                let stats = &record.stats;
+                json!({
+                    "frame": record.frame,
+                    "frame_time_ms": round((record.dt * 1000.0) as f32),
+                    "draw_calls": stats.total_draw_calls(),
+                    "opaque_draw_calls": stats.opaque_draw_calls,
+                    "shadow_draw_calls": stats.shadow_draw_calls,
+                    "shadow_views_rendered": stats.shadow_views_rendered,
+                    "shadow_views_cached": stats.shadow_views_cached,
+                    "culled_instances": stats.culled_instances,
+                    "instances": stats.instance_count,
+                    "gpu_total_ms": record.gpu.as_ref().map(|gpu| round(gpu.total_ms)),
+                    "gpu_stages_ms": record.gpu.as_ref().map(|gpu| {
+                        gpu.stages
+                            .iter()
+                            .map(|(stage, ms)| ((*stage).to_owned(), json!(round(*ms))))
+                            .collect::<serde_json::Map<String, Value>>()
+                    }),
+                })
+            })
+            .collect();
+        result["history"] = Value::Array(rows);
+        result["history_note"] = json!(
+            "One row per frame, oldest first: the renderer figures of that frame (GPU times              from timestamp queries lag a frame or two). Scene edits made through remote              commands show from the next frame on."
+        );
+    }
+    Ok(result)
+}
+
+fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let stats = ctx.gpu.renderer.last_frame_stats();
     let dt = ctx.hub.last_dt();
     let scene = &ctx.gpu.scene;

@@ -48,7 +48,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "engine.methods",
         "List the methods this application understands",
     ),
-    ("stats", "Frame time and renderer statistics"),
+    (
+        "stats",
+        "Frame time and renderer statistics; {history: N} adds the last N frames' renderer figures, {compact: true} drops the notes",
+    ),
     (
         "scene.entities",
         "Flat list of entities, filterable by name or component",
@@ -197,7 +200,15 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "visual.capture",
         "Capture consecutive frames of one frozen view under several render-only post-process variants",
     ),
-    ("wait", "Answer after a number of frames and/or seconds"),
+    (
+        "visual.compare",
+        "Compare two saved captures (PNG files, or visual.capture directories) with the same noise-aware metrics, without rendering",
+    ),
+    (
+        "render.freeze_noise",
+        "Hold the per-frame noise still ({enabled}): TAA jitter phase, grain and dither, live light probe updates; for exact captures",
+    ),
+    ("wait", "Answer after a number of frames and/or seconds, or until an absolute frame ({until_frame})"),
 ];
 
 pub(crate) fn profile_sample(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
@@ -266,7 +277,13 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "project.validate" => validate_project(params),
         "engine.info" => info::engine_info(ctx),
         "engine.methods" => Ok(methods(ctx)),
-        "stats" => info::stats(ctx),
+        "stats" => info::stats_with(params, ctx),
+        "visual.compare" => super::visual_compare::compare_files(params),
+        "render.freeze_noise" => {
+            let enabled = super::json::opt_bool(params, "enabled").unwrap_or(true);
+            ctx.gpu.renderer.set_frozen_noise(enabled);
+            Ok(json!({ "frozen_noise": enabled }))
+        }
         "scene.entities" => info::scene_entities(params, ctx),
         "scene.tree" => info::scene_tree(params, ctx),
         "scene.mark" => diff::mark(ctx),

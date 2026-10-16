@@ -367,6 +367,13 @@ agent workflow.
   lists what the running app supports.
 - **Threading**: `remote/server.rs` accepts connections on background threads and
   forwards requests over a channel. Nothing touches the scene off the main thread.
+- **Frame history and noise freeze**: the hub keeps the last 240 frames' renderer
+  statistics and GPU timings (`stats {history}`); `render.freeze_noise` /
+  `Renderer::set_frozen_noise` holds the TAA jitter, the post-process clock (grain,
+  dither) and live light probe updates still so captures compare exactly;
+  `visual.compare` runs the capture comparison over saved images; `screenshot` and
+  `visual.capture` can hide the FPS readout and editor grid (`overlays: false`, read by the
+  UI through `remote::overlays_hidden`).
 - **Execution**: `remote::process_requests` runs as a GPU system registered after the
   app's own (see `build_winit_app_internal`). Each request goes first to
   `RenderApplication::remote_command` (the editor handles projects, scene tabs,

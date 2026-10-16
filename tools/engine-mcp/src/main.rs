@@ -57,6 +57,17 @@ restores the pre-play scene.
 
 Look at the result (screenshot) after visual changes instead of assuming they worked.
 
+Measuring: engine_stats gives one frame (renderer.gpu holds GPU milliseconds per stage from \
+timestamp queries, the stat to trust when another process shares the GPU); \
+engine_stats {history: N} the last N frames, one row each, to see the frames around a change; \
+profile_capture {frames} percentiles over many frames, CPU stages and GPU stages alike; \
+engine_profile_cpu the hottest CPU symbols. wait {until_frame} waits for an absolute frame. \
+Comparing images: visual_capture compares post-process variants of one frozen view; to compare \
+builds or sessions, capture the same view in each (visual_capture with freeze_noise: true, or \
+screenshot {save_path, overlays: false} after render_freeze_noise) and run visual_compare on \
+the files or directories. engine_launch {binary, window_size} runs a baseline build from \
+another tree in a small window.
+
 Troubleshooting: an error reading \"MCP tool call requires approval, but approval policy is never\" \
 comes from the MCP client, not the engine: its approval policy forbids calls that need \
 confirmation (reads may still work while edits are refused). Allow this server's tools in the \
@@ -400,6 +411,7 @@ impl Server {
             "web_playtest" => self.web_playtest(args),
             "batch" => self.batch(args),
             "engine_launch" => self.launch(args).map(Output::Json),
+            "engine_profile_cpu" => self.profile_cpu(args).map(Output::Json),
             "engine_stop" => self.engine.stop().map(Output::Json),
             "engine_status" => Ok(Output::Json(self.engine.status())),
             "engine_output" => {
@@ -1012,6 +1024,89 @@ impl Server {
         })
     }
 
+    /// Sample the engine process with `perf` and return its hottest symbols.
+    fn profile_cpu(&mut self, args: &Value) -> Result<Value, String> {
+        let pid = match args.get("pid").and_then(Value::as_u64) {
+            Some(pid) => u32::try_from(pid).map_err(|_| "pid is out of range".to_string())?,
+            None => self.engine.managed_pid().ok_or(
+                "no engine process launched by this server is running; pass pid to sample \
+                 another one",
+            )?,
+        };
+        let seconds = args
+            .get("seconds")
+            .and_then(Value::as_f64)
+            .unwrap_or(4.0)
+            .clamp(1.0, 30.0);
+        let top = args
+            .get("top")
+            .and_then(Value::as_u64)
+            .unwrap_or(25)
+            .clamp(1, 100) as usize;
+        let callers = args
+            .get("callers")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if std::process::Command::new("perf")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return Err("perf is not installed (Linux perf tools); CPU sampling needs it".into());
+        }
+        let dir = self.engine.repo.join("target/engine-mcp");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let data = dir.join(format!("perf-{pid}.data"));
+        let record = std::process::Command::new("perf")
+            .args(["record", "-F", "999", "-g", "-p"])
+            .arg(pid.to_string())
+            .arg("-o")
+            .arg(&data)
+            .args(["--", "sleep"])
+            .arg(format!("{seconds}"))
+            .output()
+            .map_err(|err| format!("failed to run perf record: {err}"))?;
+        if !record.status.success() {
+            let stderr = String::from_utf8_lossy(&record.stderr);
+            return Err(format!(
+                "perf record failed ({}): {}",
+                record.status,
+                stderr.trim().lines().last().unwrap_or("")
+            ));
+        }
+        let mut report = std::process::Command::new("perf");
+        report.args(["report", "-i"]).arg(&data).args([
+            "--stdio",
+            "-g",
+            "none",
+            "--percent-limit",
+            "0.2",
+        ]);
+        report.arg(if callers {
+            "--children"
+        } else {
+            "--no-children"
+        });
+        let output = report
+            .output()
+            .map_err(|err| format!("failed to run perf report: {err}"))?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        let (samples, rows) = parse_perf_report(&text, callers);
+        Ok(json!({
+            "pid": pid,
+            "seconds": seconds,
+            "samples": samples,
+            "callers": callers,
+            "top": rows.into_iter().take(top).collect::<Vec<_>>(),
+            "perf_data": data.display().to_string(),
+            "note": if callers {
+                "percent is the share of samples in the symbol or anything it called (children), self_percent in the symbol itself; an idle engine samples little, so look at render-related symbols rather than waits"
+            } else {
+                "percent is the share of CPU samples spent in the symbol itself (self time) over the sampling window, by shared object; the engine sleeps between frames, so a small total share can still be the whole frame cost"
+            },
+        }))
+    }
+
     fn validate_target(&self, target: &str) -> Result<(), String> {
         if matches!(target, "editor" | "player") {
             return Ok(());
@@ -1044,7 +1139,21 @@ impl Server {
             .get("target")
             .and_then(Value::as_str)
             .unwrap_or("editor");
-        self.validate_target(target)?;
+        let binary_override = args.get("binary").and_then(Value::as_str).map(|path| {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                path
+            } else {
+                self.engine.repo.join(path)
+            }
+        });
+        if binary_override.is_none() {
+            self.validate_target(target)?;
+        }
+        let window_size = match args.get("window_size").filter(|v| !v.is_null()) {
+            Some(value) => Some(parse_window_size(value)?),
+            None => None,
+        };
         let project = args.get("project").and_then(Value::as_str).map(|path| {
             let path = PathBuf::from(path);
             if path.is_absolute() {
@@ -1095,8 +1204,20 @@ impl Server {
             if target == "player" && project.is_none() {
                 return Err("the player needs a project directory (project)".into());
             }
-            let env = engine::launch_environment(args.get("env"))?;
-            let binary = if build {
+            let mut env = engine::launch_environment(args.get("env"))?;
+            if let Some((width, height)) = window_size {
+                env.insert("ENGINE_WINDOW_SIZE".into(), format!("{width}x{height}"));
+            }
+            let binary = if let Some(binary) = binary_override {
+                if !binary.is_file() {
+                    return Err(format!("binary {} does not exist", binary.display()));
+                }
+                // A binary from another tree must not pick up this tree's shaders.
+                env.entry("ENGINE_SHADER_RELOAD".into())
+                    .or_insert_with(|| "0".into());
+                report.insert("binary".into(), json!(binary.display().to_string()));
+                binary
+            } else if build {
                 let (binary, summary) = self.engine.build(target, release)?;
                 report.insert("build".into(), json!(summary));
                 binary
@@ -1389,12 +1510,50 @@ fn aggregate_batch(report: &mut Value, calls: &[Value]) {
     }
 }
 
+/// Tools whose results a quiet batch keeps whole (minus the notes): they are the data the
+/// batch was run for, not an echo of what it created.
+const QUIET_KEEPS: &[&str] = &[
+    "engine_stats",
+    "profile_capture",
+    "engine_info",
+    "editor_state",
+    "camera_get",
+    "graphics_get",
+    "postprocess_get",
+    "environment_get",
+    "entity_get",
+    "light_probes_status",
+    "visual_compare",
+    "engine_profile_cpu",
+    "input_state",
+    "script_status",
+];
+
+/// Drop explanatory `note` / `*_note` keys from a result, at any depth.
+fn strip_notes(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|key, _| key != "note" && !key.ends_with("_note"));
+            object.values_mut().for_each(strip_notes);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_notes),
+        _ => {}
+    }
+}
+
 /// Keep batch failures and result identities without echoing generated geometry.
 fn summarize_batch(report: &mut Value) {
     if let Some(results) = report["results"].as_array_mut() {
         for row in results {
+            let keep = row["tool"]
+                .as_str()
+                .is_some_and(|tool| QUIET_KEEPS.contains(&tool));
             if let Some(result) = row.get_mut("result") {
                 if result.get("ok") == Some(&Value::Bool(false)) {
+                    continue;
+                }
+                if keep {
+                    strip_notes(result);
                     continue;
                 }
                 let mut summary =
@@ -1472,6 +1631,81 @@ fn project_is_open(state: &Value, project: &Path) -> bool {
         .is_some_and(|dir| canonical(Path::new(dir)) == canonical(project))
 }
 
+/// `[width, height]` for `engine_launch`'s window_size.
+fn parse_window_size(value: &Value) -> Result<(u32, u32), String> {
+    let pair = value
+        .as_array()
+        .filter(|items| items.len() == 2)
+        .and_then(|items| {
+            let side = |item: &Value| {
+                item.as_u64()
+                    .filter(|side| (16..=16384).contains(side))
+                    .map(|side| side as u32)
+            };
+            side(&items[0]).zip(side(&items[1]))
+        });
+    pair.ok_or_else(|| "window_size must be [width, height] in pixels, each 16 to 16384".into())
+}
+
+/// The sample count and the symbol rows of a `perf report --stdio -g none` listing.
+/// With `children`, each row has two percentages (children, self).
+fn parse_perf_report(text: &str, children: bool) -> (Option<String>, Vec<Value>) {
+    let mut samples = None;
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("# Samples:") {
+            samples = rest
+                .split_whitespace()
+                .next()
+                .map(|count| count.trim_end_matches(',').to_owned());
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut fields = trimmed.split_whitespace();
+        let percent = |field: Option<&str>| {
+            field
+                .and_then(|field| field.strip_suffix('%'))
+                .and_then(|field| field.parse::<f64>().ok())
+        };
+        let Some(first) = percent(fields.next()) else {
+            continue;
+        };
+        let self_percent = if children {
+            match percent(fields.next()) {
+                Some(value) => Some(value),
+                None => continue,
+            }
+        } else {
+            None
+        };
+        // command, shared object, [.]/[k], then the symbol (which may hold spaces).
+        let Some(_command) = fields.next() else {
+            continue;
+        };
+        let Some(object) = fields.next() else {
+            continue;
+        };
+        let rest: Vec<&str> = fields.collect();
+        let symbol = rest
+            .iter()
+            .position(|field| field.starts_with('[') && field.ends_with(']') && field.len() == 3)
+            .map(|index| rest[index + 1..].join(" "))
+            .unwrap_or_else(|| rest.join(" "));
+        if symbol.is_empty() {
+            continue;
+        }
+        let mut row = json!({ "percent": first, "object": object, "symbol": symbol });
+        if let Some(self_percent) = self_percent {
+            row["self_percent"] = json!(self_percent);
+        }
+        rows.push(row);
+    }
+    (samples, rows)
+}
+
 fn pretty(value: &Value) -> String {
     let text = serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string());
     truncate(text)
@@ -1506,6 +1740,43 @@ impl From<CallError> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn perf_report_rows_and_window_sizes_parse() {
+        let text = "# Samples: 1K of event 'cpu/cycles/Pu'\n#\n     3.57%  sponza  libc.so.6  [.] cfree\n     1.96%  sponza  sponza  [.] <wgpu_cube::asset::mesh::Mesh as core::clone::Clone>::clone\n";
+        let (samples, rows) = parse_perf_report(text, false);
+        assert_eq!(samples.as_deref(), Some("1K"));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["percent"], 3.57);
+        assert_eq!(rows[1]["object"], "sponza");
+        assert_eq!(
+            rows[1]["symbol"],
+            "<wgpu_cube::asset::mesh::Mesh as core::clone::Clone>::clone"
+        );
+        let text =
+            "    12.00%     0.50%  editor  editor  [.] wgpu_cube::renderer::Renderer::render\n";
+        let (_, rows) = parse_perf_report(text, true);
+        assert_eq!(rows[0]["percent"], 12.0);
+        assert_eq!(rows[0]["self_percent"], 0.5);
+        assert_eq!(parse_window_size(&json!([800, 450])).unwrap(), (800, 450));
+        assert!(parse_window_size(&json!([8, 450])).is_err());
+        assert!(parse_window_size(&json!("800x450")).is_err());
+    }
+
+    #[test]
+    fn quiet_batches_keep_read_only_results_without_notes() {
+        let mut report = json!({"results": [
+            {"tool": "engine_stats", "result": {"fps": 60.0, "frame_breakdown_note": "x", "renderer": {"gpu": {"total_ms": 1.0, "note": "y"}}}},
+            {"tool": "entity_spawn", "result": {"id": 7, "name": "Cube", "components": ["a", "b"]}}
+        ]});
+        summarize_batch(&mut report);
+        let rows = report["results"].as_array().unwrap();
+        assert_eq!(rows[0]["result"]["fps"], 60.0);
+        assert!(rows[0]["result"].get("frame_breakdown_note").is_none());
+        assert!(rows[0]["result"]["renderer"]["gpu"].get("note").is_none());
+        assert_eq!(rows[0]["result"]["renderer"]["gpu"]["total_ms"], 1.0);
+        assert_eq!(rows[1]["result"]["counts"]["components"], 2);
+    }
 
     #[test]
     fn sequential_batch_errors_set_mcp_error_and_stop() {

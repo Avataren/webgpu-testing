@@ -58,7 +58,7 @@ Options and environment:
 | Area | Tools |
 |---|---|
 | Process | `engine_launch`, `engine_stop`, `engine_status`, `engine_output`, `engine_build` |
-| Overview | `engine_info`, `engine_stats`, `engine_call` (any method), `batch` |
+| Overview | `engine_info`, `engine_stats` (`history`, `compact`), `engine_call` (any method), `batch` |
 | Scene | `scene_list_entities`, `scene_tree`, `entity_get`, `assets_list`, `scene_mark`, `scene_diff` |
 | Editing | `entity_spawn`, `entity_update`, `entity_remove_component`, `entity_delete`, `entity_duplicate` |
 | Scripting | `lua_eval`, `script_status`, `script_reload`, `lua_api_reference` |
@@ -67,13 +67,13 @@ Options and environment:
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
 | Animation | `entity_update {animator}`, `animation_inspect`, `debug_skeleton` (skinned characters; `entity_get` shows `skinned_mesh` and `animator`) |
 | Input | `input_send`, `input_state`, `input_clear` |
-| View | `screenshot`, `visual_capture`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
+| View | `screenshot` (`overlays`), `visual_capture` (`freeze_noise`, `overlays`), `visual_compare`, `render_freeze_noise`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
 | Render debugging | `texture_fetch`, `shader_reload` |
 | Global illumination | `entity_spawn {kind: "light_probe_volume"}`, `light_probes_bake`, `light_probes_status`, `light_probes_debug` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 | Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
 | Prefabs | `prefab_create`, `prefab_inspect`, `prefab_update` (instances use `scene_instance`) |
-| Verification | `runtime_step`, `profile_capture`, `project_validate`, `web_build`, `web_playtest` |
+| Verification | `runtime_step`, `profile_capture` (CPU and GPU percentiles), `engine_profile_cpu` (perf), `project_validate`, `web_build`, `web_playtest` |
 
 Value conventions: meters, Y up, -Z forward; rotations as Euler degrees `[x, y, z]`
 applied yaw, pitch, roll (like Lua's `set_rotation`); colors as `[r, g, b(, a)]` in 0..1
@@ -434,11 +434,23 @@ On a static scene TAA converged within one or two frames, so expect `converged: 
 variant switches on something slow.
 
 `profile_capture {frames: 300}` samples consecutive frames, returning median/p95/p99/max
-frame and stage times, cumulative script-hook cost over the capture, and entity/asset
-growth. Pass an earlier report as `baseline` for latency comparisons. CPU timings include
-submission and display waits; they do not measure GPU execution. Use the player to measure
-game costs without editor overhead. Reloading/despawning scripts during a capture can
-reset or remove their cumulative counters.
+frame and stage times, the same percentiles of the GPU time per render stage and in total
+(`gpu_stages_ms`, `gpu_total_ms`, from timestamp queries, native only), the renderer
+counters' min/max/last (`renderer_counters`: draw calls, shadow views rendered and cached,
+culled instances), cumulative script-hook cost over the capture, and entity/asset growth.
+Pass an earlier report as `baseline` for latency comparisons. CPU timings include
+submission and display waits; the GPU figures are what to compare when another process
+shares the GPU. Use the player to measure game costs without editor overhead.
+Reloading/despawning scripts during a capture can reset or remove their cumulative
+counters.
+
+`engine_stats {history: N}` returns the last N frames' renderer figures one row each (to
+see the frame where a change applied); `wait {until_frame}` waits for an absolute frame.
+`engine_profile_cpu {seconds}` samples the engine with Linux `perf` and lists the hottest
+symbols. `visual_compare {a, b}` compares saved captures (files or `visual_capture`
+directories) with `visual_capture`'s metrics; capture with `freeze_noise: true` (or
+`render_freeze_noise` then `screenshot {overlays: false}`) so unchanged views match exactly.
+`engine_launch {binary, window_size}` runs a build from another tree in a small window.
 
 ## Troubleshooting
 

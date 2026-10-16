@@ -234,6 +234,9 @@ pub struct PostProcess {
     /// The occlusion targets hold white (no occlusion) from a frame that ran no ambient
     /// occlusion, so the next such frame need not clear them again.
     ssao_cleared: bool,
+    /// The frame clock stands still (grain and dither keep their pattern), see
+    /// `Renderer::set_frozen_noise`.
+    clock_frozen: bool,
     /// How last frame's reflections were traced (Some(true) = ray traced), None when
     /// none ran: the reflection history only carries over while this stays the same.
     reflection_history: Option<bool>,
@@ -712,6 +715,7 @@ impl PostProcess {
             particles_traced: false,
             taa_history_valid: false,
             ssao_cleared: false,
+            clock_frozen: false,
             reflection_history: None,
             temporal_routing: (false, false),
             lut: LutTexture::new(device, queue),
@@ -866,8 +870,16 @@ impl PostProcess {
             }
         }
         self.camera = camera;
-        self.clock.tick();
+        if !self.clock_frozen {
+            self.clock.tick();
+        }
         self.upload_uniform(queue);
+    }
+
+    /// Stop (or resume) the frame clock that animates grain and dither and paces
+    /// exposure adaptation; frozen, every frame reuses the last tick's values.
+    pub fn set_frozen_clock(&mut self, frozen: bool) {
+        self.clock_frozen = frozen;
     }
 
     pub fn scene_color_views(&self) -> (&wgpu::TextureView, Option<&wgpu::TextureView>) {

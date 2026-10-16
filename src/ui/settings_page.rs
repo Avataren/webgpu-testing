@@ -68,7 +68,7 @@ pub fn show_engine_overlays(ctx: &egui::Context, view: egui::Rect, fps: &mut Fps
         )
     };
 
-    if settings.show_fps {
+    if settings.show_fps && !crate::remote::overlays_hidden() {
         if let Some(fps) = fps {
             draw_fps(ctx, view, fps);
         }

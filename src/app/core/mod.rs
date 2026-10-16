@@ -414,7 +414,7 @@ impl AppCore {
         renderer.set_camera(&camera, aspect);
         // A frame rendered through another camera (a game-camera screenshot) is a preview
         // of the game, so the editor's grid stays out of it.
-        renderer.set_editor_overlays(params.camera_override.is_none());
+        renderer.set_editor_overlays(params.camera_override.is_none() && !params.hide_overlays);
 
         let render_result = scene.render(
             renderer,

@@ -58,6 +58,25 @@ impl HdrOutputSetting {
 /// Environment variable that overrides [`RenderSettings::monitor`].
 pub const MONITOR_ENV_VAR: &str = "ENGINE_MONITOR";
 
+/// Environment variable that overrides [`RenderSettings::resolution`] (the initial window
+/// size) as `WIDTHxHEIGHT`, e.g. `ENGINE_WINDOW_SIZE=800x450`.
+pub const WINDOW_SIZE_ENV_VAR: &str = "ENGINE_WINDOW_SIZE";
+
+/// Parse a `WIDTHxHEIGHT` (or `WIDTH,HEIGHT`) window size.
+pub fn parse_window_size(text: &str) -> Option<Resolution> {
+    let text = text.trim();
+    let (width, height) = text
+        .split_once(['x', 'X', ','])
+        .map(|(width, height)| (width.trim(), height.trim()))
+        .or_else(|| {
+            let mut parts = text.split_whitespace();
+            Some((parts.next()?, parts.next()?))
+        })?;
+    let (width, height) = (width.parse::<u32>().ok()?, height.parse::<u32>().ok()?);
+    ((16..=16384).contains(&width) && (16..=16384).contains(&height))
+        .then_some(Resolution { width, height })
+}
+
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
@@ -94,6 +113,14 @@ impl RenderSettings {
                 match HdrOutputSetting::parse(&value) {
                     Some(mode) => settings.hdr_output = mode,
                     None => warn!("Ignoring {HDR_ENV_VAR}={value:?}; use off, auto or simulate"),
+                }
+            }
+            if let Ok(value) = std::env::var(WINDOW_SIZE_ENV_VAR) {
+                match parse_window_size(&value) {
+                    Some(resolution) => settings.resolution = resolution,
+                    None => warn!(
+                        "Ignoring {WINDOW_SIZE_ENV_VAR}={value:?}; use WIDTHxHEIGHT such as 800x450"
+                    ),
                 }
             }
             settings
@@ -259,6 +286,16 @@ impl PresentModeSetting {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn window_size_parses_width_by_height() {
+        let size = super::parse_window_size("800x450").unwrap();
+        assert_eq!((size.width, size.height), (800, 450));
+        let size = super::parse_window_size(" 1280 , 720 ").unwrap();
+        assert_eq!((size.width, size.height), (1280, 720));
+        assert!(super::parse_window_size("800").is_none());
+        assert!(super::parse_window_size("0x10").is_none());
+    }
+
     use super::*;
 
     fn invalid_settings() -> RenderSettings {

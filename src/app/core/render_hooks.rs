@@ -10,6 +10,9 @@ pub struct RenderParams {
     /// Post-processing to render with on top of what the scene's volumes blend to. Never
     /// stored in the scene.
     pub post_process_override: Option<crate::remote::PostProcessOverride>,
+    /// Leave the editor's overlays (the grid) out of this frame: a capture asked for a
+    /// clean image.
+    pub hide_overlays: bool,
 }
 
 pub enum RenderResult {

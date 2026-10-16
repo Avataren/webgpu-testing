@@ -338,8 +338,32 @@ Facts that change how you write scripts:
   raise `settle_frames` (a verdict needs 16 frames of it; null means too few). TAA variants are
   lined up on the baseline's jitter phase, so identical settings come out `differs: false`. `compare: false` only saves the images. After a new build, restart the
   MCP server (/mcp) or the client sends typed parameters such as `compare` as strings.
-- `profile_capture {frames}` captures CPU latency percentiles, stage/script cost and asset
-  growth. `baseline` compares a previous report. It does not measure GPU execution.
+- `visual_compare {a, b}` compares two saved captures (PNG files, or `visual_capture`
+  directories; `variant` picks one) with the same metrics, without rendering: the way to
+  compare builds or sessions. Capture the same view in each with `visual_capture
+  {freeze_noise: true}` (holds TAA jitter, grain/dither and live light-probe updates still, so
+  an unchanged view renders identically; overlays are left out by default) or with
+  `render_freeze_noise` + `screenshot {save_path, overlays: false}` (`overlays: false` drops
+  the FPS readout and editor grid; the frame is taken one frame later). Turn
+  `render_freeze_noise {enabled: false}` back afterwards: it slightly reduces anti-aliasing.
+- `profile_capture {frames}` captures percentiles of CPU frame/stage times and of the GPU
+  time per render stage (`gpu_stages_ms`, `gpu_total_ms`, from timestamp queries), the
+  renderer counters' min/max/last (`renderer_counters`: draw calls, shadow views
+  rendered/cached, culled instances), script cost and asset growth. `baseline` compares a
+  previous report. Prefer its GPU percentiles over one `engine_stats` reading when another
+  process shares the GPU.
+- `engine_stats {history: N}` adds one row per frame for the last N frames (draw calls,
+  shadow views rendered/cached, culled instances, GPU stage times), oldest first: use it to
+  see the frame where a change applied (remote edits show from the next frame on) instead
+  of racing a single reading; `compact: true` drops the notes. `wait {until_frame}` waits for
+  an absolute frame number.
+- `engine_profile_cpu {seconds, top}` samples the engine with Linux `perf` and returns the
+  hottest symbols (self time by shared object; `callers: true` attributes to callers too),
+  for when `render_gpu` or `ui_build` look high. `pid` samples an engine not launched here.
+- `engine_launch {binary, window_size}` runs a binary built elsewhere (a baseline commit in a
+  worktree, see the test-bed notes) with the same port handling and `ENGINE_SHADER_RELOAD=0`,
+  and opens the window at `[width, height]` (`ENGINE_WINDOW_SIZE`), e.g. `[800, 450]` to
+  keep test windows light.
 - After `project_save`, call `project_validate` for paths, structure and Lua syntax. Its
   `browser` block is a separate web preflight (assets outside `content/` are not staged,
   case clashes, Lua file-system calls); native `ok: true` does not mean browser-ready.
@@ -392,7 +416,8 @@ printed.
   `engine_stats.renderer.gpu` the GPU milliseconds per render stage (shadows, main,
   acceleration_structures, reflections, post_process, ...) from timestamp queries, a frame
   or two old (native only). Compare GPU costs with those, not fps: other programs (games)
-  may share the GPU and swing the frame rate.
+  may share the GPU and swing the frame rate. Over many frames use `profile_capture`'s
+  `gpu_stages_ms` percentiles; `engine_stats {history: N}` shows the last N frames.
 
 ## When something goes wrong
 
