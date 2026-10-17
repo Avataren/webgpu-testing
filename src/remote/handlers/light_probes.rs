@@ -38,6 +38,9 @@ pub(super) fn bake(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRes
         }
         None => None,
     };
+    if let Some(times) = params.get("times_of_day").filter(|value| !value.is_null()) {
+        return bake_day(ctx, times, volumes, warmup, sweeps, rays);
+    }
     let frames =
         ctx.gpu
             .renderer
@@ -55,6 +58,58 @@ pub(super) fn bake(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteRes
             "One update per frame, one volume after another: wait about {frames} frames, then \
              light_probes.status (each volume's baked: its saved file, under \
              content/lighting/). Save the project afterwards to keep the volumes' baked paths."
+        ),
+    }))
+}
+
+/// Bake at several hours of the procedural sky's day, into files whose light follows the
+/// time of day.
+fn bake_day(
+    ctx: &mut RemoteContext<'_, '_>,
+    times: &Value,
+    volumes: Option<Vec<u64>>,
+    warmup: u32,
+    sweeps: u32,
+    rays: u32,
+) -> RemoteResult {
+    let hours = match times {
+        Value::String(text) if text == "auto" => None,
+        Value::Array(values) => Some(
+            values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_f64()
+                        .filter(|hours| (0.0..=24.0).contains(hours))
+                        .map(|hours| hours as f32)
+                        .ok_or_else(|| format!("{value} is not an hour of the day (0-24)"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        _ => return Err("times_of_day is \"auto\" or a list of hours (0-24)".into()),
+    };
+    let (hours, frames) = crate::scene::start_day_bake(
+        &mut ctx.gpu.scene,
+        ctx.gpu.renderer,
+        hours,
+        volumes.clone(),
+        warmup,
+        sweeps,
+        rays,
+    )?;
+    Ok(json!({
+        "baking": true,
+        "times_of_day": hours,
+        "volumes": volumes.map_or_else(|| json!("all"), |ids| json!(ids)),
+        "warmup_sweeps": warmup,
+        "sweeps": sweeps,
+        "rays_per_probe": rays,
+        "frames": frames,
+        "note": format!(
+            "The sky is held at each hour in turn while the volumes bake there (about \
+             {frames} frames in all); then each volume's file holds every hour's light, and \
+             the probes show the sky's hour, blended between the two nearest. Watch \
+             light_probes.status; save the project afterwards."
         ),
     }))
 }
@@ -95,6 +150,7 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "relocate": volume.grid.relocate,
                 "baked": volume.baked,
                 "showing_bake": renderer.light_probe_baked_source(id),
+                "keyframe_hours": renderer.light_probe_keyframe_hours(id),
                 "irradiance_region": irradiance,
                 "distance_region": distance,
             })
@@ -106,6 +162,11 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "can_trace": renderer.light_probes_can_trace(),
         "ray_tracing_setting": ray_tracing,
         "bake": progress,
+        "day_bake": ctx.gpu.scene.day_bake().map(|bake| json!({
+            "times_of_day": bake.hours,
+            "baking_hour": bake.hour(),
+            "hours_done": bake.current,
+        })),
         "last_bake": renderer.light_probe_bake_outcome().map(|outcome| match &outcome.result {
             Ok(path) => json!({ "volume": outcome.volume, "saved": path }),
             Err(error) => json!({ "volume": outcome.volume, "error": error }),

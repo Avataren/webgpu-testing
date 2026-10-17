@@ -45,12 +45,14 @@ mod audio;
 #[cfg(feature = "navigation")]
 mod navigation;
 mod physics;
+mod sky;
 
 pub use ai::{AiPanelStatus, AiRequest};
 #[cfg(feature = "navigation")]
 pub use navigation::{NavigationPanelStatus, NavigationRequest, PathTestStatus};
 
 pub use animation::{AnimationPanelStatus, TreeLive};
+pub use sky::{SkyPanelStatus, SkyRequest};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
@@ -124,6 +126,8 @@ pub enum InspectorAction {
     },
     /// Bake the active light probe volume, or show/hide the probes (renderer state).
     LightProbes(LightProbeRequest),
+    /// The procedural sky's clock and lights (its settings go with UpdateEnvironment).
+    Sky(SkyRequest),
     SetCanCastShadow {
         entity: Entity,
         casts_shadow: bool,
@@ -243,6 +247,8 @@ pub enum LightProbeRequest {
     },
     /// Draw the probes as spheres (`None`: don't).
     SetDebug(Option<LightProbeDebugView>),
+    /// Bake every volume at the procedural sky's hours of the day.
+    BakeDay { quality: BakeQuality },
 }
 
 /// How long a light probe bake traces.
@@ -287,6 +293,8 @@ pub struct LightProbePanelStatus {
     pub debug: Option<LightProbeDebugView>,
     /// Whether a project is open (bakes are saved into it).
     pub project_open: bool,
+    /// The procedural sky's clock, for the environment section (None: no sky enabled).
+    pub sky: Option<SkyPanelStatus>,
 }
 
 #[derive(Clone, Debug)]
@@ -387,7 +395,13 @@ pub fn show_entity_inspector(
     );
 
     if let Some(environment) = components.environment.clone() {
-        let header = show_environment_section(ui, entity, environment, &mut actions);
+        let header = show_environment_section(
+            ui,
+            entity,
+            environment,
+            light_probes.sky.as_ref(),
+            &mut actions,
+        );
         removable(
             &header,
             entity,
@@ -2032,11 +2046,13 @@ fn show_environment_section(
     ui: &mut egui::Ui,
     entity: Entity,
     component: EnvironmentComponent,
+    sky: Option<&SkyPanelStatus>,
     actions: &mut Vec<InspectorAction>,
 ) -> egui::Response {
     theme::section(ui, icons::ENVIRONMENT, "Environment", |ui| {
         let mut edited = component.clone();
-        let mut changed = false;
+        let mut changed = sky::show_sky_controls(ui, &mut edited, sky, actions);
+        ui.separator();
 
         ui.horizontal(|ui| {
             ui.label("Clear color");
@@ -2381,6 +2397,23 @@ fn light_probe_bake_controls(
                 quality,
             }));
         }
+        // With the procedural sky: every volume at the day's hours, light that follows
+        // the time of day.
+        if status.sky.is_some() {
+            let day = ui
+                .add_enabled(blocker.is_none(), egui::Button::new("Bake day"))
+                .on_hover_text(
+                    "Bake every volume at several hours of the sky's day (midnight, noon, \
+                     dusk and dawn, the low and the high sun) into files whose light follows \
+                     the time of day: the probes show the sky's hour where they do not trace \
+                     live (the web, GPUs without ray tracing). Takes a bake's time per hour",
+                );
+            if day.clicked() {
+                actions.push(InspectorAction::LightProbes(LightProbeRequest::BakeDay {
+                    quality,
+                }));
+            }
+        }
     });
     ui.data_mut(|data| data.insert_temp(quality_id, quality));
 }
@@ -2508,6 +2541,16 @@ fn show_directional_light_section(
                 if light.shadow_distance < 1.0 {
                     light.shadow_distance = 1.0;
                 }
+
+                ui.label("Follow sky");
+                changed |= ui
+                    .checkbox(&mut light.follow_sky, "")
+                    .on_hover_text(
+                        "Shine as the procedural sky's sun by day and moon by night: \
+                         direction, colour and intensity come from the sky while it is on",
+                    )
+                    .changed();
+                ui.end_row();
 
                 shadow_checkbox_row(ui, entity, casts_shadow, actions);
             });

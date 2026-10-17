@@ -61,6 +61,10 @@ pub struct Scene {
     /// Brains of the main world's `AiAgent`s; they think in play mode after scripts and
     /// before the navigation.
     ai: crate::ai::SceneAi,
+    /// How far the procedural sky's day has run (play mode, or the editor's preview).
+    sky_clock: crate::sky::SkyClock,
+    /// A running bake of the light probes at several hours of the day.
+    day_bake: Option<crate::sky::DayBake>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,6 +98,8 @@ impl Scene {
             #[cfg(feature = "navigation")]
             navigation: crate::navigation::SceneNavigation::new(),
             ai: crate::ai::SceneAi::new(),
+            sky_clock: crate::sky::SkyClock::default(),
+            day_bake: None,
         }
     }
 
@@ -705,6 +711,57 @@ impl Scene {
         self.environment = state;
     }
 
+    /// The procedural sky as it stands now (its clock run on from its date and time), if
+    /// the environment has one enabled.
+    pub fn sky_frame(&self) -> Option<crate::sky::SkyFrame> {
+        let sky = self.environment().active_sky()?;
+        Some(sky.frame(self.sky_clock.elapsed_hours(sky)))
+    }
+
+    /// Start baking the light probes at several hours of the day (the sky is held at
+    /// each in turn; see [`crate::sky::DayBake`]).
+    pub fn start_day_bake(&mut self, bake: crate::sky::DayBake) {
+        self.sky_clock.set_hold(bake.hour().map(f64::from));
+        self.day_bake = Some(bake);
+    }
+
+    pub fn day_bake(&self) -> Option<&crate::sky::DayBake> {
+        self.day_bake.as_ref()
+    }
+
+    /// The running day bake, taken out to step it (put it back with
+    /// [`Self::put_day_bake`], or end it with [`Self::end_day_bake`]).
+    pub fn take_day_bake(&mut self) -> Option<crate::sky::DayBake> {
+        self.day_bake.take()
+    }
+
+    pub fn put_day_bake(&mut self, bake: crate::sky::DayBake) {
+        self.sky_clock.set_hold(bake.hour().map(f64::from));
+        self.day_bake = Some(bake);
+    }
+
+    /// The day bake is over: the sky goes on from where its clock was.
+    pub fn end_day_bake(&mut self) {
+        self.day_bake = None;
+        self.sky_clock.set_hold(None);
+    }
+
+    pub fn sky_clock(&self) -> &crate::sky::SkyClock {
+        &self.sky_clock
+    }
+
+    pub fn sky_clock_mut(&mut self) -> &mut crate::sky::SkyClock {
+        &mut self.sky_clock
+    }
+
+    /// Run the sky's clock by `dt` seconds (it runs while `playing`, or in the editor's
+    /// preview).
+    fn advance_sky(&mut self, dt: f64, playing: bool) {
+        if let Some(sky) = self.environment.environment().active_sky() {
+            self.sky_clock.advance(sky, dt, playing);
+        }
+    }
+
     pub(crate) fn refresh_environment_state(&mut self) {
         let mut state = std::mem::take(&mut self.environment);
         {
@@ -893,6 +950,8 @@ impl Scene {
     /// gives editor-mode scripts their `update(self_entity, dt)` tick.
     pub fn run_editor_scripts(&mut self, dt: f64) {
         self.stepped_time += dt;
+        self.refresh_environment_state();
+        self.advance_sky(dt, false);
         self.refresh_script_view();
         if let Some(main_node) = self.nodes.get_mut(self.main_scene) {
             let world = main_node.instance_mut().world_mut();
@@ -912,8 +971,10 @@ impl Scene {
     }
 
     /// Scripts convert between the screen and the world through the camera as it is now,
-    /// in the shape of the view the renderer last drew into.
+    /// in the shape of the view the renderer last drew into, and read the sky as it is.
     fn refresh_script_view(&mut self) {
+        let sky = self.sky_frame();
+        self.runtime.scripting_mut().set_sky(sky.as_ref());
         let view_proj = self
             .runtime
             .scripting()
@@ -1052,6 +1113,7 @@ impl Scene {
     pub fn update_with_mode(&mut self, dt: f64, editor_mode: bool) {
         self.stepped_time += dt;
         self.refresh_environment_state();
+        self.advance_sky(dt, !editor_mode);
         let absolute_time = self.runtime.advance_time(dt);
         let assets = &mut self.assets;
         let nodes = &mut self.nodes;

@@ -19,6 +19,7 @@ pub(crate) mod shader_material;
 pub(crate) mod shadow_atlas;
 pub(crate) mod shadow_casters;
 pub mod shadows;
+pub(crate) mod sky;
 
 pub(crate) use batches::{OrderedBatch, PreparedBatches};
 pub(crate) use buffers::{CameraBuffer, DynamicObjectsBuffer, LightsBuffer};

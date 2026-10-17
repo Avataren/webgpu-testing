@@ -104,6 +104,20 @@ engine you launched; save first).
   also returns the final displayed 8-bit values there (after tonemapping, AA, grain and
   dither), with mean and standard deviation over `rect`, in the captured image's pixels. `camera_set` edits the game camera entity
   while there is one; prefer a screenshot pose to look around. **Look at the screenshot after visual changes** instead of assuming they worked.
+- **Day and night**: `sky_set {enabled: true}` turns on the procedural sky (Rayleigh/Mie
+  scattering with ozone, stars, the Milky Way, a moon in its phase; it replaces the HDR sky
+  while on) and makes the first directional light follow it (the sun by day, the moon by
+  night; `follow` picks another). Sun and moon take their real paths for `date`, `time`
+  (hours or "HH:MM"), `latitude`, `longitude`, `utc_offset`; north is -Z and east +X
+  (`north_heading` turns it). The clock runs in play mode at `day_length` seconds per day
+  (180 for a three-minute test day), and in the editor with `preview: true`; setting `time`
+  jumps there. `sky_get` reports where the sun and moon are, the moon's phase and the
+  light. Nights are dark by default (`moon_intensity` 0.05: lamps and windows carry them);
+  auto exposure `min_ev` about -4 keeps them dark with dusk still visible; lower `min_ev`
+  or raise `moon_intensity` for brighter nights.
+  `light_probes_bake {times_of_day: "auto"}` bakes the probes at a dozen hours (a plain
+  bake's time each) so baked light (web, no ray tracing) follows the clock. Lua:
+  `sky_info()` (`daylight` 0-1, `night`), `set_time_of_day(h)`.
 - `environment_set` controls background, ambient light and HDR sky. The scene renders
   in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO,
   screen-space reflections (`ssr`: glossy reflections on smooth, low-roughness surfaces),

@@ -394,12 +394,37 @@ end
   nothing is in the way),
   `clear_color` (the background, `{r, g, b[, a]}` or `"#rrggbb"`) and `hdr = { enabled,
   intensity, path, background }` (an HDR sky; `background = false` keeps it to lighting and
-  reflections, with `clear_color` drawn behind the scene). Only the settings you name change; an unknown name is an
+  reflections, with `clear_color` drawn behind the scene) and `sky = {...}` (the procedural
+  sky, see Day and night). Only the settings you name change; an unknown name is an
   error. Undone when play mode stops.
 
 ```lua
 -- Path tracing lights the scene from its emissive surfaces: dim the sky for it.
 set_environment({ ambient_intensity = path_traced() and 0.03 or 0.18 })
+```
+
+### Day and night
+With the procedural sky on (the environment's `sky`; MCP `sky_set`), the sun and the moon
+cross the sky on their real paths for its date and place, and its clock runs in play mode
+at `day_length` real seconds per day.
+
+- `sky_info()` - `nil` without a procedural sky, else `{time, date, day_length,
+  sun_altitude, sun_azimuth, moon_altitude, moon_azimuth, moon_illumination, night,
+  daylight}`: the local time in hours, the date (`"YYYY-MM-DD"`), degrees above the
+  horizon and from north toward east (north is -Z, east +X), the share of the moon lit,
+  whether the sun is more than 6 degrees down, and `daylight` from 0 (night) to 1 (day),
+  in between at dusk and dawn.
+- `set_time_of_day(hours)` - Set the sky's time (its clock goes on from there). Any other
+  sky setting changes with `set_environment({ sky = { day_length = 600, latitude = 60 } })`.
+
+```lua
+-- Light the lanterns as the day fades.
+function update(self, dt)
+    local sky = sky_info()
+    if sky then
+        set_light(self, { intensity = 4.0 * (1.0 - sky.daylight) })
+    end
+end
 ```
 
 ### Particle effects

@@ -18,6 +18,7 @@ mod procedural;
 mod rendering;
 mod scripting;
 mod simulation;
+mod sky;
 mod spatial;
 mod transaction;
 mod voxel;
@@ -195,6 +196,14 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     (
         "graphics.get",
         "The player's graphics settings (display, AA, upscaling, ray tracing, FPS readout)",
+    ),
+    (
+        "sky.get",
+        "The procedural sky: its settings, clock, where the sun and moon are, the light",
+    ),
+    (
+        "sky.set",
+        "Change the procedural sky or its day/night clock (time, date, place, look, preview)",
     ),
     (
         "light_probes.bake",
@@ -422,6 +431,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "texture.fetch" => crate::remote::texture_fetch::fetch(params, ctx.gpu.renderer),
         "shader.reload" => shader_reload(ctx),
         "graphics.get" => graphics::get(),
+        "sky.get" => sky::get(ctx),
+        "sky.set" => sky::set(params, ctx),
         "light_probes.bake" => light_probes::bake(params, ctx),
         "light_probes.status" => light_probes::status(ctx),
         "light_probes.debug" => light_probes::debug(params, ctx),

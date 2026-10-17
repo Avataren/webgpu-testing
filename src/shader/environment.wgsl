@@ -9,6 +9,7 @@ struct EnvironmentSettings {
     flags_intensity: vec4<f32>,  // x: hdr_enabled, y: hdr_intensity, z: ambient_intensity, w: max_lod
     ambient_color: vec4<f32>,    // rgb: tint, a: ambient_intensity (duplicate for driver compatibility)
     traced: vec4<f32>,           // x: 1 while ray-traced global illumination lights opaque surfaces' diffuse light, y: 1 while ray-traced reflections also bring them the sky's reflection
+    sky: SkyParams,              // the procedural sky (sky.wgsl); sky.sun.w is 0 without one
 };
 
 // ============================================================================

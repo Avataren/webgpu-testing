@@ -19,6 +19,7 @@ impl EditorSystem for LightProbeSystem {
     fn gpu_update<'app, 'ctx, 'scene>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'scene>) {
         let last_outcome = &mut self.last_outcome;
         let notifications = ctx.with_gpu_app(|app, gpu| {
+            let playing = app.runtime_state().active_mode() == wgpu_cube::app::RuntimeMode::Playing;
             let mut notifications = Vec::new();
             for request in app.take_light_probe_requests() {
                 match request {
@@ -42,6 +43,29 @@ impl EditorSystem for LightProbeSystem {
                         }
                     }
                     LightProbeRequest::SetDebug(view) => gpu.renderer.set_light_probe_debug(view),
+                    LightProbeRequest::BakeDay { quality } => {
+                        let (warmup, sweeps, rays) = quality.settings();
+                        match wgpu_cube::scene::start_day_bake(
+                            &mut gpu.scene,
+                            gpu.renderer,
+                            None,
+                            None,
+                            warmup,
+                            sweeps,
+                            rays,
+                        ) {
+                            Ok((hours, frames)) => log::info!(
+                                "Light probes: {} bake of {} hours of the day started \
+                                 ({frames} frames)",
+                                quality.label(),
+                                hours.len()
+                            ),
+                            Err(error) => notifications.push(notification(
+                                format!("Light probes: cannot bake the day: {error}"),
+                                NotificationSeverity::Error,
+                            )),
+                        }
+                    }
                 }
             }
 
@@ -89,6 +113,7 @@ impl EditorSystem for LightProbeSystem {
                 bake: renderer.light_probe_bake_progress(),
                 debug: renderer.light_probe_debug(),
                 project_open: wgpu_cube::project::active_project_root().is_some(),
+                sky: sky_status(&gpu.scene, playing),
             };
             let scene = &gpu.scene;
             let world = scene.main_world();
@@ -136,4 +161,32 @@ fn notification(message: String, severity: NotificationSeverity) -> ReloadNotifi
         severity,
         timestamp: Instant::now(),
     }
+}
+
+/// The procedural sky's clock for the environment section (None without a sky).
+fn sky_status(
+    scene: &wgpu_cube::scene::Scene,
+    playing: bool,
+) -> Option<crate::inspector::SkyPanelStatus> {
+    let sky = scene.environment().active_sky()?;
+    let clock = scene.sky_clock();
+    let frame = sky.frame(clock.elapsed_hours(sky));
+    let minutes = (frame.hours * 60.0).round() as i64;
+    Some(crate::inspector::SkyPanelStatus {
+        date: frame.date.to_string(),
+        clock: format!("{:02}:{:02}", (minutes / 60) % 24, minutes % 60),
+        running: sky.day_length > 0.0 && (playing || clock.preview()),
+        preview: clock.preview(),
+        sun_altitude: frame.positions.sun.altitude,
+        moon_illumination: frame.positions.moon_illumination,
+        light: match frame.light {
+            Some(light) if light.moon => "moon",
+            Some(_) => "sun",
+            None => "none",
+        },
+        followed: !wgpu_cube::scene::sky_following_lights(scene.main_world()).is_empty(),
+        day_bake: scene
+            .day_bake()
+            .map(|bake| (bake.current, bake.hours.len())),
+    })
 }

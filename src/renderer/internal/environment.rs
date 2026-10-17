@@ -6,7 +6,8 @@ use half::f16;
 use crate::environment::Environment;
 #[cfg(target_arch = "wasm32")]
 use crate::io;
-use crate::renderer::uniforms::EnvironmentUniform;
+use crate::renderer::internal::sky::SkyResources;
+use crate::renderer::uniforms::{EnvironmentUniform, SkyUniform};
 use crate::renderer::ShaderBuilder;
 
 pub(crate) struct EnvironmentResources {
@@ -16,8 +17,22 @@ pub(crate) struct EnvironmentResources {
     fallback_texture: TextureResource,
     hdr_texture: Option<TextureResource>,
     current_path: Option<PathBuf>,
-    current_view_is_hdr: bool,
+    current_view: EnvironmentView,
     current_max_lod: f32,
+    /// The procedural sky's textures, made the first time a scene enables it.
+    sky: Option<SkyResources>,
+    /// The procedural sky as the scene last set it (None: the scene has none enabled).
+    sky_uniform: Option<SkyUniform>,
+    /// The share of the flat ambient light the sky's hour has (see `SkyFrame::ambient_scale`).
+    sky_ambient: f32,
+}
+
+/// Which texture the environment binds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EnvironmentView {
+    Fallback,
+    Hdr,
+    Sky,
 }
 
 struct TextureResource {
@@ -61,9 +76,50 @@ impl EnvironmentResources {
             fallback_texture,
             hdr_texture: None,
             current_path: None,
-            current_view_is_hdr: false,
+            current_view: EnvironmentView::Fallback,
             current_max_lod: fallback_max_lod,
+            sky: None,
+            sky_uniform: None,
+            sky_ambient: 1.0,
         }
+    }
+
+    /// The procedural sky the scene shows this frame (None: it has none enabled);
+    /// `seconds` runs the stars' twinkling.
+    pub(crate) fn set_sky(&mut self, frame: Option<&crate::sky::SkyFrame>, seconds: f32) {
+        self.sky_uniform = frame.map(|frame| super::sky::sky_uniform(frame, seconds));
+        self.sky_ambient = frame.map_or(1.0, crate::sky::SkyFrame::ambient_scale);
+    }
+
+    /// Render the procedural sky's environment map where it changed (before the passes
+    /// that read it). Returns whether it rendered.
+    pub(crate) fn encode_sky(&mut self, encoder: &mut wgpu::CommandEncoder) -> bool {
+        if self.current_view != EnvironmentView::Sky {
+            return false;
+        }
+        self.sky
+            .as_mut()
+            .is_some_and(|sky| sky.encode(encoder, &self.uniform.sky))
+    }
+
+    /// The procedural sky's textures `texture_fetch` can read.
+    pub(crate) fn fetchable_textures<'a>(
+        &'a self,
+        out: &mut Vec<crate::renderer::readback::FetchableTexture<'a>>,
+    ) {
+        if let Some(sky) = self.sky.as_ref() {
+            sky.fetchable_textures(out);
+        }
+    }
+
+    /// Make the procedural sky's passes again from the shader sources (after a reload).
+    /// Returns whether it has them (its texture is then new: rebind it).
+    pub(crate) fn reload_sky(&mut self, device: &wgpu::Device) -> bool {
+        if self.sky.is_none() {
+            return false;
+        }
+        self.sky = Some(SkyResources::new(device, &self.uniform_buffer));
+        true
     }
 
     pub(crate) fn update(
@@ -103,29 +159,59 @@ impl EnvironmentResources {
         }
 
         let has_hdr_texture = self.hdr_texture.is_some();
-        let use_hdr = active_hdr.is_some() && has_hdr_texture;
+        // The procedural sky stands in for the HDR image while it is enabled.
+        let sky = self
+            .sky_uniform
+            .filter(|_| environment.active_sky().is_some());
+        let view = if sky.is_some() {
+            EnvironmentView::Sky
+        } else if active_hdr.is_some() && has_hdr_texture {
+            EnvironmentView::Hdr
+        } else {
+            EnvironmentView::Fallback
+        };
+        if view == EnvironmentView::Sky && self.sky.is_none() {
+            self.sky = Some(SkyResources::new(device, &self.uniform_buffer));
+        }
 
-        let active_levels = if use_hdr {
-            self.hdr_texture
+        let active_levels = match view {
+            EnvironmentView::Sky => self.sky.as_ref().map_or(1, SkyResources::mip_levels),
+            EnvironmentView::Hdr => self
+                .hdr_texture
                 .as_ref()
                 .map(|tex| tex.levels)
-                .unwrap_or(self.fallback_texture.levels)
-        } else {
-            self.fallback_texture.levels
+                .unwrap_or(self.fallback_texture.levels),
+            EnvironmentView::Fallback => self.fallback_texture.levels,
         };
         self.current_max_lod = active_levels.saturating_sub(1) as f32;
 
-        let hdr_intensity = active_hdr.map(|hdr| hdr.intensity()).unwrap_or(1.0);
-        let mut new_uniform =
-            build_uniform(environment, use_hdr, hdr_intensity, self.current_max_lod);
+        let hdr_intensity = match view {
+            // The sky's own intensity is part of what it renders.
+            EnvironmentView::Sky => 1.0,
+            _ => active_hdr.map(|hdr| hdr.intensity()).unwrap_or(1.0),
+        };
+        let mut new_uniform = build_uniform(
+            environment,
+            view != EnvironmentView::Fallback,
+            hdr_intensity,
+            self.current_max_lod,
+        );
         new_uniform.traced = self.uniform.traced;
+        new_uniform.sky = sky.unwrap_or_default();
+        if view == EnvironmentView::Sky {
+            // The flat ambient stands in for the sky's light: as much as the hour has.
+            for channel in &mut new_uniform.ambient_color[..3] {
+                *channel *= self.sky_ambient;
+            }
+        }
         if new_uniform != self.uniform {
             self.uniform = new_uniform;
             queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&self.uniform));
         }
 
-        let texture_changed = self.current_view_is_hdr != use_hdr || (use_hdr && texture_reloaded);
-        self.current_view_is_hdr = use_hdr;
+        let texture_changed =
+            self.current_view != view || (view == EnvironmentView::Hdr && texture_reloaded);
+        self.current_view = view;
 
         texture_changed
     }
@@ -152,13 +238,18 @@ impl EnvironmentResources {
     }
 
     pub(crate) fn texture_view(&self) -> &wgpu::TextureView {
-        if self.current_view_is_hdr {
-            self.hdr_texture
+        match self.current_view {
+            EnvironmentView::Sky => self
+                .sky
+                .as_ref()
+                .map(SkyResources::map_view)
+                .unwrap_or(&self.fallback_texture.view),
+            EnvironmentView::Hdr => self
+                .hdr_texture
                 .as_ref()
                 .map(|tex| &tex.view)
-                .unwrap_or(&self.fallback_texture.view)
-        } else {
-            &self.fallback_texture.view
+                .unwrap_or(&self.fallback_texture.view),
+            EnvironmentView::Fallback => &self.fallback_texture.view,
         }
     }
 
@@ -202,6 +293,7 @@ fn build_uniform(
             ambient_intensity,
         ],
         traced: [0.0; 4],
+        sky: SkyUniform::default(),
     }
 }
 

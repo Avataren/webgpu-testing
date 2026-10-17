@@ -34,6 +34,7 @@ use std::collections::VecDeque;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4, Quat, Vec3};
 
+use crate::renderer::light_probe_keyframes::{KeyframeBlender, ProbeKeyframes};
 use crate::renderer::shader_source::wgsl;
 use crate::renderer::{PipelineBuilder, ShaderBuilder};
 
@@ -146,7 +147,7 @@ impl LightProbeGrid {
         self.probe_count().div_ceil(self.columns())
     }
 
-    fn atlas_size(&self, tile: u32) -> (u32, u32) {
+    pub(crate) fn atlas_size(&self, tile: u32) -> (u32, u32) {
         (self.columns() * tile, self.rows() * tile)
     }
 
@@ -310,6 +311,8 @@ struct Volume {
     baked_source: Option<String>,
     /// Live updates replaced (some of) the loaded bake's light since.
     traced_since_load: bool,
+    /// The loaded bake's light at several hours of the day, blended for the sky's hour.
+    keyframes: Option<ProbeKeyframes>,
 }
 
 impl Volume {
@@ -324,6 +327,7 @@ impl Volume {
             has_data: false,
             baked_source: None,
             traced_since_load: false,
+            keyframes: None,
         }
     }
 
@@ -333,6 +337,7 @@ impl Volume {
         if self.grid.live && !grid.live && self.traced_since_load {
             self.baked_source = None;
             self.traced_since_load = false;
+            self.keyframes = None;
         }
         self.grid = grid;
     }
@@ -345,6 +350,7 @@ impl Volume {
         self.has_data = false;
         self.baked_source = None;
         self.traced_since_load = false;
+        self.keyframes = None;
     }
 
     fn irradiance_region(&self) -> [u32; 4] {
@@ -469,6 +475,9 @@ pub(crate) struct LightProbes {
     bake: Option<Bake>,
     /// Volumes to bake after the running one, with its settings.
     bake_queue: VecDeque<u64>,
+    /// The procedural sky's hour of the day, which keyframed volumes show.
+    hour: Option<f32>,
+    keyframe_blender: Option<KeyframeBlender>,
 }
 
 /// The update shader: the probe passes with the ray tracing modules (`textures`: the
@@ -525,6 +534,8 @@ impl LightProbes {
             bindings_changed: false,
             bake: None,
             bake_queue: VecDeque::new(),
+            hour: None,
+            keyframe_blender: None,
         }
     }
 
@@ -806,6 +817,7 @@ impl LightProbes {
     /// `source`) in volume `id`. It must be for that volume's probes.
     pub(crate) fn load_bake(
         &mut self,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         id: u64,
         bytes: &[u8],
@@ -884,14 +896,80 @@ impl LightProbes {
                 },
             );
         }
+        let keyframes = if bake.keyframe_hours.is_empty() {
+            None
+        } else {
+            Some(ProbeKeyframes::new(
+                device,
+                queue,
+                bake.keyframe_hours.clone(),
+                grid.atlas_size(IRRADIANCE_TILE),
+                &bake.keyframes,
+            )?)
+        };
         let volume = &mut self.volumes[index];
         volume.has_data = true;
         volume.reset = false;
         volume.probes_untouched = 0;
         volume.baked_source = Some(source.to_owned());
         volume.traced_since_load = false;
+        volume.keyframes = keyframes;
         self.write_uniform(queue);
         Ok(())
+    }
+
+    /// The procedural sky's hour of the day (0-24; none without one): volumes baked at
+    /// several hours show the light of this one.
+    pub(crate) fn set_hour(&mut self, hour: Option<f32>) {
+        self.hour = hour;
+    }
+
+    /// The hours volume `id`'s loaded bake has keyframes for (empty: one light for any
+    /// hour).
+    pub(crate) fn keyframe_hours(&self, id: u64) -> &[f32] {
+        self.volume_index(id)
+            .and_then(|index| self.volumes[index].keyframes.as_ref())
+            .map_or(&[], |keyframes| &keyframes.hours)
+    }
+
+    /// Blend each keyframed volume's light for the sky's hour into its region (before the
+    /// passes that read the probes): volumes that show their bake, and live ones until
+    /// their first update lands on top.
+    pub(crate) fn blend_keyframes(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let Some(hour) = self.hour else {
+            return;
+        };
+        if self.bake.is_some_and(|bake| !bake.finished()) {
+            return;
+        }
+        let blender = self
+            .keyframe_blender
+            .get_or_insert_with(|| KeyframeBlender::new(device));
+        for (slot, volume) in self.volumes.iter_mut().enumerate() {
+            if volume.grid.live && volume.traced_since_load {
+                continue;
+            }
+            let (width, height) = volume.grid.atlas_size(IRRADIANCE_TILE);
+            let tiles = [0, volume.irradiance_top, width, height];
+            if let Some(keyframes) = volume.keyframes.as_mut() {
+                blender.blend(
+                    device,
+                    queue,
+                    encoder,
+                    keyframes,
+                    hour,
+                    slot,
+                    tiles,
+                    (&self.irradiance.current, &self.irradiance.current_view),
+                    (&self.irradiance.next, &self.irradiance.next_view),
+                );
+            }
+        }
     }
 
     /// Use `grids` from now on, in blending order (at most [`MAX_LIGHT_PROBE_VOLUMES`];
@@ -996,6 +1074,11 @@ impl LightProbes {
         }
         self.irradiance = irradiance;
         self.distance = distance;
+        for volume in &mut volumes {
+            if let Some(keyframes) = volume.keyframes.as_mut() {
+                keyframes.forget_atlas();
+            }
+        }
 
         let rows = volumes
             .iter()
@@ -1377,10 +1460,14 @@ impl BakeHeader {
 }
 
 const BAKE_MAGIC: &[u8; 8] = b"WGCPROBE";
-/// 3: the grid's rotation follows the header's other words. 2: the irradiance atlas has
-/// the probes' offsets below its tiles. 1: tiles only, no relocation. 1 and 2 are for
-/// unrotated grids.
+/// 4: keyframes follow (the light at several hours of the day; see
+/// [`encode_keyframed_bake`]). 3: the grid's rotation follows the header's other words.
+/// 2: the irradiance atlas has the probes' offsets below its tiles. 1: tiles only, no
+/// relocation. 1 and 2 are for unrotated grids. Bakes without keyframes are written as
+/// version 3.
+#[cfg(not(target_arch = "wasm32"))]
 const BAKE_VERSION: u32 = 3;
+const KEYFRAMED_BAKE_VERSION: u32 = 4;
 /// Header words before version 3's rotation.
 const BAKE_HEADER_WORDS_V2: usize = 17;
 const BAKE_HEADER_WORDS: usize = BAKE_HEADER_WORDS_V2 + 4;
@@ -1394,12 +1481,106 @@ fn bake_header_bytes(version: u32) -> usize {
 }
 
 /// A decoded `.probes` file: the region's atlases as the textures hold them (half
-/// floats; RGBA irradiance, RG distances).
+/// floats; RGBA irradiance, RG distances), and any keyframes: the hours of the day and
+/// for each the irradiance of the region's tile rows as RGB9E5 words.
 pub(crate) struct DecodedBake {
     pub version: u32,
     pub header: BakeHeader,
     pub irradiance: Vec<u8>,
     pub distance: Vec<u8>,
+    pub keyframe_hours: Vec<f32>,
+    pub keyframes: Vec<u8>,
+}
+
+impl BakeHeader {
+    /// Rows of probe tiles in the irradiance region (the offsets' rows follow).
+    fn tile_rows(&self) -> u32 {
+        let probes = self.counts[0] * self.counts[1] * self.counts[2];
+        let width = self.irradiance_size[0].max(1);
+        self.irradiance_size[1].saturating_sub(probes.div_ceil(width))
+    }
+
+    fn keyframe_bytes(&self) -> usize {
+        self.irradiance_size[0] as usize * self.tile_rows() as usize * 4
+    }
+}
+
+/// A `.probes` file whose light follows the time of day: `base` (a decoded bake of the
+/// volume) gives the distances, the probes' offsets and open/inside flags, and the light
+/// shown without a sky; `keyframes` give the light at each hour (decoded bakes of the same
+/// volume, made with the sky at that hour), kept as RGB9E5.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn encode_keyframed_bake(
+    base: &DecodedBake,
+    keyframes: &[(f32, &DecodedBake)],
+) -> Result<Vec<u8>, String> {
+    let header = &base.header;
+    let mut keyframes: Vec<_> = keyframes.to_vec();
+    keyframes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (hour, bake) in &keyframes {
+        if !bake.header.matches(header) || bake.irradiance.len() != base.irradiance.len() {
+            return Err(format!("the bake at {hour} h is of other probes"));
+        }
+    }
+    let words = header_words(header, KEYFRAMED_BAKE_VERSION);
+    let tiles = header.keyframe_bytes() / 4;
+    let mut out = Vec::with_capacity(
+        8 + 4 * (words.len() + 1 + keyframes.len())
+            + base.irradiance.len()
+            + base.distance.len()
+            + keyframes.len() * tiles * 4,
+    );
+    out.extend_from_slice(BAKE_MAGIC);
+    for word in words {
+        out.extend_from_slice(&word.to_le_bytes());
+    }
+    out.extend_from_slice(&(keyframes.len() as u32).to_le_bytes());
+    for (hour, _) in &keyframes {
+        out.extend_from_slice(&hour.rem_euclid(24.0).to_le_bytes());
+    }
+    out.extend_from_slice(&base.irradiance);
+    out.extend_from_slice(&base.distance);
+    for (_, bake) in &keyframes {
+        // The tile rows come first in the region, RGBA half floats.
+        for texel in bake.irradiance[..tiles * 8].as_chunks::<8>().0 {
+            let channel =
+                |i: usize| half::f16::from_le_bytes([texel[2 * i], texel[2 * i + 1]]).to_f32();
+            let word = crate::renderer::light_probe_keyframes::pack_rgb9e5([
+                channel(0),
+                channel(1),
+                channel(2),
+            ]);
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn header_words(header: &BakeHeader, version: u32) -> [u32; BAKE_HEADER_WORDS] {
+    [
+        version,
+        header.counts[0],
+        header.counts[1],
+        header.counts[2],
+        header.origin[0].to_bits(),
+        header.origin[1].to_bits(),
+        header.origin[2].to_bits(),
+        header.spacing.to_bits(),
+        header.irradiance_tile,
+        header.distance_tile,
+        header.irradiance_size[0],
+        header.irradiance_size[1],
+        header.distance_size[0],
+        header.distance_size[1],
+        header.sweeps,
+        header.rays,
+        0,
+        header.rotation[0].to_bits(),
+        header.rotation[1].to_bits(),
+        header.rotation[2].to_bits(),
+        header.rotation[3].to_bits(),
+    ]
 }
 
 /// A `.probes` file from a volume's read-back regions: a little-endian header, then the
@@ -1428,30 +1609,7 @@ pub(crate) fn encode_bake(
         bake_header_bytes(BAKE_VERSION) + header.irradiance_bytes() + header.distance_bytes(),
     );
     out.extend_from_slice(BAKE_MAGIC);
-    let words: [u32; BAKE_HEADER_WORDS] = [
-        BAKE_VERSION,
-        header.counts[0],
-        header.counts[1],
-        header.counts[2],
-        header.origin[0].to_bits(),
-        header.origin[1].to_bits(),
-        header.origin[2].to_bits(),
-        header.spacing.to_bits(),
-        header.irradiance_tile,
-        header.distance_tile,
-        header.irradiance_size[0],
-        header.irradiance_size[1],
-        header.distance_size[0],
-        header.distance_size[1],
-        header.sweeps,
-        header.rays,
-        0,
-        header.rotation[0].to_bits(),
-        header.rotation[1].to_bits(),
-        header.rotation[2].to_bits(),
-        header.rotation[3].to_bits(),
-    ];
-    for word in words {
+    for word in header_words(header, BAKE_VERSION) {
         out.extend_from_slice(&word.to_le_bytes());
     }
     for value in irradiance.values.iter().chain(&distance.values) {
@@ -1469,14 +1627,30 @@ pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
         u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
     };
     let version = word(0);
-    if !(1..=BAKE_VERSION).contains(&version) {
+    if !(1..=KEYFRAMED_BAKE_VERSION).contains(&version) {
         return Err(format!(
-            "light probe bake version {version} (this engine reads 1 to {BAKE_VERSION})"
+            "light probe bake version {version} (this engine reads 1 to \
+             {KEYFRAMED_BAKE_VERSION})"
         ));
     }
-    let header_bytes = bake_header_bytes(version);
+    let mut header_bytes = bake_header_bytes(version);
     if bytes.len() < header_bytes {
         return Err("light probe bake is shorter than its header".into());
+    }
+    // Version 4: the keyframes' count and hours.
+    let mut keyframe_hours = Vec::new();
+    if version >= 4 {
+        if bytes.len() < header_bytes + 4 {
+            return Err("light probe bake is shorter than its header".into());
+        }
+        let count = word(BAKE_HEADER_WORDS) as usize;
+        if count > 256 || bytes.len() < header_bytes + 4 + 4 * count {
+            return Err("light probe bake has a broken keyframe list".into());
+        }
+        keyframe_hours = (0..count)
+            .map(|i| f32::from_bits(word(BAKE_HEADER_WORDS + 1 + i)))
+            .collect();
+        header_bytes += 4 + 4 * count;
     }
     let rotation = if version >= 3 {
         let at = BAKE_HEADER_WORDS_V2;
@@ -1501,7 +1675,8 @@ pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
         rays: word(15),
     };
     let irradiance_end = header_bytes + header.irradiance_bytes();
-    let end = irradiance_end + header.distance_bytes();
+    let distance_end = irradiance_end + header.distance_bytes();
+    let end = distance_end + keyframe_hours.len() * header.keyframe_bytes();
     if bytes.len() != end {
         return Err(format!(
             "light probe bake is {} bytes, its header says {end}",
@@ -1512,7 +1687,9 @@ pub(crate) fn decode_bake(bytes: &[u8]) -> Result<DecodedBake, String> {
         version,
         header,
         irradiance: bytes[header_bytes..irradiance_end].to_vec(),
-        distance: bytes[irradiance_end..end].to_vec(),
+        distance: bytes[irradiance_end..distance_end].to_vec(),
+        keyframe_hours,
+        keyframes: bytes[distance_end..end].to_vec(),
     })
 }
 

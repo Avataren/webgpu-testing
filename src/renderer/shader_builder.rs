@@ -235,7 +235,10 @@ impl ShaderBuilder {
 
     /// Background/skybox shader
     pub fn background() -> Self {
-        Self::new().with_camera().with_constants()
+        Self::new()
+            .with_camera()
+            .with_constants()
+            .with_module(wgsl!("sky.wgsl"))
     }
 }
 
@@ -262,6 +265,7 @@ impl ShaderBuilder {
     }
 
     fn ensure_with_environment(&mut self) {
+        self.ensure_module(wgsl!("sky.wgsl"));
         self.ensure_module(wgsl!("environment.wgsl"));
         self.ensure_module(wgsl!("light_probes.wgsl"));
     }

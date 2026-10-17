@@ -30,6 +30,8 @@ pub(super) fn allowed(method: &str) -> bool {
             | "camera.get"
             | "environment.set"
             | "environment.get"
+            | "sky.set"
+            | "sky.get"
             | "postprocess.set"
             | "postprocess.get"
     )

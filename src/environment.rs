@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use wgpu::Color;
 
+use crate::sky::ProceduralSky;
+
 /// Describes high-level environment settings applied while rendering a scene.
 ///
 /// The environment controls global rendering parameters such as the clear
@@ -14,6 +16,8 @@ pub struct Environment {
     clear_color: Color,
     ambient_intensity: f32,
     hdr_background: Option<HdrBackground>,
+    /// The procedural sky; while enabled it stands in for the HDR background.
+    sky: Option<ProceduralSky>,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +37,7 @@ impl Environment {
             clear_color,
             ambient_intensity: 0.03,
             hdr_background: None,
+            sky: None,
         }
     }
 
@@ -118,6 +123,24 @@ impl Environment {
     /// Returns true if an HDR background exists and is enabled.
     pub fn is_hdr_enabled(&self) -> bool {
         self.active_hdr_background().is_some()
+    }
+
+    /// The procedural sky's settings, enabled or not.
+    pub fn sky(&self) -> Option<&ProceduralSky> {
+        self.sky.as_ref()
+    }
+
+    pub fn sky_mut(&mut self) -> Option<&mut ProceduralSky> {
+        self.sky.as_mut()
+    }
+
+    pub fn set_sky(&mut self, sky: Option<ProceduralSky>) {
+        self.sky = sky;
+    }
+
+    /// The procedural sky, when it is enabled (it then replaces the HDR background).
+    pub fn active_sky(&self) -> Option<&ProceduralSky> {
+        self.sky.as_ref().filter(|sky| sky.enabled)
     }
 
     /// Whether the active HDR image is drawn behind the scene, not only used for light

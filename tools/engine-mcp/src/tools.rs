@@ -70,6 +70,7 @@ impl Tool {
                 | "input_state"
                 | "camera_get"
                 | "environment_get"
+                | "sky_get"
                 | "postprocess_get"
                 | "texture_fetch"
                 | "light_probes_status"
@@ -175,6 +176,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
     spot["inner_angle_deg"] = json!({ "type": "number" });
     spot["outer_angle_deg"] = json!({ "type": "number" });
     let mut directional = light_common;
+    directional["follow_sky"] = json!({ "type": "boolean", "description": "Shine as the procedural sky's sun by day and its moon by night (direction, colour and intensity from the sky while it is enabled; the light's own apply again without it). See sky_set" });
     directional["shadow_distance"] = json!({ "type": "number", "description": "How far from the camera (meters of view depth, default 150) the light's shadows reach, in cascaded shadow maps that are sharp near the camera and coarser further out; they fade out toward it. The cascades shrink to what is in view when that is nearer, so most scenes need no tuning; a shorter distance sharpens every cascade" });
 
     let animator = json!({
@@ -774,7 +776,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "environment_get",
-            description: "Background clear color, ambient intensity and HDR sky (path, intensity). Exposure, tonemapping and color grading are post-processing: see postprocess_get.",
+            description: "Background clear color, ambient intensity, HDR sky (path, intensity) and the procedural sky's settings (sky; see sky_get for its state). Exposure, tonemapping and color grading are post-processing: see postprocess_get.",
             schema: empty(),
             action: Action::Engine("environment.get"),
         },
@@ -792,13 +794,52 @@ pub fn tools() -> Vec<Tool> {
             action: Action::Engine("environment.set"),
         },
         Tool {
+            name: "sky_get",
+            description: "The procedural sky and its day/night clock: settings (date, time, latitude/longitude, UTC offset, north heading, day length, sun/moon intensity, air, haze, ozone, stars, Milky Way...), the date and time it shows now, whether the clock runs, where the sun and moon stand (altitude/azimuth, direction), the moon's phase, the light the sky gives (sun or moon), which directional lights follow it, a running day bake, and the compass (north is -Z, east +X at north_heading 0).",
+            schema: empty(),
+            action: Action::Engine("sky.get"),
+        },
+        Tool {
+            name: "sky_set",
+            description: "Turn on or change the procedural sky (it replaces the HDR sky while enabled; the first call adds it, defaults included, and makes the first directional light follow it, or adds a Sun): Rayleigh/Mie scattering with ozone, a starry night with the Milky Way and a moon in its phase, the sun and moon on their real paths for the date and place. Its clock runs in play mode (and in the editor with preview: true) at day_length real seconds per day, turning the date over; setting time or date starts it over from there. Only given fields change; saved with the scene's environment.",
+            schema: object(json!({
+                "enabled": { "type": "boolean", "description": "Use the procedural sky (false: back to the HDR sky or clear colour; settings kept)" },
+                "time": { "type": ["number", "string"], "description": "Local clock time: hours (18.5) or \"HH:MM\"" },
+                "date": { "type": "string", "description": "YYYY-MM-DD (sun's path and moon phase)" },
+                "day_length": { "type": "number", "description": "Real seconds per 24 h while the clock runs; 0 stops it (default 0). E.g. 180 for a three-minute day" },
+                "preview": { "type": "boolean", "description": "Run the clock in the editor too (not saved)" },
+                "reset_clock": { "type": "boolean", "description": "Back to the sky's own date and time" },
+                "latitude": { "type": "number", "description": "Degrees north (default 48)" },
+                "longitude": { "type": "number", "description": "Degrees east" },
+                "utc_offset": { "type": "number", "description": "Hours the local clock runs ahead of UT" },
+                "north_heading": { "type": "number", "description": "Degrees from -Z toward +X where north lies (default 0: north -Z, east +X)" },
+                "sun_intensity": { "type": "number", "description": "Sunlight above the atmosphere (default 10; the light overhead gets a little less)" },
+                "moon_intensity": { "type": "number", "description": "Full moonlight above the atmosphere (default 0.05: dark nights where lamps and windows carry the scene; raise it toward 0.3 for brighter moonlit nights)" },
+                "sky_intensity": { "type": "number", "description": "Scales the sky's own light (scattering, stars), not the lights" },
+                "rayleigh": { "type": "number", "description": "Air density factor (the blue)" },
+                "haze": { "type": "number", "description": "Aerosol density factor (haze, glare round the sun)" },
+                "ozone": { "type": "number", "description": "Ozone factor (twilight's deep blue)" },
+                "mie_anisotropy": { "type": "number", "description": "Forward scattering of haze, 0-0.99 (default 0.8)" },
+                "ground_albedo": { "type": "array", "items": { "type": "number" }, "description": "Linear RGB of the ground below the horizon" },
+                "sun_size": { "type": "number", "description": "Apparent diameter, degrees (0.53)" },
+                "moon_size": { "type": "number", "description": "Apparent diameter, degrees (0.52)" },
+                "stars": { "type": "number", "description": "Starlight factor (0: none)" },
+                "milky_way": { "type": "number", "description": "Milky Way factor (0: none)" },
+                "night_tint": { "type": "array", "items": { "type": "number" }, "description": "Colour of moonlight and the night sky" },
+                "night_glow": { "type": "number", "description": "The night sky's faint glow factor" },
+                "follow": { "description": "Which directional light follows the sky: \"auto\" (the first, or a new Sun), an entity id or name, or false for none", "anyOf": [{ "type": "string" }, { "type": "integer" }, { "type": "boolean" }] }
+            }), &[]),
+            action: Action::Engine("sky.set"),
+        },
+        Tool {
             name: "light_probes_bake",
             description: "Bake the scene's light probe volumes (light_probe_volume), or one of them (entity), at high quality, one after another: warm-up sweeps for the bounced light to build up, then the exact mean of many sweeps with up to 256 rays per probe (about 65k rays per probe by default). Runs over the next frames (one update per frame; the result says how many): wait that long, then light_probes_status. A volume asked for during a bake waits its turn. Each bake is saved as content/lighting/<volume name>.probes and the volume's baked path is set; project_save keeps them. Baked probes light the scene where the probes cannot trace (web builds, GPUs without ray tracing) and stay as baked; with ray tracing they are the starting point (use_baked: true shows only the bake). Needs hardware ray tracing.",
             schema: object(json!({
                 "entity": entity_ref(),
                 "warmup_sweeps": { "type": "integer", "description": "Sweeps before averaging, for the bounces to build up (default 32)" },
                 "sweeps": { "type": "integer", "description": "Sweeps averaged (default 256)" },
-                "rays_per_probe": { "type": "integer", "description": "Rays per probe per sweep, 32-256 (default 256)" }
+                "rays_per_probe": { "type": "integer", "description": "Rays per probe per sweep, 32-256 (default 256)" },
+                "times_of_day": { "description": "Bake for the procedural sky's day: \"auto\" (midnight, noon, and the sun at -6, -1, 4, 12 and 30 degrees rising and setting) or a list of hours. The sky is held at each hour while every volume bakes; each volume's file then holds all the hours and the probes show the sky's hour, blended between the two nearest (where they do not trace live, or with use_baked). Takes the plain bake's time once per hour", "anyOf": [{ "type": "string", "enum": ["auto"] }, { "type": "array", "items": { "type": "number" } }] }
             }), &[]),
             action: Action::Engine("light_probes.bake"),
         },

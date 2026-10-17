@@ -303,7 +303,7 @@ fn point_light_json(light: &PointLight) -> Value {
 }
 
 fn directional_light_json(light: &DirectionalLight) -> Value {
-    json!({ "color": vec3_json(light.color), "intensity": round(light.intensity), "shadow_distance": round(light.shadow_distance) })
+    json!({ "color": vec3_json(light.color), "intensity": round(light.intensity), "shadow_distance": round(light.shadow_distance), "follow_sky": light.follow_sky })
 }
 
 fn spot_light_json(light: &SpotLight) -> Value {
@@ -1266,6 +1266,9 @@ pub(crate) fn patch_light_or_camera(
                 patch_light_common(&mut light.color, &mut light.intensity, v)?;
                 if let Some(distance) = opt_f64(v, "shadow_distance") {
                     light.shadow_distance = (distance as f32).max(1.0);
+                }
+                if let Some(follow) = v.get("follow_sky").and_then(Value::as_bool) {
+                    light.follow_sky = follow;
                 }
                 Ok(())
             })?

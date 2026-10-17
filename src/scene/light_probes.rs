@@ -15,6 +15,69 @@ const PROBE_EXTENT_COLOR: GizmoColor = [0.94, 0.66, 0.35, 1.0];
 /// The box the volume asks for, where the probes overshoot it (spacing rounds up).
 const VOLUME_BOX_COLOR: GizmoColor = [0.94, 0.66, 0.35, 0.45];
 
+/// The sun altitudes (degrees, rising and setting) a bake of the day's hours picks by
+/// default, with midnight and noon: night, dusk, the low sun and the day.
+pub const DAY_BAKE_ALTITUDES: [f64; 5] = [-6.0, -1.0, 4.0, 12.0, 30.0];
+
+/// Start baking the light probe volumes `volumes` (grid ids; all when None) at `hours` of
+/// the procedural sky's day (None: picked from the sun's path, [`DAY_BAKE_ALTITUDES`]),
+/// each at bake quality `warmup`, `sweeps`, `rays` (see `Renderer::start_light_probe_bake`):
+/// the scene's sky is held at each hour in turn and each volume's file then holds every
+/// hour's light. Returns the hours and about how many frames it takes.
+pub fn start_day_bake(
+    scene: &mut crate::scene::Scene,
+    renderer: &crate::renderer::Renderer,
+    hours: Option<Vec<f32>>,
+    volumes: Option<Vec<u64>>,
+    warmup: u32,
+    sweeps: u32,
+    rays: u32,
+) -> Result<(Vec<f32>, u32), String> {
+    let sky = scene
+        .environment()
+        .active_sky()
+        .cloned()
+        .ok_or("a bake of the day's hours needs the procedural sky: enable it first")?;
+    if scene.day_bake().is_some() || renderer.light_probe_bake_progress().is_some() {
+        return Err("a light probe bake is running; wait for it to finish".into());
+    }
+    if !renderer.light_probes_can_trace() {
+        return Err("baking traces the probes and needs hardware ray tracing".into());
+    }
+    let mut hours = hours.unwrap_or_else(|| crate::sky::keyframe_hours(&sky, &DAY_BAKE_ALTITUDES));
+    for hour in &mut hours {
+        *hour = hour.rem_euclid(24.0);
+    }
+    hours.sort_by(f32::total_cmp);
+    hours.dedup();
+    if hours.len() < 2 || hours.len() > 48 {
+        return Err("a bake of the day's hours needs 2 to 48 hours".into());
+    }
+    let probes: u32 = light_probe_volumes(scene.main_world())
+        .iter()
+        .filter(|volume| {
+            volumes
+                .as_ref()
+                .is_none_or(|ids| ids.contains(&volume.grid.id))
+        })
+        .map(|volume| volume.grid.probe_count())
+        .sum();
+    if probes == 0 {
+        return Err("the scene has no enabled light probe volume to bake".into());
+    }
+    let frames_per_hour =
+        (warmup + sweeps) * probes.div_ceil(crate::renderer::light_probes::MAX_PROBES_PER_UPDATE);
+    let frames = (frames_per_hour + crate::sky::DayBake::SETTLE_FRAMES + 2) * hours.len() as u32;
+    scene.start_day_bake(crate::sky::DayBake::new(
+        hours.clone(),
+        volumes,
+        warmup,
+        sweeps,
+        rays,
+    ));
+    Ok((hours, frames))
+}
+
 /// A light probe volume the renderer uses, as [`light_probe_volumes`] finds it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveLightProbeVolume {

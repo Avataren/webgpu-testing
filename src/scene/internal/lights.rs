@@ -7,15 +7,17 @@ use glam::{Quat, Vec3};
 use hecs::World;
 
 /// The lights of the scene node `world` (identified by `scene_key`, as for skinning)
-/// placed by `root_transform`.
+/// placed by `root_transform`. `sky` is the procedural sky, when the scene has one: the
+/// directional lights that follow it shine with its sunlight or moonlight.
 pub(crate) fn collect_lights(
     world: &World,
     root_transform: Transform,
     scene_key: u64,
+    sky: Option<&crate::sky::SkyFrame>,
 ) -> LightsData {
     let mut lights = LightsData::default();
 
-    collect_directional_lights(world, &mut lights, root_transform);
+    collect_directional_lights(world, &mut lights, root_transform, sky);
     collect_point_lights(world, &mut lights, root_transform, scene_key);
     collect_spot_lights(world, &mut lights, root_transform, scene_key);
 
@@ -31,7 +33,12 @@ pub(crate) fn light_key(scene_key: u64, entity: hecs::Entity) -> u64 {
     hasher.finish()
 }
 
-fn collect_directional_lights(world: &World, lights: &mut LightsData, root_transform: Transform) {
+fn collect_directional_lights(
+    world: &World,
+    lights: &mut LightsData,
+    root_transform: Transform,
+    sky: Option<&crate::sky::SkyFrame>,
+) {
     for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &DirectionalLight,
@@ -50,7 +57,20 @@ fn collect_directional_lights(world: &World, lights: &mut LightsData, root_trans
             distance: light.shadow_distance.max(0.0),
         });
 
-        lights.add_directional(direction, light.color, light.intensity, shadow);
+        match sky.filter(|_| light.follow_sky) {
+            // The sun or the moon; with neither up the light stays dark (and in place, so
+            // its shadow maps are kept).
+            Some(sky) => match sky.light {
+                Some(sky_light) => lights.add_directional(
+                    sky_light.direction,
+                    sky_light.color,
+                    sky_light.intensity,
+                    shadow,
+                ),
+                None => lights.add_directional(direction, light.color, 0.0, shadow),
+            },
+            None => lights.add_directional(direction, light.color, light.intensity, shadow),
+        }
     }
 }
 
@@ -235,7 +255,7 @@ mod tests {
             CanCastShadow(true),
         ));
         world.spawn((DirectionalLight::new(Vec3::ONE, 1.0),));
-        let lights = collect_lights(&world, Transform::IDENTITY, 0);
+        let lights = collect_lights(&world, Transform::IDENTITY, 0, None);
         let mut shadows = lights.directional_shadows().to_vec();
         shadows.sort_by_key(Option::is_none);
         assert_eq!(

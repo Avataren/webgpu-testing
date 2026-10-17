@@ -186,7 +186,8 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
 }
 
 /// Check an environment change (`ambient_intensity`, `clear_color` as `[r, g, b(, a)]` or
-/// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`, `background`}) and return it in the form
+/// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`, `background`}, `sky` (the procedural
+/// sky's settings, see `crate::sky::ProceduralSky`)) and return it in the form
 /// [`patch_environment`] takes: the colour as four numbers, the sky's path resolved.
 pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     if params.get("color_grading").is_some() {
@@ -202,11 +203,11 @@ pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     let unknown: Vec<&str> = fields
         .keys()
         .map(String::as_str)
-        .filter(|key| !matches!(*key, "ambient_intensity" | "clear_color" | "hdr"))
+        .filter(|key| !matches!(*key, "ambient_intensity" | "clear_color" | "hdr" | "sky"))
         .collect();
     if !unknown.is_empty() {
         return Err(format!(
-            "unknown environment setting(s): {}; use ambient_intensity, clear_color, hdr",
+            "unknown environment setting(s): {}; use ambient_intensity, clear_color, hdr, sky",
             unknown.join(", ")
         ));
     }

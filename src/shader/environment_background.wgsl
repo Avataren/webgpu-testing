@@ -3,6 +3,8 @@
 struct EnvironmentSettings {
     flags_intensity: vec4<f32>,
     ambient_color: vec4<f32>,
+    traced: vec4<f32>,
+    sky: SkyParams,
 };
 @group(1) @binding(8) var<uniform> environment_settings: EnvironmentSettings;
 @group(1) @binding(9) var environment_map: texture_2d<f32>;
@@ -65,7 +67,27 @@ struct BackgroundOut {
     @location(2) world_pos: vec4<f32>,
 };
 
+// What the procedural sky adds to its environment map per pixel: the stars and the Milky
+// Way, the moon and the sun's disc, through the air.
+fn procedural_sky_details(dir: vec3<f32>, pixel: f32) -> vec3<f32> {
+    let sky = environment_settings.sky;
+    let through = sky_view_transmittance(sky, dir);
+    let moon = sky_moon_disc(sky, dir, pixel);
+    // The moon hides the stars behind it.
+    let stars = sky_starlight(sky, dir, pixel) * sky.look.x * through * (1.0 - moon.a);
+    return stars + moon.rgb * moon.a + sky_sun_disc(sky, dir, pixel);
+}
+
 fn sample_background(in: VsOut) -> BackgroundOut {
+    let inv_view_proj = globals.inverse_view_proj;
+    let clip = vec4<f32>(in.clip, 1.0);
+    let world = inv_view_proj * clip;
+    let world_pos = world.xyz / max(world.w, 1e-4);
+    let dir = normalize(world_pos - globals.camera_pos);
+    // A pixel's angular size, for the stars and the discs' edges (before any branch: the
+    // derivatives need every pixel of the quad).
+    let pixel = length(fwidth(dir));
+
     if (!environment_enabled()) {
         return BackgroundOut(
             vec4<f32>(0.0, 0.0, 0.0, 1.0),
@@ -74,15 +96,12 @@ fn sample_background(in: VsOut) -> BackgroundOut {
         );
     }
 
-    let inv_view_proj = globals.inverse_view_proj;
-    let clip = vec4<f32>(in.clip, 1.0);
-    let world = inv_view_proj * clip;
-    let world_pos = world.xyz / max(world.w, 1e-4);
-    let dir = normalize(world_pos - globals.camera_pos);
-
     let uv = environment_uv(dir);
-    let color = textureSampleLevel(environment_map, environment_sampler, uv, 0.0).rgb
+    var color = textureSampleLevel(environment_map, environment_sampler, uv, 0.0).rgb
         * environment_intensity();
+    if sky_enabled(environment_settings.sky) {
+        color += procedural_sky_details(dir, pixel);
+    }
 
     // The sky stays HDR: post-processing exposes, blooms and tonemaps it.
     // Directions (w = 0) reproject without translation, like a sky at infinity.

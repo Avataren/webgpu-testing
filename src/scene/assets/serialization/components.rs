@@ -281,6 +281,9 @@ pub struct SerializedDirectionalLight {
     pub intensity: f32,
     #[serde(default = "default_shadow_distance")]
     pub shadow_distance: f32,
+    /// Driven by the procedural sky (sun by day, moon by night); left out when off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_sky: bool,
 }
 
 fn default_shadow_distance() -> f32 {
@@ -293,6 +296,7 @@ impl From<DirectionalLight> for SerializedDirectionalLight {
             color: light.color.to_array(),
             intensity: light.intensity,
             shadow_distance: light.shadow_distance,
+            follow_sky: light.follow_sky,
         }
     }
 }
@@ -304,6 +308,7 @@ impl From<SerializedDirectionalLight> for DirectionalLight {
             serialized.intensity,
         )
         .with_shadow_distance(serialized.shadow_distance)
+        .with_follow_sky(serialized.follow_sky)
     }
 }
 

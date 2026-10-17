@@ -28,6 +28,7 @@ mod query;
 mod save_data;
 mod script_access;
 mod settings;
+pub(crate) mod sky;
 mod state;
 mod stats;
 mod text_editor_bridge;
@@ -70,6 +71,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     material::register_material_api(lua)?;
     light_camera::register_light_camera_api(lua)?;
     postprocess::register_postprocess_api(lua)?;
+    sky::register_sky_api(lua)?;
     audio::register_audio_api(lua)?;
     process::register_process_api(lua)?;
     animation::register_animation_api(lua)?;

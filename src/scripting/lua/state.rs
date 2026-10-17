@@ -417,6 +417,19 @@ impl ScriptingState {
         }
     }
 
+    /// Give scripts the procedural sky as it stands this frame (`sky_info()`), or none.
+    pub fn set_sky(&mut self, frame: Option<&crate::sky::SkyFrame>) {
+        let lua = self.runtime.lua();
+        match frame {
+            Some(frame) => {
+                lua.set_app_data(super::api::sky::ScriptSky::from_frame(frame));
+            }
+            None => {
+                lua.remove_app_data::<super::api::sky::ScriptSky>();
+            }
+        }
+    }
+
     /// Recompile every script and run `on_created` again on the next update.
     ///
     /// Values scripts stored with the state API (`set_f64`, `set_state`, ...) survive

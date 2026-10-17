@@ -193,6 +193,9 @@ impl RuntimeController {
         let snapshot = SceneSnapshot::capture(scene);
         self.editor_snapshot = Some(snapshot);
         scene.reset_script_runtime();
+        // The game's day starts at the sky's own date and time, wherever the editor's
+        // preview had run it to.
+        scene.sky_clock_mut().reset();
         let seed = self.state.lock().seed;
         if let Some(seed) = seed {
             if let Err(error) = scene.lua_scripting_mut().seed_random(seed) {
@@ -269,5 +272,26 @@ mod tests {
         let transition = controller.sync_runtime_state(&mut scene);
         assert_eq!(transition, Some(RuntimeTransition::EnteredEditor));
         assert_eq!(controller.mode(), RuntimeMode::Editor);
+    }
+
+    #[test]
+    fn play_starts_the_day_at_the_skys_own_time() {
+        let mut controller = RuntimeController::new();
+        let mut scene = Scene::new();
+        let mut environment = scene.environment().clone();
+        environment.set_sky(Some(crate::sky::ProceduralSky {
+            time: 12.0,
+            day_length: 60.0,
+            ..Default::default()
+        }));
+        scene.set_environment(environment);
+        // The editor's preview runs the clock on to the evening.
+        scene.sky_clock_mut().set_preview(true);
+        scene.run_editor_scripts(15.0);
+        assert!((scene.sky_frame().unwrap().hours - 18.0).abs() < 1e-6);
+
+        controller.state_handle().request_mode(RuntimeMode::Playing);
+        controller.sync_runtime_state(&mut scene);
+        assert!((scene.sky_frame().unwrap().hours - 12.0).abs() < 1e-6);
     }
 }

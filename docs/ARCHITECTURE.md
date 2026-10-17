@@ -45,6 +45,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/physics/` | Rapier physics: `RigidBody`/`Collider`/`CharacterController`/`SpringCamera` components, the per-scene `ScenePhysics`, collider wireframes |
 | `src/navigation/` | Navmeshes (feature `navigation`): Recast-style generation, tiled navmesh and queries, the crowd (ORCA avoidance), components and the per-scene `SceneNavigation` |
 | `src/ai/` | AI: behaviour trees, state machines, blackboards, expressions, senses, the `AiAgent` component and the per-scene `SceneAi` |
+| `src/sky/` | The procedural sky's settings, clock and frame (`ProceduralSky`, `SkyClock`, `SkyFrame`), sun/moon/star positions (`celestial.rs`) and light probe day bakes (`DayBake`) |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
 | `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
@@ -282,6 +283,59 @@ Screen-space reflection and ambient-occlusion projections use the same TAA jitte
 as the G-buffer rasterization; motion vectors continue to compare unjittered
 matrices. Using a stable projection to look up jittered surfaces causes shading
 to flicker, especially at a distant horizon.
+- **Procedural sky and day/night** (`src/sky/`, `src/renderer/internal/sky.rs`,
+  `src/shader/sky.wgsl`, `sky_generate.wgsl`): an option of the scene's environment
+  (`EnvironmentComponent::sky`, a `ProceduralSky`; off unless a scene enables it), which
+  stands in for the HDR image while enabled. Its settings hold a date, local clock time,
+  latitude, longitude, UTC offset and north heading; `sky::celestial` places the sun
+  (Astronomical Almanac formulas) and the moon (the largest terms of Meeus ch. 47, with
+  parallax and refraction) for them, in the engine's compass: north is -Z and east +X at
+  north heading 0. The scene's `SkyClock` runs the time on (play mode, or the editor's
+  preview) at `day_length` real seconds per day, turning the date over, and starts over
+  whenever the date or time is set; a light probe day bake holds it at an hour.
+  `Scene::sky_frame` gives a `SkyFrame` each frame: the sun's and moon's directions and
+  transmittance (the same atmosphere marched on the CPU), the moon's phase, the stars'
+  rotation (`world_from_equatorial`) and the light directional lights with
+  `follow_sky` take: the sun by day, from 3° under the horizon the moon (fading in as the
+  dusk deepens), nothing when both are down. The light is overridden when the lights are
+  collected (`scene/internal/lights.rs`); the entity's rotation, colour and intensity are
+  left alone and apply again without the sky. The render bridge hands the frame to the
+  renderer (`Renderer::set_sky`): its settings ride in `EnvironmentUniform::sky`
+  (`SkyParams` in sky.wgsl, at the environment's binding 8), and `SkyResources` renders
+  a transmittance table (256x64, Bruneton's layout) and a multiple scattering table
+  (32x32, Hillaire 2020) when the air or the ground change, and the sky into a 1024x512
+  equirectangular environment map with box-filtered mips whenever the sun or moon moved
+  (the map replaces the HDR image for IBL, ray-traced reflections and misses, probe
+  updates and the path tracer). The scattering is Rayleigh and Mie single scattering with
+  ozone, marched along the view (32 samples, as O'Neil's GPU Gems 2 chapter models it
+  without his horizon-limited fit) plus the multiple scattering table, for the sun and the
+  moon, with the lit ground below the horizon. The background (`environment_background.wgsl`)
+  samples the map and adds per pixel what is too sharp for it: the sun's limb-darkened disc
+  (capped below half-float range), the moon's disc shaded in its phase by the sun with
+  procedural maria (its face turned toward the celestial north), and stars (four cube-cell
+  layers of procedural stars with a magnitude power law, sized to the pixel's footprint)
+  with the Milky Way along the galactic plane, dimmed by the air's airmass. Nights are
+  dark by default: moonlight is 1:200 of sunlight (the real ratio is about 1:400,000), so
+  the moonlit side of things can be made out while lamps and windows carry the scene;
+  stars and the Milky Way fade in from sunset to 12° under the horizon, and the moon's
+  disc is drawn at a fixed share of its light (a pale disc by day). How dark a night
+  looks depends on how far auto exposure may adapt: `min_ev` about -4 keeps nights dark
+  and dusk visible; lower values (and more `moon_intensity`) make brighter nights.
+  `sky.get`/`sky.set` (MCP `sky_get`/`sky_set`), Lua `sky_info()` and
+  `set_time_of_day(hours)`, and the environment section of the inspector control it.
+- **Light probes that follow the time of day** (`src/renderer/light_probe_keyframes.rs`):
+  a light probe bake with `times_of_day` (or the inspector's "Bake day") holds the sky
+  at each hour in turn while every volume bakes there (`sky::DayBake`, stepped by
+  `app::core::light_probes`), then writes each volume's `.probes` file as version 4: the
+  hour nearest noon's region (distances, offsets, open/inside flags, and the light shown
+  without a sky) followed by each hour's irradiance tile rows as RGB9E5. Loaded, the hours
+  go into a 2D array texture, and each frame the renderer blends the two around the sky's
+  hour into the volume's tile rows (`blend_keyframes`, before the passes that read the
+  probes; only when the blend changed), for volumes that show their bake (no ray tracing,
+  `use_baked`) and for live ones until their first update lands on top. Light adds up, so a
+  blend of two hours' light is close to the light between them; the default hours follow the
+  sun's path (midnight, noon, and the sun at -6, -1, 4, 12 and 30 degrees rising and
+  setting).
 - **HDR display output** (`src/renderer/hdr_output.rs`), opt-in through `settings.json`
   (`"hdr_output": "off" | "auto" | "simulate"`, `"hdr_paper_white_nits"`,
   `"hdr_peak_nits"`) or the `ENGINE_HDR` environment variable. `auto` picks scRGB

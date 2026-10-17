@@ -12,6 +12,7 @@ pub mod hdr_output;
 pub(crate) mod internal;
 pub(crate) mod light_culling;
 pub mod light_probe_debug;
+pub(crate) mod light_probe_keyframes;
 pub mod light_probes;
 pub mod lights;
 pub mod material;

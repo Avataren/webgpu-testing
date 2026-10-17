@@ -320,6 +320,10 @@ pub struct EnvironmentComponent {
     pub color_grading: Option<LegacyColorGrading>,
     #[serde(default)]
     pub hdr: Option<EnvironmentHdrSettings>,
+    /// The procedural sky and its day/night clock; when enabled it replaces the HDR
+    /// image. Left out of scenes that never had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sky: Option<crate::sky::ProceduralSky>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -354,6 +358,7 @@ impl EnvironmentComponent {
             ambient_intensity: environment.ambient_intensity(),
             color_grading: None,
             hdr,
+            sky: environment.sky().cloned(),
         }
     }
 
@@ -374,6 +379,7 @@ impl EnvironmentComponent {
             Some(background) => environment.set_hdr_background(Some(background)),
             None => environment.set_hdr_background(None),
         }
+        environment.set_sky(self.sky.clone());
 
         environment
     }
@@ -1397,6 +1403,10 @@ pub struct DirectionalLight {
     /// out toward it. When everything in view is nearer, the shadows cover only that,
     /// with finer detail.
     pub shadow_distance: f32,
+    /// Shine as the procedural sky's sun by day and moon by night: while the scene's sky
+    /// is enabled, the direction, colour and intensity come from it (the entity's
+    /// rotation, `color` and `intensity` are left alone and apply again without it).
+    pub follow_sky: bool,
 }
 
 impl DirectionalLight {
@@ -1407,7 +1417,13 @@ impl DirectionalLight {
             color,
             intensity,
             shadow_distance: Self::DEFAULT_SHADOW_DISTANCE,
+            follow_sky: false,
         }
+    }
+
+    pub fn with_follow_sky(mut self, follow_sky: bool) -> Self {
+        self.follow_sky = follow_sky;
+        self
     }
 
     pub fn with_shadow_distance(mut self, shadow_distance: f32) -> Self {
@@ -1422,6 +1438,7 @@ impl Default for DirectionalLight {
             color: Vec3::new(0.9, 0.95, 1.0),
             intensity: 3.0,
             shadow_distance: Self::DEFAULT_SHADOW_DISTANCE,
+            follow_sky: false,
         }
     }
 }

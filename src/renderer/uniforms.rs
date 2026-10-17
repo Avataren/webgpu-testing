@@ -79,6 +79,29 @@ pub struct EnvironmentUniform {
     /// diffuse light (the main pass leaves the environment's diffuse light out); y: 1
     /// while ray-traced reflections also bring them the sky's reflection.
     pub traced: [f32; 4],
+    /// The procedural sky (all zero without one).
+    pub sky: SkyUniform,
+}
+
+/// Mirrors `SkyParams` in sky.wgsl (see there for each field).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug, Default)]
+pub struct SkyUniform {
+    pub sun: [f32; 4],
+    pub sun_light: [f32; 4],
+    pub sun_seen: [f32; 4],
+    pub moon: [f32; 4],
+    pub moon_light: [f32; 4],
+    pub moon_seen: [f32; 4],
+    pub moon_north: [f32; 4],
+    pub scattering: [f32; 4],
+    pub look: [f32; 4],
+    pub ground: [f32; 4],
+    pub night_tint: [f32; 4],
+    pub zenith_depth: [f32; 4],
+    pub celestial_x: [f32; 4],
+    pub celestial_y: [f32; 4],
+    pub celestial_z: [f32; 4],
 }
 
 impl EnvironmentUniform {
@@ -87,6 +110,7 @@ impl EnvironmentUniform {
             flags_intensity: [0.0, 1.0, 0.003, 0.0],
             ambient_color: [0.003, 0.003, 0.003, 0.003],
             traced: [0.0; 4],
+            sky: SkyUniform::default(),
         }
     }
 }

@@ -160,11 +160,20 @@ impl RenderBridge {
         }
         renderer.set_gizmo_shapes(gizmo_shapes);
 
+        // The procedural sky: drawn by the renderer, and the light of the directional
+        // lights that follow it.
+        let sky = scene.sky_frame();
+        renderer.set_sky(sky.as_ref());
+
         let mut lights_data = LightsData::default();
 
         for (node_key, node) in scene.nodes_with_keys() {
-            let node_lights =
-                lights::collect_lights(node.instance().world(), *node.world_transform(), node_key);
+            let node_lights = lights::collect_lights(
+                node.instance().world(),
+                *node.world_transform(),
+                node_key,
+                sky.as_ref(),
+            );
             lights_data.extend_from(&node_lights);
         }
 

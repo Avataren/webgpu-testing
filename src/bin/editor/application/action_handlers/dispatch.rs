@@ -10,8 +10,8 @@ use super::components::{
     handle_remove_component, handle_set_physics,
 };
 use super::environment::{
-    handle_light_probe_request, handle_update_environment, handle_update_light_probe_volume,
-    handle_update_post_process_volume,
+    handle_light_probe_request, handle_sky_request, handle_update_environment,
+    handle_update_light_probe_volume, handle_update_post_process_volume,
 };
 use super::lights::{
     handle_update_directional_light, handle_update_point_light, handle_update_spot_light,
@@ -188,6 +188,7 @@ pub fn dispatch_action(
             handle_update_light_probe_volume(&mut ctx, entity, component)
         }
         InspectorAction::LightProbes(request) => handle_light_probe_request(&mut ctx, request),
+        InspectorAction::Sky(request) => handle_sky_request(&mut ctx, request),
         #[cfg(feature = "navigation")]
         InspectorAction::Navigation(request) => {
             super::navigation::handle_navigation_request(&mut ctx, request)

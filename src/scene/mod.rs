@@ -28,6 +28,7 @@ mod runtime_state;
 #[allow(clippy::module_inception)]
 mod scene;
 pub mod skeletal;
+mod sky_lights;
 mod snapshot;
 pub mod state;
 pub mod transform;
@@ -51,12 +52,15 @@ pub use camera::{Camera, CameraProjection};
 pub use graph::SceneNodeId;
 pub use input_state::{ButtonState, InputState};
 pub use library::SceneLibrary;
-pub use light_probes::{light_probe_volumes, ActiveLightProbeVolume};
+pub use light_probes::{
+    light_probe_volumes, start_day_bake, ActiveLightProbeVolume, DAY_BAKE_ALTITUDES,
+};
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
 pub use post_process::{blend_post_process_volumes, volume_influence};
 pub use scene::{Scene, ScenePrefabEntityMetadata};
 pub use skeletal::{Animator, RootMotion, SkinnedMesh};
+pub use sky_lights::{follow_sky, sky_following_lights, stop_following_sky};
 pub(crate) use snapshot::SceneSnapshot;
 pub use snapshot::SceneStateSnapshot;
 pub use state::{

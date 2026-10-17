@@ -262,6 +262,8 @@ pub struct Renderer {
     light_culling: LightCulling,
     light_probes: crate::renderer::light_probes::LightProbes,
     environment: EnvironmentResources,
+    /// Starts the clock the procedural sky's stars twinkle by.
+    sky_started: crate::time::Instant,
     shadows: ShadowResources,
     postprocess: PostProcess,
     pipeline: RenderPipeline,
@@ -478,6 +480,7 @@ impl Renderer {
             light_culling,
             light_probes,
             environment,
+            sky_started: crate::time::Instant::now(),
             shadows,
             postprocess,
             skinning,
@@ -618,6 +621,11 @@ impl Renderer {
                 return Err(error.to_string());
             }
         };
+        // The procedural sky's passes read the staged sources too.
+        if self.environment.reload_sky(&device) {
+            self.lights_buffer
+                .rebuild_bind_group(&device, &self.shadows, &self.environment);
+        }
         let used = shader_source::finish();
         let (main, post, rt_shadows) = rebuilt;
         self.pipeline.install_shaders(main);
@@ -719,6 +727,7 @@ impl Renderer {
             ));
         }
         self.shadows.fetchable_textures(&mut out);
+        self.environment.fetchable_textures(&mut out);
         self.light_probes.fetchable_textures(&mut out);
         self.postprocess.fetchable_textures(&mut out);
         out
@@ -1183,6 +1192,12 @@ impl Renderer {
         self.gpu_timer
             .mark(&mut frame_state.encoder, "depth_prepass");
         self.run_rt_shadows(&mut frame_state, &lights, plan.trace_rt_shadows());
+        // Baked probes that follow the time of day show the sky's hour.
+        self.light_probes.blend_keyframes(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame_state.encoder,
+        );
         if plan.ray_traced && plan.light_probes {
             self.run_light_probes(&mut frame_state);
         }
@@ -1320,6 +1335,16 @@ impl Renderer {
 
     /// Post-processing for the next frames, usually the scene's volumes blended at the
     /// camera (see [`crate::scene::PostProcessVolume`]).
+    /// The procedural sky the scene shows this frame (see `crate::sky`), or none. While
+    /// its environment is enabled it replaces the HDR image: the renderer renders it into
+    /// the environment map and draws the stars, the moon and the sun behind the scene.
+    pub fn set_sky(&mut self, frame: Option<&crate::sky::SkyFrame>) {
+        let seconds = (self.sky_started.elapsed().as_secs_f64() % 3600.0) as f32;
+        self.environment.set_sky(frame, seconds);
+        self.light_probes
+            .set_hour(frame.map(|frame| frame.hours as f32));
+    }
+
     pub fn set_postprocess_settings(&mut self, settings: &PostProcessSettings) {
         self.postprocess
             .set_settings(&self.context.device, &self.context.queue, settings);
@@ -1426,12 +1451,12 @@ impl Renderer {
         surface_view: wgpu::TextureView,
         ui_view: wgpu::TextureView,
     ) -> Result<FrameState, SurfaceError> {
-        let encoder = self
-            .context
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Encoder"),
-            });
+        let mut encoder =
+            self.context
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Encoder"),
+                });
 
         // Each skinned mesh's joints' bind-pose boxes, for its posed bounds.
         for job in batcher.skin_jobs().values() {
@@ -1495,6 +1520,10 @@ impl Renderer {
                 &self.shadows,
                 &self.environment,
             );
+        }
+        // The procedural sky's environment map, before anything reads it.
+        if self.environment.encode_sky(&mut encoder) {
+            self.gpu_timer.mark(&mut encoder, "sky");
         }
 
         self.objects_buffer.update(
@@ -2122,8 +2151,19 @@ impl Renderer {
         bytes: &[u8],
         source: &str,
     ) -> Result<(), String> {
-        self.light_probes
-            .load_bake(&self.context.queue, volume, bytes, source)
+        self.light_probes.load_bake(
+            &self.context.device,
+            &self.context.queue,
+            volume,
+            bytes,
+            source,
+        )
+    }
+
+    /// The hours of the day light probe volume `volume`'s loaded bake has keyframes for
+    /// (empty: its light is the same at any hour).
+    pub fn light_probe_keyframe_hours(&self, volume: u64) -> &[f32] {
+        self.light_probes.keyframe_hours(volume)
     }
 
     /// The `.probes` file light probe volume `volume` (its grid id) shows, if it was

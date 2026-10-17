@@ -23,6 +23,7 @@ pub mod renderer;
 pub mod scene;
 pub mod scripting;
 pub mod settings;
+pub mod sky;
 pub mod time;
 #[cfg(feature = "egui")]
 pub mod ui;

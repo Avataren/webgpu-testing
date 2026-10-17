@@ -57,6 +57,12 @@ pub(super) fn sync(
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    if scene.day_bake().is_some() {
+        step_day_bake(renderer, scene, &volumes, failed_loads);
+        return;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some((id, result)) = renderer.take_finished_light_probe_bake() {
         let volume = volumes.iter().find(|volume| volume.grid.id == id);
         let outcome = match (result, volume) {
@@ -82,6 +88,120 @@ pub(super) fn sync(
         }
         renderer.set_light_probe_bake_outcome(id, outcome);
     }
+}
+
+/// One frame of a bake at several hours of the day (`crate::sky::DayBake`): let the sky
+/// settle at the hour, bake the volumes there, keep each volume's bake, and on to the
+/// next hour; after the last, save each volume's bakes as one file whose light follows
+/// the time of day, and show it.
+#[cfg(not(target_arch = "wasm32"))]
+fn step_day_bake(
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    volumes: &[crate::scene::ActiveLightProbeVolume],
+    failed_loads: &mut HashMap<String, LightProbeGrid>,
+) {
+    let Some(mut bake) = scene.take_day_bake() else {
+        return;
+    };
+    let fail = |renderer: &mut Renderer, scene: &mut Scene, volume: u64, error: String| {
+        log::error!("Light probes: the bake of the day's hours stopped: {error}");
+        renderer.set_light_probe_bake_outcome(volume, Err(error));
+        scene.end_day_bake();
+    };
+    if let Some((id, result)) = renderer.take_finished_light_probe_bake() {
+        match result {
+            Ok(bytes) => {
+                let hour = bake.hour().unwrap_or_default();
+                bake.results.push((id, hour, bytes));
+            }
+            Err(error) => return fail(renderer, scene, id, error),
+        }
+    }
+    if bake.settle > 0 {
+        bake.settle -= 1;
+        if bake.settle == 0 {
+            if let Err(error) = renderer.start_light_probe_bake(
+                bake.volumes.as_deref(),
+                bake.warmup,
+                bake.sweeps,
+                bake.rays,
+            ) {
+                return fail(renderer, scene, 0, error);
+            }
+            log::info!(
+                "Light probes: baking the day's hour {} of {} ({:.2} h)",
+                bake.current + 1,
+                bake.hours.len(),
+                bake.hour().unwrap_or_default()
+            );
+        }
+        scene.put_day_bake(bake);
+        return;
+    }
+    if renderer.light_probe_bake_progress().is_some() {
+        scene.put_day_bake(bake);
+        return;
+    }
+    // Every volume baked this hour.
+    bake.current += 1;
+    if bake.current < bake.hours.len() {
+        bake.settle = crate::sky::DayBake::SETTLE_FRAMES;
+        scene.put_day_bake(bake);
+        return;
+    }
+    scene.end_day_bake();
+    let mut ids: Vec<u64> = bake.results.iter().map(|(id, _, _)| *id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    for id in ids {
+        let outcome = save_day_bake(renderer, scene, volumes, &bake, id, failed_loads);
+        if let Err(error) = &outcome {
+            log::error!("Light probes: {error}");
+        }
+        renderer.set_light_probe_bake_outcome(id, outcome);
+    }
+}
+
+/// Save volume `id`'s bakes of the day's hours as one keyframed file, point the volume at
+/// it and show it. Returns the project path.
+#[cfg(not(target_arch = "wasm32"))]
+fn save_day_bake(
+    renderer: &mut Renderer,
+    scene: &mut Scene,
+    volumes: &[crate::scene::ActiveLightProbeVolume],
+    bake: &crate::sky::DayBake,
+    id: u64,
+    failed_loads: &mut HashMap<String, LightProbeGrid>,
+) -> Result<String, String> {
+    use crate::renderer::light_probes::{decode_bake, encode_keyframed_bake};
+    let volume = volumes
+        .iter()
+        .find(|volume| volume.grid.id == id)
+        .ok_or("the volume went away during the bake")?;
+    let decoded: Vec<(f32, _)> = bake
+        .results
+        .iter()
+        .filter(|(volume, _, _)| *volume == id)
+        .map(|(_, hour, bytes)| decode_bake(bytes).map(|decoded| (*hour, decoded)))
+        .collect::<Result<_, _>>()?;
+    // The light shown without a sky: the hour nearest noon.
+    let base = decoded
+        .iter()
+        .min_by(|a, b| (a.0 - 12.0).abs().total_cmp(&(b.0 - 12.0).abs()))
+        .ok_or("nothing was baked")?;
+    let keyframes: Vec<(f32, _)> = decoded.iter().map(|(hour, bake)| (*hour, bake)).collect();
+    let bytes = encode_keyframed_bake(&base.1, &keyframes)?;
+    let path = save_bake(scene, volume.entity, &bytes)
+        .map_err(|error| format!("saving the bake failed: {error}"))?;
+    log::info!(
+        "Light probes: baked {} hours of the day, {} KB, into {path}",
+        keyframes.len(),
+        bytes.len().div_ceil(1024)
+    );
+    renderer.load_light_probe_bake(id, &bytes, &path)?;
+    failed_loads.remove(&path);
+    Ok(path)
 }
 
 /// Write `bytes` to `content/lighting/<volume name>.probes` in the project (with the

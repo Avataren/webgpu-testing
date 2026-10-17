@@ -127,9 +127,14 @@ costs about 0.3 ms a frame for the ninety.
   bridges, ground, trees, the gate and the carts (not on thin or small things: iron posts
   and railings, fruit, lanterns, foliage), which `GameCamera`'s `SpringCamera` sweeps
   against in the follow shots.
-- Lighting: a dusk sky (`qwantani_dusk_2`, Poly Haven, CC0), a low sun, glowing lanterns,
-  twenty lantern point lights (shadowed through the shadow atlas), and light probe volumes
-  baked to `content/lighting/` for the web and GPUs without ray tracing.
+- Lighting: the engine's procedural sky with its day and night (play starts at noon on
+  2026-09-26, a full moon, at 48°N; a day takes three minutes): the Sun follows it as the
+  sun and then the moon, nights are dark, so the glowing lanterns, the twenty lantern point
+  lights (shadowed through the shadow atlas) and the windows carry them. Auto exposure
+  goes down to EV -4. The light probe volumes are baked to `content/lighting/` at a dozen
+  hours of the day for the web and GPUs without ray tracing (`light_probes_bake
+  {times_of_day: "auto"}`). The dusk HDR sky (`qwantani_dusk_2`, Poly Haven, CC0) is still
+  in the environment, used when the procedural sky is turned off.
 - The windows look into rooms (the engine's interior mapping, `interior.wgsl`): each of
   the 141 windows' panes (1.2 x 1.6 m, the rooms' proportions) is a uv cell of its own
   in `Market_WindowGlow`, and the material traces a room behind it from

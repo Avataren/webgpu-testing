@@ -115,6 +115,33 @@ pub fn handle_light_probe_request(
     ActionResult::no_change()
 }
 
+/// The sky's clock and lights: run it in the editor, reset it, or light the scene from it.
+pub fn handle_sky_request(
+    ctx: &mut ActionContext,
+    request: crate::inspector::SkyRequest,
+) -> ActionResult {
+    use crate::inspector::SkyRequest;
+    match request {
+        SkyRequest::Preview(preview) => {
+            ctx.scene.sky_clock_mut().set_preview(preview);
+            ActionResult::no_change()
+        }
+        SkyRequest::ResetClock => {
+            ctx.scene.sky_clock_mut().reset();
+            ActionResult::no_change()
+        }
+        SkyRequest::FollowFirstLight => {
+            match wgpu_cube::scene::follow_sky(ctx.scene.main_world_mut(), None) {
+                Ok(_) => ActionResult::scene_changed(),
+                Err(error) => {
+                    log::warn!("Cannot light the scene from the sky: {error}");
+                    ActionResult::no_change()
+                }
+            }
+        }
+    }
+}
+
 /// Handle UpdatePostProcessVolume action
 pub fn handle_update_post_process_volume(
     ctx: &mut ActionContext,
