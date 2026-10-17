@@ -426,8 +426,8 @@ where
         }
     }
 
-    /// Bring the window (display mode, size), the surface (vsync) and the shadow budget in
-    /// line with the player's graphics settings when they changed.
+    /// Bring the window (display mode, size), the surface (vsync), the shadow budget and
+    /// volumetric fog in line with the player's graphics settings when they changed.
     fn apply_graphics_settings(&mut self) {
         let (revision, settings) = {
             let graphics = crate::graphics_settings::graphics_settings();
@@ -442,6 +442,7 @@ where
             renderer.set_shadow_atlas_size(settings.shadow_atlas_size);
             renderer.set_shadow_updates_per_frame(settings.shadow_updates_per_frame);
             renderer.set_shadow_cascades(settings.shadow_cascades, settings.shadow_cascade_size);
+            renderer.set_volumetric_fog(settings.volumetric_fog);
         }
         let manage_window = crate::graphics_settings::graphics_settings().manage_window;
         // The browser decides the canvas size.

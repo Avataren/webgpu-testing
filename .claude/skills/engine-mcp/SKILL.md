@@ -118,6 +118,16 @@ engine you launched; save first).
   `light_probes_bake {times_of_day: "auto"}` bakes the probes at a dozen hours (a plain
   bake's time each) so baked light (web, no ray tracing) follows the clock. Lua:
   `sky_info()` (`daylight` 0-1, `night`), `set_time_of_day(h)`.
+- **Fog**: `environment_set {fog: {density, height, height_falloff, ...}}` adds height fog
+  (the first object turns it on with defaults; `null` removes it): as thick as `density`
+  (1/m, default 0.02) up to `height`, thinning above it (37% per `height_falloff` m; 0 =
+  uniform). It is lit by the sky/ambient (light probes inside probe volumes), the sun and
+  moon, and near the camera (`volumetric_distance`, default 64 m) every point/spot light
+  with shadows: sunbeams, lamp halos. `anisotropy` (0.4) brightens halos toward lights,
+  `albedo`/`emission` tint it, `max_distance` lets the sky show through thin fog. The
+  graphics setting `volumetric_fog` (off/low/medium/high) sets the froxel volume's
+  resolution; `engine_stats` shows `renderer.fog_froxels` and GPU stages `fog` and
+  `fog_apply`. Lua: `set_environment({ fog = {...} })`.
 - `environment_set` controls background, ambient light and HDR sky. The scene renders
   in HDR; exposure (manual or auto), tonemapping, colour grading, bloom, SSAO,
   screen-space reflections (`ssr`: glossy reflections on smooth, low-roughness surfaces),

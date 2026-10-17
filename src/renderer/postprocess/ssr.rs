@@ -38,6 +38,10 @@ pub struct SsrInputs<'a> {
     pub accumulated: &'a wgpu::TextureView,
     /// Half resolution: last frame's `accumulated`.
     pub history: &'a wgpu::TextureView,
+    /// The fog's uniform and integrated froxel volume (`renderer/fog.rs`): the apply pass
+    /// dims reflections by the fog in front of them.
+    pub fog_uniform: &'a wgpu::Buffer,
+    pub fog_volume: &'a wgpu::TextureView,
 }
 
 /// The half-resolution textures one frame of reflections goes through.
@@ -98,6 +102,26 @@ impl SsrStage {
                 sampler_entry(161),
                 unfilterable(162),
                 unfilterable(163),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 164,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 165,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let make_pipeline =
@@ -234,6 +258,11 @@ impl SsrStage {
                 sampler(161),
                 texture(162, inputs.normal),
                 texture(163, inputs.position),
+                wgpu::BindGroupEntry {
+                    binding: 164,
+                    resource: inputs.fog_uniform.as_entire_binding(),
+                },
+                texture(165, inputs.fog_volume),
             ],
         }));
     }

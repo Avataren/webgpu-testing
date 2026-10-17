@@ -42,6 +42,7 @@ use crate::theme::{self, icons};
 mod ai;
 mod animation;
 mod audio;
+mod fog;
 #[cfg(feature = "navigation")]
 mod navigation;
 mod physics;
@@ -2052,6 +2053,8 @@ fn show_environment_section(
     theme::section(ui, icons::ENVIRONMENT, "Environment", |ui| {
         let mut edited = component.clone();
         let mut changed = sky::show_sky_controls(ui, &mut edited, sky, actions);
+        ui.separator();
+        changed |= fog::show_fog_controls(ui, &mut edited);
         ui.separator();
 
         ui.horizontal(|ui| {

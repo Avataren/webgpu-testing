@@ -54,6 +54,7 @@ pub(crate) fn rt_reflections_shader_source(textures: bool) -> String {
         .with_material_system()
         .with_lighting()
         .with_environment()
+        .with_fog()
         .with_module(textures_module)
         .with_module(wgsl!("postprocess/rt_scene.wgsl"))
         .with_module(wgsl!("postprocess/rt_alpha.wgsl"))

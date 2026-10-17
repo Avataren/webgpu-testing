@@ -83,7 +83,8 @@ to `Editor`. The editor starts and stops play mode through `RuntimeStateHandle`.
 
 `Renderer::render` (`src/renderer/renderer_core.rs`) runs these passes in order:
 skinning → acceleration structures (when ray tracing runs) → light culling → shadow maps → depth prepass
-→ ray-traced shadow mask → main colour pass → path tracing → shader-material colour →
+→ ray-traced shadow mask → light probes → fog volume (volumetric fog) → main colour pass →
+path tracing → shader-material colour → fog over the opaque scene →
 custom stage (`BeforePostprocess`) → transparent pass → post-processing → custom stage
 (`AfterPostprocess`) → surface passes (overlay, gizmos) → pick pass (only with a pending
 pick) → UI hook. What runs is decided once per frame in a `FramePlan` (`plan_frame`)
@@ -323,6 +324,49 @@ to flicker, especially at a distant horizon.
   and dusk visible; lower values (and more `moon_intensity`) make brighter nights.
   `sky.get`/`sky.set` (MCP `sky_get`/`sky_set`), Lua `sky_info()` and
   `set_time_of_day(hours)`, and the environment section of the inspector control it.
+- **Fog** (`src/fog.rs`, `src/renderer/fog.rs`, `src/shader/fog*.wgsl`): an option of the
+  scene's environment (`EnvironmentComponent::fog`, a `Fog`; off unless a scene enables
+  it). It is height fog: extinction `density` up to `height`, falling off exponentially
+  above it (`height_falloff`, the height over which it falls to 37%; 0 keeps it uniform),
+  scattering by `albedo` with a Henyey-Greenstein phase (`anisotropy`), plus `emission`.
+  Near the camera it is volumetric when the graphics setting `volumetric_fog`
+  (`VolumetricFog`: off, low, medium, high) is on: a froxel volume follows the unjittered
+  view (a froxel per 16, 8 or 6 pixels of the scene's viewport, at most 320x240, and 32, 64
+  or 96 slices of view depth out to the fog's `volumetric_distance`, slice w starting at
+  depth far·w², so near slices are thin). After the shadow maps, light culling and light
+  probes, `cs_fog_scatter` (fog_volume.wgsl, a compute pass that binds the lights group,
+  visible to compute shaders for it) lights one point per froxel, jittered inside it from
+  frame to frame (an R3 sequence started per froxel by a hash): the directional lights
+  through one filtered compare in their nearest cascade, the point and spot lights of the
+  point's cluster (`light_cluster`) through one compare in their atlas tile, with their
+  inverse-square falloff held at 0.2 m, and the ambient light (the light probes' mean from
+  above and below where a probe volume covers the point, else the flat ambient plus the
+  environment map's lowest mip); then blends it with the froxel's last value where the
+  froxel centre was last frame (85% kept; restarted on camera cuts, a new volume size or
+  distance, and shader reloads). The scattering direction comes from the froxel's view ray,
+  not the point: a point in the first slice can round onto the camera itself, and a
+  degenerate direction made the phase function blow up into single bright froxels.
+  `cs_fog_integrate` walks each column outward (Hillaire's energy-conserving integration)
+  into an integrated volume: the light scattered toward the camera and the transmittance
+  up to each slice's far end. After the opaque passes (path tracing and shader materials
+  included, before the custom stage, particles and transparent surfaces), `fs_fog_apply`
+  (fog_apply.wgsl) blends it over the scene from the depth buffer (colour × transmittance
+  + light, the blend state keeping the alpha that marks glass; sample 0 of the depth with
+  MSAA); the background gets the fog along its view ray out to `max_distance`. Past the
+  volume, and everywhere without it, the fog is the height fog's closed form
+  (`fog_optical_depth`, split at the base height), lit by the ambient light and the
+  directional lights without shadows. Transparent surfaces (`fs_transparent`, the PBR
+  shader's entry point for the transparent pass: `PipelineKey::fog`) and GPU particles fog
+  themselves through `fog_apply` / `fog_at` (fog.wgsl, lights group bindings 16-17; additive
+  particles are only dimmed); reflections and ray-traced refraction, added after the fog
+  pass, are dimmed by the transmittance to their surface (`fog_transmittance_at`; the
+  reflection apply pass binds the uniform and volume at 164-165). Volumetric fog reads the
+  shadow maps, so they are rendered even where ray-traced shadows replace them for the
+  main pass (`FramePlan::only_main_pass_reads_shadow_maps`). Shader materials and the
+  custom stages are not fogged. GPU stages `fog` and `fog_apply`, stats
+  `RendererStats::fog_froxels`. At a 920x600 scene view (Lantern Market, 20 shadowed
+  lanterns, 5 probe volumes): 0.07 / 0.15 / 0.29 ms for low / medium / high, the apply
+  pass 0.02 ms.
 - **Light probes that follow the time of day** (`src/renderer/light_probe_keyframes.rs`):
   a light probe bake with `times_of_day` (or the inspector's "Bake day") holds the sky
   at each hour in turn while every volume bakes there (`sky::DayBake`, stepped by
@@ -365,10 +409,11 @@ to flicker, especially at a distant horizon.
   3 = textures. Group 2 holds the lights buffer (0) and the cluster lists (15), both
   storage, the shadows uniform (1: directional shadows and the local shadow slots' face
   matrices and atlas rects), the directional shadow layers (2), one comparison sampler
-  (3), the local shadow atlas (4), the environment (8-10), the ray-traced shadow mask (11)
-  and the light probes (12-14): 2 storage buffers and 6 sampled textures, so the main pass
-  stays within WebGPU's per-stage limits (4 storage buffers, 11 sampled textures with the
-  traditional texture bindings). Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
+  (3), the local shadow atlas (4), the environment (8-10), the ray-traced shadow mask (11),
+  the light probes (12-14) and the fog (16: uniform, 17: integrated froxel volume): 2
+  storage buffers and 7 sampled textures, so the main pass stays within WebGPU's per-stage
+  limits (4 storage buffers, 12 sampled textures with the traditional texture bindings).
+  It is visible to fragment and compute shaders (the fog volume's lighting). Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
   adapter supports it. Otherwise it is "traditional", with one binding per material slot.
   Browsers never offer bindless textures, so every web build takes the traditional path;
   GPU particle systems bind their own material's textures there

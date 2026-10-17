@@ -273,6 +273,10 @@ pub struct PostProcess {
     /// Brightest value the display shows, relative to paper white (1 for SDR).
     display_peak: f32,
     clock: FrameClock,
+    /// The fog's uniform and integrated froxel volume (`renderer/fog.rs`), for passes that
+    /// add light after the fog pass (reflections).
+    fog_uniform: wgpu::Buffer,
+    fog_volume: wgpu::TextureView,
 }
 
 #[derive(Clone, Copy)]
@@ -446,6 +450,7 @@ pub(crate) fn postprocess_shader_source() -> String {
         .with_module(wgsl!("postprocess/ssao.wgsl"))
         .with_module(wgsl!("postprocess/ssao_blur.wgsl"))
         .with_module(wgsl!("postprocess/reflection_common.wgsl"))
+        .with_module(wgsl!("fog_common.wgsl"))
         .with_module(wgsl!("postprocess/ssr.wgsl"))
         .with_module(wgsl!("postprocess/bloom_common.wgsl"))
         .with_module(wgsl!("postprocess/bloom_prefilter.wgsl"))
@@ -567,6 +572,8 @@ impl PostProcess {
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
         sample_count: u32,
+        fog_uniform: &wgpu::Buffer,
+        fog_volume: &wgpu::TextureView,
     ) -> Self {
         let size = wgpu::Extent3d {
             width: config.width.max(1),
@@ -741,6 +748,8 @@ impl PostProcess {
             encode_srgb: !config.format.is_srgb() && !is_float_format(config.format),
             display_peak: 1.0,
             clock: FrameClock::new(),
+            fog_uniform: fog_uniform.clone(),
+            fog_volume: fog_volume.clone(),
         };
 
         post.upload_uniform(queue);
@@ -878,6 +887,12 @@ impl PostProcess {
 
     /// Stop (or resume) the frame clock that animates grain and dither and paces
     /// exposure adaptation; frozen, every frame reuses the last tick's values.
+    /// Bind `volume` as the fog's integrated froxel volume (after it was recreated, or
+    /// the volume of no fog); the bind groups that read it are rebuilt before next use.
+    pub(crate) fn set_fog_volume(&mut self, volume: &wgpu::TextureView) {
+        self.fog_volume = volume.clone();
+    }
+
     pub fn set_frozen_clock(&mut self, frozen: bool) {
         self.clock_frozen = frozen;
     }
@@ -1714,6 +1729,7 @@ impl PostProcess {
         BoundInputs {
             views,
             optional_views: vec![
+                Some(self.fog_volume.clone()),
                 self.cached_depth_view.clone(),
                 optional(&self.resolved_depth),
                 optional(&self.opaque_copy),
@@ -1821,6 +1837,8 @@ impl PostProcess {
                 ping: &self.reflection.ping.view,
                 accumulated: &self.reflection.accumulated.view,
                 history: &self.reflection.history.view,
+                fog_uniform: &self.fog_uniform,
+                fog_volume: &self.fog_volume,
             },
         );
         if let Some(stage) = self.rt_ao_stage.as_mut() {

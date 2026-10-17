@@ -137,6 +137,10 @@ costs about 0.3 ms a frame for the ninety.
   hours of the day for the web and GPUs without ray tracing (`light_probes_bake
   {times_of_day: "auto"}`). The dusk HDR sky (`qwantani_dusk_2`, Poly Haven, CC0) is still
   in the environment, used when the procedural sky is turned off.
+- Fog: the environment's height fog lies low (base height -0.5 m, thinning to 37% every
+  3 m, density 0.025): a light haze over the plaza by day, mist filling the canal, and at
+  night halos round the lanterns, which light it through their shadow maps (the graphics
+  setting `volumetric_fog`; off keeps the haze without the halos).
 - The windows look into rooms (the engine's interior mapping, `interior.wgsl`): each of
   the 141 windows' panes (1.2 x 1.6 m, the rooms' proportions) is a uv cell of its own
   in `Market_WindowGlow`, and the material traces a room behind it from

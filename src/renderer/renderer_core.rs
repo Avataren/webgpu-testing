@@ -112,6 +112,10 @@ pub struct RendererStats {
     pub global_illumination: bool,
     /// The frame's lights and their shadows.
     pub lights: LightStats,
+    /// The scene had fog this frame, and the froxel volume's size when it ran
+    /// (volumetric fog).
+    pub fog: bool,
+    pub fog_froxels: Option<[u32; 3]>,
 }
 
 /// How a shadow-casting point or spot light got its shadow in the last frame
@@ -206,8 +210,8 @@ struct FramePlan {
     /// The opaque surfaces' indirect diffuse light is ray traced (global illumination).
     global_illumination: bool,
     /// Nothing but the main pass's opaque PBR surfaces reads the shadow maps: no
-    /// transparent surfaces, shader materials, custom shadow passes or lit particles.
-    /// Maps the ray-traced mask replaces can then be skipped.
+    /// transparent surfaces, shader materials, custom shadow passes, lit particles or
+    /// volumetric fog. Maps the ray-traced mask replaces can then be skipped.
     only_main_pass_reads_shadow_maps: bool,
     /// The light probe grid traces its update.
     light_probes: bool,
@@ -262,6 +266,8 @@ pub struct Renderer {
     light_culling: LightCulling,
     light_probes: crate::renderer::light_probes::LightProbes,
     environment: EnvironmentResources,
+    /// The fog's uniform, froxel volume and passes (`renderer/fog.rs`).
+    fog: crate::renderer::fog::FogStage,
     /// Starts the clock the procedural sky's stars twinkle by.
     sky_started: crate::time::Instant,
     shadows: ShadowResources,
@@ -359,12 +365,23 @@ impl Renderer {
             DEFAULT_SHADOW_ATLAS_SIZE,
         );
         let mut light_probes = crate::renderer::light_probes::LightProbes::new(&context.device);
+        let fog_resources =
+            crate::renderer::fog::FogResources::new(&context.device, &context.queue);
         let lights_buffer = LightsBuffer::new(
             &context.device,
             &context.queue,
             &shadows,
             &environment,
             &light_probes,
+            &fog_resources,
+        );
+        let fog = crate::renderer::fog::FogStage::new(
+            &context.device,
+            fog_resources,
+            &camera_buffer.bind_layout,
+            &lights_buffer.bind_layout,
+            sample_count,
+            context.scene_texture_format(),
         );
         let light_culling = LightCulling::new(&context.device);
         let (pipeline, texture_binder) = RenderPipeline::new(
@@ -399,8 +416,14 @@ impl Renderer {
         }
         let skinning = crate::renderer::skinning::SkinningStage::new(&context.device);
         let gpu_timer = crate::renderer::gpu_timer::GpuTimer::new(&context.device, &context.queue);
-        let mut postprocess =
-            PostProcess::new(&context.device, &context.queue, &post_config, sample_count);
+        let mut postprocess = PostProcess::new(
+            &context.device,
+            &context.queue,
+            &post_config,
+            sample_count,
+            fog.uniform_buffer(),
+            fog.volume_view(),
+        );
         postprocess.set_display_peak(&context.queue, hdr_display.peak_ratio());
         postprocess.set_depth_view(&context.depth.sampled_view);
 
@@ -480,6 +503,7 @@ impl Renderer {
             light_culling,
             light_probes,
             environment,
+            fog,
             sky_started: crate::time::Instant::now(),
             shadows,
             postprocess,
@@ -596,9 +620,9 @@ impl Renderer {
     /// Read the WGSL sources from disk again (see [`crate::renderer::shader_source`]) and
     /// rebuild the passes that use them: the main pass (PBR, shader materials, depth
     /// prepass, background), every post-processing pass including the ray-traced ones and
-    /// the path tracer, and ray-traced shadows. A shader that fails to compile leaves every
-    /// pipeline as it was and returns the compiler's message; the previous sources stay in
-    /// effect. Temporal histories start over.
+    /// the path tracer, ray-traced shadows and the fog's passes. A shader that fails to
+    /// compile leaves every pipeline as it was and returns the compiler's message; the
+    /// previous sources stay in effect. Temporal histories start over.
     ///
     /// Shadow maps, skinning, particles, the environment and HDR presentation keep their
     /// pipelines until a restart; the result lists changed files that only they use.
@@ -608,7 +632,13 @@ impl Renderer {
         let staged = shader_source::stage_from_disk()?;
         let device = self.context.device.clone();
         let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let rebuilt = self.rebuild_shader_pipelines();
+        let rebuilt = self.rebuild_shader_pipelines().and_then(|rebuilt| {
+            let fog = self
+                .fog
+                .rebuild_pipelines(&device)
+                .map_err(|error| format!("fog: {error}"))?;
+            Ok((rebuilt, fog))
+        });
         let device_error = pollster::block_on(validation.pop());
         let rebuilt = match (rebuilt, device_error) {
             (Ok(rebuilt), None) => rebuilt,
@@ -627,7 +657,8 @@ impl Renderer {
                 .rebuild_bind_group(&device, &self.shadows, &self.environment);
         }
         let used = shader_source::finish();
-        let (main, post, rt_shadows) = rebuilt;
+        let ((main, post, rt_shadows), fog) = rebuilt;
+        self.fog.install_pipelines(fog);
         self.pipeline.install_shaders(main);
         self.postprocess.install_pipelines(post);
         if let Some(stage) = rt_shadows {
@@ -1140,6 +1171,7 @@ impl Renderer {
         };
         let mut frame_state =
             self.prepare_frame_state(batcher, assets, environment, target_view, ui_view)?;
+        self.prepare_fog(environment, &mut frame_state);
         self.gpu_timer.begin_frame(&mut frame_state.encoder);
         if let Some(stage) = self.present_stage.as_ref() {
             stage.clear_ui(&mut frame_state.encoder);
@@ -1201,6 +1233,12 @@ impl Renderer {
         if plan.ray_traced && plan.light_probes {
             self.run_light_probes(&mut frame_state);
         }
+        // Volumetric fog reads the shadow maps, clusters and probes of this frame.
+        if self.fog.volumetric() {
+            self.fog
+                .dispatch_volume(&mut frame_state.encoder, &self.lights_buffer.bind_group);
+            self.gpu_timer.mark(&mut frame_state.encoder, "fog");
+        }
         // Traced global illumination brings the diffuse light the main pass would take
         // from the environment, and ray-traced reflections the sky's reflection.
         let gi = plan.trace_global_illumination();
@@ -1223,6 +1261,12 @@ impl Renderer {
         // Shader materials draw their own colour (after path tracing, which lights only
         // the PBR surfaces).
         self.run_shader_material_pass(&mut frame_state, assets, path_traced);
+        // The fog over the opaque scene; particles and transparent surfaces fog themselves.
+        if self.fog.enabled() {
+            self.gpu_timer.mark(&mut frame_state.encoder, "main");
+            self.run_fog_apply(&mut frame_state);
+            self.gpu_timer.mark(&mut frame_state.encoder, "fog_apply");
+        }
         // What particles and transparent surfaces change is reactive for FSR; where
         // particles cover the screen, ray-traced reflections trace them instead.
         self.postprocess.capture_opaque_scene(
@@ -1771,6 +1815,16 @@ impl Renderer {
         self.shadows.update_budget()
     }
 
+    /// How finely volumetric fog is gathered near the camera (a graphics setting; off
+    /// keeps the height fog, lit without shadows). Only scenes with fog use it.
+    pub fn set_volumetric_fog(&mut self, quality: crate::renderer::VolumetricFog) {
+        self.fog.set_quality(quality);
+    }
+
+    pub fn volumetric_fog(&self) -> crate::renderer::VolumetricFog {
+        self.fog.quality()
+    }
+
     /// Give each directional light `count` shadow cascades (1 to 4; 0: the default, 4)
     /// of `size` texels across (0: the default, `RenderSettings::shadow_map_size`).
     /// More cascades keep shadows sharp further from the camera; each costs a pass over
@@ -1954,6 +2008,7 @@ impl Renderer {
             only_main_pass_reads_shadow_maps: !custom_shadow_enabled
                 && !particles_lit
                 && !shader_materials
+                && !self.fog.volumetric()
                 && batches.transparent_range.is_empty(),
             ray_traced: false,
             particles_traced: false,
@@ -2282,6 +2337,49 @@ impl Renderer {
             self.context.scene_texture_format(),
         );
         frame.stats.transparent_draw_calls += transparent_draw_calls;
+    }
+
+    /// Settle this frame's fog (`renderer/fog.rs`) for the scene's viewport and camera,
+    /// and bind a new froxel volume in the lights group when it changed.
+    fn prepare_fog(&mut self, environment: &Environment, frame: &mut FrameState) {
+        let camera = crate::renderer::fog::FogCamera {
+            view: self.cluster_camera.view,
+            projection: self.cluster_camera.projection,
+        };
+        let changed = self.fog.prepare(
+            &self.context.device,
+            &self.context.queue,
+            environment.active_fog(),
+            &camera,
+            frame.scene_region,
+            self.frozen_noise,
+        );
+        if changed {
+            let volume = self.fog.volume_view().clone();
+            self.lights_buffer.set_fog_volume(
+                &self.context.device,
+                &self.shadows,
+                &self.environment,
+                &volume,
+            );
+            self.postprocess.set_fog_volume(&volume);
+        }
+        frame.stats.fog = self.fog.enabled();
+        frame.stats.fog_froxels = self.fog.froxels();
+    }
+
+    /// Blend the fog over the opaque scene, before particles and transparent surfaces.
+    fn run_fog_apply(&mut self, frame: &mut FrameState) {
+        self.fog.apply(
+            &self.context.device,
+            &mut frame.encoder,
+            &frame.scene_view,
+            frame.scene_resolve_view.as_ref(),
+            &self.context.depth.sampled_view,
+            &self.camera_buffer.bind_group,
+            &self.lights_buffer.bind_group,
+            frame.scene_region,
+        );
     }
 
     /// Editor overlays and gizmos, drawn on the finished (tonemapped) image.

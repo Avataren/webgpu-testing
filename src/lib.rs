@@ -6,6 +6,7 @@ pub mod audio;
 pub mod audio_inspect;
 pub mod environment;
 pub mod export;
+pub mod fog;
 pub mod gpu_particles;
 pub mod graphics_settings;
 pub mod io;

@@ -197,6 +197,8 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "render_scale": ctx.gpu.renderer.render_scale(),
             "path_traced": stats.path_traced,
             "global_illumination": stats.global_illumination,
+            "fog": stats.fog,
+            "fog_froxels": stats.fog_froxels,
             "ray_tracing": stats.ray_tracing.map(|rt| json!({
                 "tlas_instances": rt.instances,
                 "meshes": rt.meshes,
@@ -210,7 +212,7 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),
                 "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
-                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: shadow_cascades is the directional lights' cascaded shadow maps and shadows the point and spot lights' atlas; path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; with ray-traced global illumination they are global_illumination (the trace), gi_denoise and gi_composite (full-resolution upsample and add, with the radiance cache copy); reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
+                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: shadow_cascades is the directional lights' cascaded shadow maps and shadows the point and spot lights' atlas; fog is the volumetric fog's froxel volume (lighting and integration; fog_froxels gives its size) and fog_apply the pass that fogs the opaque scene; path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; with ray-traced global illumination they are global_illumination (the trace), gi_denoise and gi_composite (full-resolution upsample and add, with the radiance cache copy); reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
             })),
         },
         "assets": {

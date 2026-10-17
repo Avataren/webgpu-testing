@@ -29,6 +29,9 @@ pub(crate) struct BatchPassOptions {
     /// Skip the instances the camera's frustum does not see (`OrderedBatch::camera_visible`):
     /// for passes drawn with the scene camera, not the stable one.
     pub(crate) cull: bool,
+    /// Surfaces take the fog between them and the camera (the transparent pass, drawn
+    /// over the opaque scene after its fog).
+    pub(crate) fog: bool,
 }
 
 pub(crate) struct BatchRecorder<'a> {
@@ -109,6 +112,7 @@ impl<'a> BatchRecorder<'a> {
                 options.use_gbuffer,
                 options.pick_only,
                 wireframe,
+                options.fog,
             );
             // Last frame's positions, for motion vectors: a skinned instance's previous
             // pose, else the mesh itself (only the model matrix moved it).
@@ -572,6 +576,7 @@ pub(crate) fn main_color_pass(
                 pick_only: false,
                 after_prepass: true,
                 cull: true,
+                fog: false,
             };
 
             draw_calls += recorder.record(pass, batches, options, bindless_group.as_ref());
@@ -631,6 +636,7 @@ pub(crate) fn shader_material_pass(
         pick_only: false,
         after_prepass: false,
         cull: true,
+        fog: false,
     };
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut recorder = BatchRecorder::new(
@@ -717,6 +723,7 @@ pub(crate) fn transparent_pass(
         pick_only: false,
         after_prepass: false,
         cull: true,
+        fog: true,
     };
     let config = SurfacePassConfig::new(
         "TransparentPass",
@@ -772,6 +779,7 @@ pub(crate) fn overlay_pass(
         pick_only: false,
         after_prepass: false,
         cull: false,
+        fog: false,
     };
     let config =
         SurfacePassConfig::new("OverlayPass", surface_view, batches, &mut recorder, options)
@@ -816,6 +824,7 @@ pub(crate) fn gizmo_pass(
         pick_only: false,
         after_prepass: false,
         cull: false,
+        fog: false,
     };
     let config = SurfacePassConfig::new(label, surface_view, batches, &mut recorder, options)
         .render_region(render_region)
@@ -863,6 +872,7 @@ pub(crate) fn pick_pass(
         pick_only: true,
         after_prepass: false,
         cull: false,
+        fog: false,
     };
     let bindless_group = renderer.texture_binder.global_bind_group().cloned();
     let mut draw_calls = 0;

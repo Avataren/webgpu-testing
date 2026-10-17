@@ -15,6 +15,7 @@ const MARKER_INCLUDE_MATERIAL_SYSTEM: &str = "// @include_material_system";
 const MARKER_INCLUDE_LIGHTING: &str = "// @include_lighting";
 const MARKER_INCLUDE_SHADOWS: &str = "// @include_shadows";
 const MARKER_INCLUDE_ENVIRONMENT: &str = "// @include_environment";
+const MARKER_INCLUDE_FOG: &str = "// @include_fog";
 
 struct ShaderConstant {
     name: &'static str,
@@ -133,6 +134,13 @@ impl ShaderBuilder {
         self
     }
 
+    /// Add the fog (`fog_at`, `fog_apply`; fog.wgsl, lights group bindings 16 and 17),
+    /// with the lighting and environment modules it reads.
+    pub fn with_fog(mut self) -> Self {
+        self.ensure_with_fog();
+        self
+    }
+
     /// Add complete scene lighting with shadows
     pub fn with_lighting_and_shadows(mut self) -> Self {
         self.ensure_module(wgsl!("lighting_with_shadows.wgsl"));
@@ -198,6 +206,7 @@ impl ShaderBuilder {
             .with_shadows()
             .with_environment()
             .with_lighting_and_shadows()
+            .with_fog()
     }
 
     pub fn full_pbr(bindless: bool) -> Self {
@@ -215,6 +224,7 @@ impl ShaderBuilder {
             .with_shadows()
             .with_environment()
             .with_lighting_and_shadows()
+            .with_fog()
     }
 
     pub fn particles(bindless: bool) -> Self {
@@ -270,6 +280,13 @@ impl ShaderBuilder {
         self.ensure_module(wgsl!("light_probes.wgsl"));
     }
 
+    fn ensure_with_fog(&mut self) {
+        self.ensure_with_lighting();
+        self.ensure_with_environment();
+        self.ensure_module(wgsl!("fog_common.wgsl"));
+        self.ensure_module(wgsl!("fog.wgsl"));
+    }
+
     fn apply_markers(mut self, shader_source: &str) -> Self {
         if shader_source.contains(MARKER_INCLUDE_MATERIAL_SYSTEM) {
             self.ensure_with_material_system();
@@ -285,6 +302,10 @@ impl ShaderBuilder {
 
         if shader_source.contains(MARKER_INCLUDE_ENVIRONMENT) {
             self.ensure_with_environment();
+        }
+
+        if shader_source.contains(MARKER_INCLUDE_FOG) {
+            self.ensure_with_fog();
         }
 
         self

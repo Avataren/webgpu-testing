@@ -403,7 +403,9 @@ impl CameraBuffer {
 }
 
 /// The lights group (group 2 of the lit passes): the lights and their cluster lists,
-/// shadows, environment, the ray-traced shadow mask and the light probes.
+/// shadows, environment, the ray-traced shadow mask, the light probes and the fog. The
+/// fog's froxel volume reads it from a compute pass, so it is visible to compute shaders
+/// too.
 pub(crate) struct LightsBuffer {
     /// `LightsHeader`, then the local lights (see `lights.rs`); grows with them.
     pub(crate) buffer: wgpu::Buffer,
@@ -428,7 +430,15 @@ pub(crate) struct LightsBuffer {
     probe_buffer: wgpu::Buffer,
     probe_irradiance: wgpu::TextureView,
     probe_distance: wgpu::TextureView,
+    /// The fog (bindings 16-17): its uniform and integrated froxel volume.
+    fog_uniform: wgpu::Buffer,
+    fog_volume: wgpu::TextureView,
 }
+
+/// The shader stages the lights group is visible to: the lit passes' fragments, and the
+/// fog volume's compute pass.
+const LIGHTS_STAGES: wgpu::ShaderStages =
+    wgpu::ShaderStages::FRAGMENT.union(wgpu::ShaderStages::COMPUTE);
 
 /// Local lights the lights buffer has room for at first.
 const INITIAL_LOCAL_LIGHTS: usize = 64;
@@ -461,10 +471,11 @@ impl LightsBuffer {
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
         probes: &crate::renderer::light_probes::LightProbes,
+        fog: &crate::renderer::fog::FogResources,
     ) -> Self {
         let probe_texture = |binding| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: LIGHTS_STAGES,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: wgpu::TextureViewDimension::D2,
@@ -474,7 +485,7 @@ impl LightsBuffer {
         };
         let depth_texture = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: LIGHTS_STAGES,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Depth,
                 view_dimension,
@@ -487,7 +498,7 @@ impl LightsBuffer {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -501,7 +512,7 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -514,14 +525,14 @@ impl LightsBuffer {
                 depth_texture(2, wgpu::TextureViewDimension::D2Array),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
                 depth_texture(4, wgpu::TextureViewDimension::D2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -531,7 +542,7 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -541,13 +552,13 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Uint,
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -557,7 +568,7 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -569,11 +580,31 @@ impl LightsBuffer {
                 probe_texture(14),
                 wgpu::BindGroupLayoutEntry {
                     binding: 15,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: LIGHTS_STAGES,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 16,
+                    visibility: LIGHTS_STAGES,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 17,
+                    visibility: LIGHTS_STAGES,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -620,15 +651,17 @@ impl LightsBuffer {
         let probe_buffer = probes.grid_buffer().clone();
         let probe_irradiance = probes.irradiance_view().clone();
         let probe_distance = probes.distance_view().clone();
+        let fog_uniform = fog.uniform.clone();
+        let fog_volume = fog.fallback_view.clone();
         let bind_group = Self::create_bind_group(
             device,
             &layout,
-            [&buffer, &shadow_buffer, &lists],
+            [&buffer, &shadow_buffer, &lists, &fog_uniform],
             shadows,
             environment,
             &fallback_mask_view,
             [&probe_buffer, &probe_buffer],
-            [&probe_irradiance, &probe_distance],
+            [&probe_irradiance, &probe_distance, &fog_volume],
         );
 
         Self {
@@ -649,22 +682,26 @@ impl LightsBuffer {
             probe_buffer,
             probe_irradiance,
             probe_distance,
+            fog_uniform,
+            fog_volume,
         }
     }
 
-    /// `buffers`: the lights, the shadows uniform and the light lists.
+    /// `buffers`: the lights, the shadows uniform, the light lists and the fog uniform;
+    /// `views`: the light probes' irradiance and distances, and the fog volume.
     #[allow(clippy::too_many_arguments)]
     fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        buffers: [&wgpu::Buffer; 3],
+        buffers: [&wgpu::Buffer; 4],
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
         rt_shadow_mask: &wgpu::TextureView,
         probe_buffers: [&wgpu::Buffer; 2],
-        probe_views: [&wgpu::TextureView; 2],
+        views: [&wgpu::TextureView; 3],
     ) -> wgpu::BindGroup {
-        let [lights_buffer, shadow_buffer, lists] = buffers;
+        let [lights_buffer, shadow_buffer, lists, fog_uniform] = buffers;
+        let [probe_irradiance, probe_distance, fog_volume] = views;
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("LightsBindGroup"),
             layout,
@@ -711,15 +748,23 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 13,
-                    resource: wgpu::BindingResource::TextureView(probe_views[0]),
+                    resource: wgpu::BindingResource::TextureView(probe_irradiance),
                 },
                 wgpu::BindGroupEntry {
                     binding: 14,
-                    resource: wgpu::BindingResource::TextureView(probe_views[1]),
+                    resource: wgpu::BindingResource::TextureView(probe_distance),
                 },
                 wgpu::BindGroupEntry {
                     binding: 15,
                     resource: lists.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 16,
+                    resource: fog_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 17,
+                    resource: wgpu::BindingResource::TextureView(fog_volume),
                 },
             ],
         })
@@ -816,15 +861,37 @@ impl LightsBuffer {
         self.bind_group = Self::create_bind_group(
             device,
             &self.bind_layout,
-            [&self.buffer, &self.shadow_buffer, &self.lists],
+            [
+                &self.buffer,
+                &self.shadow_buffer,
+                &self.lists,
+                &self.fog_uniform,
+            ],
             shadows,
             environment,
             self.rt_shadow_mask
                 .as_ref()
                 .unwrap_or(&self.fallback_mask_view),
             [&self.probe_buffer, &self.probe_buffer],
-            [&self.probe_irradiance, &self.probe_distance],
+            [
+                &self.probe_irradiance,
+                &self.probe_distance,
+                &self.fog_volume,
+            ],
         );
+    }
+
+    /// Bind `volume` as the fog's integrated froxel volume (after it was recreated, or
+    /// the volume of no fog).
+    pub(crate) fn set_fog_volume(
+        &mut self,
+        device: &wgpu::Device,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+        volume: &wgpu::TextureView,
+    ) {
+        self.fog_volume = volume.clone();
+        self.rebuild_bind_group(device, shadows, environment);
     }
 
     /// Bind the light probe grid's current atlases (after they were recreated).

@@ -5,6 +5,7 @@ pub mod compute_pass;
 pub mod compute_resources;
 pub mod debug_draw;
 pub mod depth;
+pub mod fog;
 pub mod frame_graph;
 pub mod gizmo_shapes;
 mod gpu_timer;
@@ -45,6 +46,7 @@ pub use compute_resources::{
     BindGroupBuilder, BindGroupLayoutBuilder, StorageBuffer, UniformBuffer,
 };
 pub use depth::Depth;
+pub use fog::VolumetricFog;
 pub use gpu_timer::GpuTimings;
 pub use light_probe_debug::LightProbeDebugView;
 pub use light_probes::{

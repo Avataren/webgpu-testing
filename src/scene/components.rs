@@ -324,6 +324,9 @@ pub struct EnvironmentComponent {
     /// image. Left out of scenes that never had one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sky: Option<crate::sky::ProceduralSky>,
+    /// Height fog (see [`crate::fog`]). Left out of scenes that never had one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fog: Option<crate::fog::Fog>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -359,6 +362,7 @@ impl EnvironmentComponent {
             color_grading: None,
             hdr,
             sky: environment.sky().cloned(),
+            fog: environment.fog().cloned(),
         }
     }
 
@@ -380,6 +384,7 @@ impl EnvironmentComponent {
             None => environment.set_hdr_background(None),
         }
         environment.set_sky(self.sky.clone());
+        environment.set_fog(self.fog.as_ref().map(crate::fog::Fog::sanitized));
 
         environment
     }

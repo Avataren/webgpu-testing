@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use wgpu::Color;
 
+use crate::fog::Fog;
 use crate::sky::ProceduralSky;
 
 /// Describes high-level environment settings applied while rendering a scene.
@@ -18,6 +19,8 @@ pub struct Environment {
     hdr_background: Option<HdrBackground>,
     /// The procedural sky; while enabled it stands in for the HDR background.
     sky: Option<ProceduralSky>,
+    /// Height fog (see [`crate::fog`]).
+    fog: Option<Fog>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +41,7 @@ impl Environment {
             ambient_intensity: 0.03,
             hdr_background: None,
             sky: None,
+            fog: None,
         }
     }
 
@@ -141,6 +145,24 @@ impl Environment {
     /// The procedural sky, when it is enabled (it then replaces the HDR background).
     pub fn active_sky(&self) -> Option<&ProceduralSky> {
         self.sky.as_ref().filter(|sky| sky.enabled)
+    }
+
+    /// The fog's settings, enabled or not.
+    pub fn fog(&self) -> Option<&Fog> {
+        self.fog.as_ref()
+    }
+
+    pub fn fog_mut(&mut self) -> Option<&mut Fog> {
+        self.fog.as_mut()
+    }
+
+    pub fn set_fog(&mut self, fog: Option<Fog>) {
+        self.fog = fog;
+    }
+
+    /// The fog, when it is enabled.
+    pub fn active_fog(&self) -> Option<&Fog> {
+        self.fog.as_ref().filter(|fog| fog.enabled)
     }
 
     /// Whether the active HDR image is drawn behind the scene, not only used for light

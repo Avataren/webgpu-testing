@@ -42,6 +42,13 @@ impl ParticleRenderMode {
         matches!(self, Self::AlphaBlend)
     }
 
+    /// Whether the fog's own light goes over the particles (it covers them); additive
+    /// particles add their light to what is behind, already fogged, so the fog only dims
+    /// theirs.
+    fn fog_adds_light(self) -> bool {
+        !matches!(self, Self::Additive)
+    }
+
     fn ray_traced_blend(self) -> RayTracedParticleBlend {
         match self {
             Self::Opaque => RayTracedParticleBlend::Opaque,
@@ -339,6 +346,7 @@ impl GpuParticleSystem {
             sampler_filtering,
             blend_state,
             depth_write_enabled,
+            render_mode.fog_adds_light(),
         );
 
         let workgroup_count = max_particles.div_ceil(WORKGROUP_SIZE);
@@ -518,6 +526,7 @@ impl GpuParticleSystem {
             self.sampler_filtering,
             self.blend_state,
             self.depth_write_enabled,
+            self.render_mode.fog_adds_light(),
         );
 
         self.render_pipeline = pipeline;

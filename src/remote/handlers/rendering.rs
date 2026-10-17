@@ -187,7 +187,8 @@ pub(super) fn environment_set(params: &Value, ctx: &mut RemoteContext<'_, '_>) -
 
 /// Check an environment change (`ambient_intensity`, `clear_color` as `[r, g, b(, a)]` or
 /// `"#rrggbb"`, `hdr` {`enabled`, `intensity`, `path`, `background`}, `sky` (the procedural
-/// sky's settings, see `crate::sky::ProceduralSky`)) and return it in the form
+/// sky's settings, see `crate::sky::ProceduralSky`), `fog` (see `crate::fog::Fog`; null
+/// removes it)) and return it in the form
 /// [`patch_environment`] takes: the colour as four numbers, the sky's path resolved.
 pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     if params.get("color_grading").is_some() {
@@ -203,11 +204,16 @@ pub(crate) fn environment_patch(params: &Value) -> Result<Value, String> {
     let unknown: Vec<&str> = fields
         .keys()
         .map(String::as_str)
-        .filter(|key| !matches!(*key, "ambient_intensity" | "clear_color" | "hdr" | "sky"))
+        .filter(|key| {
+            !matches!(
+                *key,
+                "ambient_intensity" | "clear_color" | "hdr" | "sky" | "fog"
+            )
+        })
         .collect();
     if !unknown.is_empty() {
         return Err(format!(
-            "unknown environment setting(s): {}; use ambient_intensity, clear_color, hdr, sky",
+            "unknown environment setting(s): {}; use ambient_intensity, clear_color, hdr, sky, fog",
             unknown.join(", ")
         ));
     }
@@ -239,6 +245,10 @@ pub(crate) fn patch_environment(
     let mut current = EnvironmentComponent::from_environment(scene.environment());
     if current.hdr.is_none() && patch.get("hdr").is_some_and(Value::is_object) {
         current.hdr = Some(Default::default());
+    }
+    // Fog given for a scene without one starts from the defaults (enabled).
+    if current.fog.is_none() && patch.get("fog").is_some_and(Value::is_object) {
+        current.fog = Some(Default::default());
     }
     let updated: EnvironmentComponent = patch_serde(&current, patch)?;
     // set_environment then keeps every environment entity in sync.

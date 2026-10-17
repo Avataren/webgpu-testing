@@ -423,6 +423,14 @@ fn fs_main(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0)
     return shade_fragment(in, front_facing).color;
 }
 
+// The transparent pass: drawn over the fogged opaque scene, a surface takes the fog
+// between it and the camera itself (fog.wgsl).
+@fragment
+fn fs_transparent(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    let color = shade_fragment(in, front_facing).color;
+    return vec4<f32>(fog_apply(color.rgb, in.world_pos), color.a);
+}
+
 @fragment
 fn fs_main_gbuffer(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
     let shaded = shade_fragment(in, front_facing);

@@ -113,6 +113,20 @@ matter for games:
 - **WebGL2 tier and web ray tracing**: `rendering_features_future.md` is the
   investigation. The pooled skinning keeps a CPU path for a downlevel tier, but the
   G-buffer, storage buffers and compute passes are the blockers it lists.
+- **Fog** (`renderer/fog.rs`; first version 2026-10-17). Local fog volumes (a `FogVolume`
+  box or sphere entity adding density, colour and glow, for a misty tunnel or a smoky
+  room: the scatter pass would loop over a uniform array of them) are the obvious next
+  feature. The scatter pass lights every froxel, also those behind the nearest opaque
+  surface of their tile; a per-tile maximum depth (a small reduction of the depth prepass)
+  would let it skip them and end each column's integration early (medium quality is
+  0.15 ms at a 920x600 view, roughly 0.55 ms at 1080p). Per-light volumetric intensity
+  (lights that should not halo) is missing; shader materials and the custom stages are not
+  fogged; ray-traced reflection hits are not fogged along the reflected ray (only the
+  reflection is dimmed by the fog in front of the surface); light probes do not see fog.
+  Moving lights trail slightly through the 85% history. Aerial perspective over kilometres
+  (the sky's own atmosphere on distant geometry) is not modelled: within a few hundred
+  metres it is under 1%, but a large terrain would want the sky's scattering applied to
+  it.
 - **HDR output** is supported but untested on a real HDR display (the development
   machine has none); the simulate mode is the only check so far.
 

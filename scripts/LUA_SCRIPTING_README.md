@@ -394,13 +394,42 @@ end
   nothing is in the way),
   `clear_color` (the background, `{r, g, b[, a]}` or `"#rrggbb"`) and `hdr = { enabled,
   intensity, path, background }` (an HDR sky; `background = false` keeps it to lighting and
-  reflections, with `clear_color` drawn behind the scene) and `sky = {...}` (the procedural
-  sky, see Day and night). Only the settings you name change; an unknown name is an
-  error. Undone when play mode stops.
+  reflections, with `clear_color` drawn behind the scene), `sky = {...}` (the procedural
+  sky, see Day and night) and `fog = {...}` (see Fog). Only the settings you name change;
+  an unknown name is an error. Undone when play mode stops.
 
 ```lua
 -- Path tracing lights the scene from its emissive surfaces: dim the sky for it.
 set_environment({ ambient_intensity = path_traced() and 0.03 or 0.18 })
+```
+
+### Fog
+The environment's `fog` (MCP `environment_set {fog: {...}}`, the inspector's Environment
+section) is height fog: as thick as `density` (light taken away per meter: it fades to a
+third over 1 / density m) up to `height` (world y), thinning above it to 37% every
+`height_falloff` meters (0: as thick at every height). It scatters the sky's and the
+ambient light (the light probes' inside a probe volume) and the sun's and moon's, and near
+the camera (out to `volumetric_distance` m of view depth) every point and spot light's,
+with shadows: sunbeams through gaps, halos round lamps. The player's graphics setting
+`volumetric_fog` (`"off"`, `"low"`, `"medium"`, `"high"`) sets how finely; off keeps the
+fog without its shadows and lamp halos. Other fields: `albedo` (the colour it scatters,
+`{r, g, b}`), `anisotropy` (forward scattering, -0.9 to 0.9: brighter halos looking toward
+lights), `emission` (its own glow), `ambient` and `light` (scale the ambient and the
+lights' light it scatters), `max_distance` (fog past it adds nothing: the sky shows
+through thin fog), `enabled`.
+
+```lua
+-- Mist thickens as night falls (changed only when it has moved noticeably: each call
+-- rebuilds the environment).
+function update(self, dt)
+    local sky = sky_info()
+    if not sky then return end
+    local density = 0.01 + 0.05 * (1.0 - sky.daylight)
+    if not self.fog_density or math.abs(density - self.fog_density) > 0.002 then
+        set_environment({ fog = { density = density } })
+        self.fog_density = density
+    end
+end
 ```
 
 ### Day and night

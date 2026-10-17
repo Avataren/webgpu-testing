@@ -13,6 +13,10 @@
 
 const MAX_COLOR_KEYS: u32 = 4u;
 
+// Whether the fog's own light goes over the particles (false for additive particles;
+// gpu_particles/system/pipeline.rs patches it).
+const PARTICLE_FOG_ADDS_LIGHT: bool = true;
+
 struct Particle {
     position: vec3<f32>,
     lifetime: f32,
@@ -209,6 +213,11 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) front_facing: bool) -> @loca
     }
     
     // Linear HDR: post-processing applies exposure and tonemapping.
-    
+
+    // The fog between the particle and the camera (fog.wgsl). Additive particles add to
+    // what is behind them, which already has its fog: the fog only dims their light.
+    let fogged = fog_at(in.world_position);
+    color = color * fogged.a + select(vec3<f32>(0.0), fogged.rgb, PARTICLE_FOG_ADDS_LIGHT);
+
     return vec4<f32>(color, base_color.a);
 }

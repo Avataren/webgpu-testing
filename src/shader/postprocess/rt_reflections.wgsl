@@ -610,5 +610,8 @@ fn fs_rt_refraction_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         let scene_uv = (in.position.xy + offsets[i]) / vec2<f32>(dims);
         sum += rt_refracted(rt_view_ray(scene_uv), pixel_angle * 0.5, i, spectrum_shift);
     }
-    return vec4<f32>(sum / f32(RT_REFRACTION_SAMPLES), 0.0);
+    // The fog in front of the glass dims what shows through it (fog.wgsl); the fog pass
+    // already gave the pixel the fog's own light.
+    let surface = textureLoad(rt_gbuffer_position, pixel, 0).xyz;
+    return vec4<f32>(sum / f32(RT_REFRACTION_SAMPLES) * fog_transmittance_at(surface), 0.0);
 }

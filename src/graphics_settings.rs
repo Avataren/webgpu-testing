@@ -15,6 +15,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use serde::{Deserialize, Serialize};
 
 use crate::renderer::postprocess::{AntiAliasing, PostProcessSettings, Upscaler};
+use crate::renderer::VolumetricFog;
 
 /// Where the settings are saved among the per-user files (see `save_user_file`).
 const AREA: &str = "settings";
@@ -83,6 +84,9 @@ pub struct GraphicsSettings {
     /// Texels across each cascade's map (1024, 2048 or 4096): sharper shadows at that
     /// size squared times 8 bytes per cascade.
     pub shadow_cascade_size: u32,
+    /// How finely fog near the camera is gathered with its shadows and the halos round
+    /// lamps, in scenes with fog. Off keeps the fog, lit without shadows.
+    pub volumetric_fog: VolumetricFog,
     /// Hardware ray tracing at all. Off, every effect takes its raster version (shadow
     /// maps, screen-space reflections and ambient occlusion, see-through glass, no traced
     /// global illumination or path tracing) and light probes show their bakes, as on a
@@ -126,6 +130,7 @@ impl Default for GraphicsSettings {
             shadow_updates_per_frame: Self::DEFAULT_SHADOW_UPDATES_PER_FRAME,
             shadow_cascades: Self::DEFAULT_SHADOW_CASCADES,
             shadow_cascade_size: Self::DEFAULT_SHADOW_CASCADE_SIZE,
+            volumetric_fog: VolumetricFog::default(),
             ray_tracing: true,
             ray_traced_shadows: true,
             reflections: EffectQuality::RayTraced,

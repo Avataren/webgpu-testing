@@ -9,8 +9,8 @@
 //! They are undone when play mode stops, along with a volume a script created.
 //!
 //! `set_environment` changes the scene's environment the same way: its ambient light,
-//! background colour and HDR sky (a night falling, a path-traced look that wants a darker
-//! sky than the raster one).
+//! background colour, HDR sky and fog (a night falling, mist rising at dawn, a path-traced
+//! look that wants a darker sky than the raster one).
 
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 use serde_json::Value;
@@ -29,7 +29,9 @@ use crate::scripting::lua::guards::with_active_commands;
 ///
 /// - `set_environment(settings)` - change the scene's environment: `ambient_intensity`,
 ///   `clear_color` (`{r, g, b[, a]}` or `"#rrggbb"`), `hdr = { enabled, intensity, path,
-///   background }` (`background = false`: light and reflections only)
+///   background }` (`background = false`: light and reflections only), `fog = { enabled,
+///   density, height, height_falloff, albedo, anisotropy, emission, ambient, light,
+///   volumetric_distance, max_distance }` (see `crate::fog::Fog`)
 pub(crate) fn register_postprocess_api(lua: &Lua) -> LuaResult<()> {
     lua.globals().set(
         "set_postprocess",

@@ -59,6 +59,9 @@ pub(crate) struct PipelineKey {
     /// the batch's depth state.
     pick_only: bool,
     wireframe: bool,
+    /// The transparent pass: PBR surfaces take the fog between them and the camera
+    /// (`fs_transparent`).
+    fog: bool,
 }
 
 impl PipelineKey {
@@ -74,6 +77,7 @@ impl PipelineKey {
         gbuffer: bool,
         pick_only: bool,
         wireframe: bool,
+        fog: bool,
     ) -> Self {
         Self {
             depth_test,
@@ -86,6 +90,7 @@ impl PipelineKey {
             gbuffer,
             pick_only,
             wireframe,
+            fog,
         }
     }
 }
@@ -573,6 +578,8 @@ impl RenderPipeline {
         } else {
             if key.gbuffer {
                 builder = builder.with_fragment_entry("fs_main_gbuffer");
+            } else if key.fog {
+                builder = builder.with_fragment_entry("fs_transparent");
             }
             builder = builder.with_color_target(key.color_format, blend_state);
             if key.gbuffer {
@@ -623,6 +630,12 @@ impl RenderPipeline {
                 MaterialPipelineKey::Pbr
             }
             _ => material_key,
+        };
+        // Only the PBR shader has the fogged entry point; shader materials fog themselves
+        // (or not) in their own `fs_main`.
+        let key = PipelineKey {
+            fog: key.fog && effective_key == MaterialPipelineKey::Pbr,
+            ..key
         };
 
         let entry_key = (effective_key, key);

@@ -385,6 +385,21 @@ fn quality_rows(
         .response
         .on_hover_text("Texels across each cascade's map: sharper sun shadows");
     ui.end_row();
+
+    ui.label("Volumetric fog");
+    egui::ComboBox::from_id_salt("engine_settings_volumetric_fog")
+        .selected_text(settings.volumetric_fog.label())
+        .show_ui(ui, |ui| {
+            for quality in crate::renderer::VolumetricFog::ALL {
+                ui.selectable_value(&mut settings.volumetric_fog, quality, quality.label());
+            }
+        })
+        .response
+        .on_hover_text(
+            "In scenes with fog: sunbeams and halos round lamps near the camera, finer at \
+             higher quality. Off keeps the fog without its shadows",
+        );
+    ui.end_row();
 }
 
 fn ray_tracing_rows(

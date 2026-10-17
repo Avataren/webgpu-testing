@@ -36,6 +36,12 @@ var ssr_apply_sampler : sampler;
 var ssr_apply_normal : texture_2d<f32>;
 @group(1) @binding(163)
 var ssr_apply_position : texture_2d<f32>;
+// The fog (fog_common.wgsl): reflections are added after the fog pass, so the fog between
+// the camera and the reflecting surface dims them here.
+@group(1) @binding(164)
+var<uniform> fog : FogParams;
+@group(1) @binding(165)
+var ssr_fog_volume : texture_3d<f32>;
 
 const SSR_STEPS : i32 = 48;
 const SSR_REFINE_STEPS : i32 = 5;
@@ -255,5 +261,18 @@ fn fs_ssr_apply(in : VertexOutput) -> @location(0) vec4<f32> {
     // theirs: on them it stands for diffuse light, not a reflection.
     let found = clamp(reflection.a, 0.0, 1.0) * min(post_uniform.ssr.x, 1.0) * smoothness * smoothness;
     let replaced = post_uniform.reflection.yzw * f0 * metalness * found;
-    return vec4<f32>(ssr_expand(reflection.rgb) * weight - replaced, 0.0);
+    return vec4<f32>((ssr_expand(reflection.rgb) * weight - replaced) * ssr_fog_transmittance(position.xyz), 0.0);
+}
+
+// The share of the light from world point `p` that gets through the fog to the camera.
+fn ssr_fog_transmittance(p : vec3<f32>) -> f32 {
+    if !fog_enabled() {
+        return 1.0;
+    }
+    var volume = 1.0;
+    if fog_volumetric() {
+        let depth = min(fog_view_depth(p), fog.volume.x);
+        volume = textureSampleLevel(ssr_fog_volume, ssr_apply_sampler, fog_integrated_uvw(p, depth), 0.0).a;
+    }
+    return fog_transmittance_to(p, volume);
 }

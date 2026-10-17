@@ -105,6 +105,27 @@
             1.0
           ],
           "night_glow": 1.0
+        },
+        "fog": {
+          "enabled": true,
+          "density": 0.025,
+          "height": -0.5,
+          "height_falloff": 3.0,
+          "albedo": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "anisotropy": 0.5,
+          "emission": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "ambient": 1.0,
+          "light": 1.0,
+          "volumetric_distance": 64.0,
+          "max_distance": 600.0
         }
       },
       "camera": null

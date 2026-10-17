@@ -859,7 +859,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "environment_get",
-            description: "Background clear color, ambient intensity, HDR sky (path, intensity) and the procedural sky's settings (sky; see sky_get for its state). Exposure, tonemapping and color grading are post-processing: see postprocess_get.",
+            description: "Background clear color, ambient intensity, HDR sky (path, intensity), the procedural sky's settings (sky; see sky_get for its state) and the fog (fog; absent when the scene never had one). Exposure, tonemapping and color grading are post-processing: see postprocess_get.",
             schema: empty(),
             action: Action::Engine("environment.get"),
         },
@@ -872,6 +872,19 @@ pub fn tools() -> Vec<Tool> {
                 "hdr": { "type": "object", "properties": {
                     "enabled": { "type": "boolean" }, "intensity": { "type": "number" }, "path": { "type": "string", "description": ".hdr image" },
                     "background": { "type": "boolean", "description": "Draw the sky behind the scene (default true); false keeps it to lighting and reflections, with clear_color behind" }
+                }},
+                "fog": { "type": ["object", "null"], "description": "Height fog lit by the sky, sun/moon and (near the camera, volumetric) every point/spot light with shadows: sunbeams and lamp halos. The first object adds it with defaults (enabled); null removes it. How finely the volumetric part is gathered is the graphics setting volumetric_fog. engine_stats renderer.fog_froxels and the GPU stages fog/fog_apply show its cost", "properties": {
+                    "enabled": { "type": "boolean" },
+                    "density": { "type": "number", "description": "Extinction at and below height, 1/m (default 0.02): light fades to a third over 1/density m" },
+                    "height": { "type": "number", "description": "World y at and below which the fog is at full density (default 0)" },
+                    "height_falloff": { "type": "number", "description": "Above height the density falls to 37% every this many meters (default 10; 0: the same at every height)" },
+                    "albedo": { "type": "array", "items": { "type": "number" }, "description": "Linear RGB share of light scattered (default [1,1,1])" },
+                    "anisotropy": { "type": "number", "description": "Forward scattering, Henyey-Greenstein g in -0.9..0.9 (default 0.4): brighter halos looking toward lights" },
+                    "emission": { "type": "array", "items": { "type": "number" }, "description": "Linear RGB glow of its own: the radiance it takes on where thick (default 0)" },
+                    "ambient": { "type": "number", "description": "Scales the ambient light it scatters: sky, flat ambient, light probes (default 1)" },
+                    "light": { "type": "number", "description": "Scales the directional, point and spot lights' light it scatters (default 1)" },
+                    "volumetric_distance": { "type": "number", "description": "View depth in m the volumetric (shadowed, lamp-lit) fog reaches (default 64, 4-300); past it the fog is lit by the sky and directional lights without shadows" },
+                    "max_distance": { "type": "number", "description": "Fog farther than this (m) adds nothing more, so the sky shows through thin fog at the horizon (default 1000)" }
                 }}
             }), &[]),
             action: Action::Engine("environment.set"),
@@ -963,6 +976,7 @@ pub fn tools() -> Vec<Tool> {
                 "shadow_updates_per_frame": { "type": "integer", "description": "Point/spot light shadow views redrawn per frame at most (default 48; views wait at most a few frames). engine_stats renderer.shadow_views_deferred counts the waiting ones" },
                 "shadow_cascades": { "type": "integer", "minimum": 1, "maximum": 4, "description": "Shadow map cascades per directional light (default 4): more keep sun shadows sharp further from the camera. engine_stats renderer.lights shows the cascades' split depths" },
                 "shadow_cascade_size": { "type": "integer", "enum": [1024, 2048, 4096], "description": "Texels across each directional shadow cascade (default 2048; 8 bytes a texel with its static casters' copy)" },
+                "volumetric_fog": { "type": "string", "enum": ["off", "low", "medium", "high"], "description": "In scenes with fog: how finely the fog near the camera is gathered with shadows and lamp halos (default medium: a froxel per 8x8 pixels, 64 slices; low 16 px/32, high 6 px/96). off keeps the fog, lit without shadows" },
                 "ray_tracing": { "type": "boolean", "description": "Hardware ray tracing at all (default true). false: every effect takes its raster version (shadow maps, screen-space reflections and AO, see-through glass, no traced GI or path tracing) and light probes show their bakes, as on a GPU without ray tracing (or the web); the individual choices are kept for when it is switched back on" },
                 "ray_traced_shadows": { "type": "boolean" },
                 "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
