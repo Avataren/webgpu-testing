@@ -1,6 +1,7 @@
 -- Lantern Market's director: loads the cast, defines the brains (market/brains/: every
 -- person, cart and the portcullis is an AiAgent running a behaviour tree or state
--- machine), fills the market, and runs the camera, the HUD and the keys.
+-- machine), fills the market, and runs the camera, the HUD and the keys. Return takes
+-- over the person the camera follows (market/possess.lua) and lets them go again.
 --
 -- Steer it with lua_eval on this entity: MARKET holds the state, and RT.status(),
 -- RT.gate(), RT.summon(x, y, z, n), RT.shot(n), RT.debug(on), RT.ai(on), RT.theft(),
@@ -11,6 +12,7 @@ local People = require("market/people")
 local Props = require("market/props")
 local Camera = require("market/camera")
 local Hud = require("market/hud")
+local Possess = require("market/possess")
 local Townsfolk = require("market/brains/townsfolk")
 local Vendor = require("market/brains/vendor")
 local Guard = require("market/brains/guard")
@@ -152,18 +154,46 @@ local function maybe_start_tag(force)
     return Child.start_tag(People.ids("child"))
 end
 
+-- Take over the person followed, or let them go.
+local function toggle_possession()
+    if Possess.active() then
+        local person = Possess.stop()
+        Camera.hold = nil
+        C.tell("You let go of " .. person.name)
+        return
+    end
+    local shot = Camera.SHOTS[Camera.shot]
+    local person = shot.follow and Camera.follow
+    if not person then
+        C.tell("Follow someone first (F), then Return takes them over")
+    elseif Possess.start(person, Camera.e) then
+        Camera.hold = person
+        C.tell("You are " .. person.name .. " (Return lets go)")
+    else
+        C.tell(person.name .. " stays at the stall")
+    end
+end
+
 local function handle_input()
-    if is_key_just_pressed("Tab") then
+    if is_key_just_pressed("Return") and MARKET.mode == "running" then
+        toggle_possession()
+    end
+    -- Possessed, the camera stays on them: no other shots or people until let go.
+    if Possess.active() then
+        if is_key_just_pressed("Tab") or is_key_just_pressed("F") then
+            C.tell("Return lets go first")
+        end
+    elseif is_key_just_pressed("Tab") then
         Camera.auto = true
         Camera.next()
     end
     for i = 1, #Camera.SHOTS do
-        if is_key_just_pressed(tostring(i)) then
+        if is_key_just_pressed(tostring(i)) and not Possess.active() then
             Camera.auto = false
             Camera.select(i)
         end
     end
-    if is_key_just_pressed("F") then
+    if is_key_just_pressed("F") and not Possess.active() then
         Camera.auto = false
         Camera.select(7)
     end
@@ -197,7 +227,8 @@ local function handle_input()
     if is_key_just_pressed("H") then
         Hud.hidden = not Hud.hidden
     end
-    if MARKET.mode == "running" and is_mouse_button_just_pressed(0) then
+    -- (Possessed, the mouse buttons look and steer.)
+    if MARKET.mode == "running" and is_mouse_button_just_pressed(0) and not Possess.active() then
         local mouse = get_mouse_position()
         local ray = mouse and screen_to_world_ray(mouse.x, mouse.y)
         local hit = ray and nav_pick(ray.ox, ray.oy, ray.oz, ray.dx, ray.dy, ray.dz)
@@ -220,6 +251,7 @@ function update(self, dt)
         load_step()
     elseif MARKET.mode == "running" then
         People.resolve()
+        Possess.update(dt)
         maybe_start_tag(false)
         if MARKET.frame % 15 == 0 then
             People.census()
@@ -249,11 +281,16 @@ function on_ui(self, ui)
     end
     info.polys = MARKET.nav.polys
     info.carving = MARKET.nav.carving
+    info.possessed = Possess.person
     local shot = Camera.SHOTS[Camera.shot]
     Hud.draw(ui, info, People, shot.follow and Camera.follow or nil)
 end
 
 function on_destroyed(self, reason)
+    if Possess.active() then
+        Possess.stop()
+        Camera.hold = nil
+    end
     People.clear()
     Props.clear()
     for _, holder in pairs(MARKET.holders) do
@@ -318,4 +355,10 @@ end
 
 function RT.tag()
     return maybe_start_tag(true)
+end
+
+-- Take over the person followed (or let go): who is possessed now, if anyone.
+function RT.possess()
+    toggle_possession()
+    return Possess.person and Possess.person.name or false
 end

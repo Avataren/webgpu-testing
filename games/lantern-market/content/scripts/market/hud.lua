@@ -73,18 +73,23 @@ local function role_line(role, label, counts)
     return label .. ": " .. table.concat(texts, ", ")
 end
 
-local function follow_panel(ui, person)
+local function follow_panel(ui, person, possessed)
     local status = ai_status(person.e)
     if not status then
         return
     end
     ui:anchored_panel("market_follow", "bottom_right", 14, 40, 300, nil, function(panel)
         panel:heading(person.name)
-        local words = DESCRIBE[person.role] and DESCRIBE[person.role][status.state] or status.state
-        panel:label(string.format("%s: %s", person.role, words ~= "" and words or "-"),
-            { color = state_color(status.state ~= "" and status.state or person.role) })
-        if status.action then
-            panel:label("Doing: " .. status.action)
+        if possessed then
+            -- Their brain sleeps: what it was doing is stale.
+            panel:label(person.role .. ": possessed, you steer them", { color = GOLD })
+        else
+            local words = DESCRIBE[person.role] and DESCRIBE[person.role][status.state] or status.state
+            panel:label(string.format("%s: %s", person.role, words ~= "" and words or "-"),
+                { color = state_color(status.state ~= "" and status.state or person.role) })
+            if status.action then
+                panel:label("Doing: " .. status.action)
+            end
         end
         if person.role == "townsfolk" then
             local board = ai_blackboard(person.e)
@@ -165,18 +170,16 @@ function Hud.draw(ui, info, people, follow)
     end
     ui:screen_label("top_right", 18, 14, info.shot, { color = GOLD, size = 18 })
     if follow then
-        follow_panel(ui, follow)
+        follow_panel(ui, follow, info.possessed == follow)
     end
     if Hud.labels then
         draw_labels(ui, people)
     end
-    ui:screen_label(
-        "bottom_left",
-        16,
-        12,
-        "Tab next shot   1-9 shots   F follow (right-drag looks, wheel zooms)   B states   V senses   N navmesh   P paths   X x-ray   G gate   T tag   Click: call people over   H hide",
-        { color = SOFT, size = 13 }
-    )
+    local keys = "Tab next shot   1-9 shots   F follow (right-drag looks, wheel zooms; Return takes them over)   B states   V senses   N navmesh   P paths   X x-ray   G gate   T tag   Click: call people over   H hide"
+    if info.possessed then
+        keys = "W/S walk   A/D turn   Q/E sidestep   Shift walk slowly   left-drag look   right-drag steer   both buttons run   wheel zooms   Return: let go"
+    end
+    ui:screen_label("bottom_left", 16, 12, keys, { color = SOFT, size = 13 })
 end
 
 return Hud

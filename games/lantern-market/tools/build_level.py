@@ -112,8 +112,9 @@ class Part:
         self.face_idx(self.add_verts(points), mat, smooth, ref, out)
 
 
-def box(part, mat, lo, hi, top=None, bottom=None):
-    """An axis-aligned box from corner lo to hi; `top` gives its top face another material."""
+def box(part, mat, lo, hi, top=None, bottom=None, open_top=False):
+    """An axis-aligned box from corner lo to hi; `top` gives its top face another material,
+    `open_top` leaves it out (nothing walks on it then)."""
     x0, y0, z0 = lo
     x1, y1, z1 = hi
     c = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
@@ -126,7 +127,7 @@ def box(part, mat, lo, hi, top=None, bottom=None):
         ([0, 3, 7, 4], mat),
         ([1, 2, 6, 5], mat),
     ]
-    for ids, m in faces:
+    for ids, m in faces[1:] if open_top else faces:
         part.face([p[i] for i in ids], m, ref=c)
     if part is S and mat not in ("Timber", "Iron"):
         SOLIDS.append((lo, hi, lambda q: all(lo[i] < q[i] < hi[i] for i in range(3))))
@@ -452,6 +453,89 @@ def build_ground():
         y0 = 1.0 if x0 < 0 else TOW_Y + 1.0
         y1 = TOW_Y + 1.0 if x0 < 0 else 1.0
         obox(S, "Iron", ((x0 + x1) / 2, (y0 + y1) / 2, z), (math.hypot(x1 - x0, y1 - y0), 0.05, 0.05), rot_z(math.degrees(math.atan2(y1 - y0, x1 - x0))))
+
+
+# Where the canal leaves the market at both ends it runs on under the houses: a vaulted
+# tunnel as wide as the water, its springing and depth (it stays under the end houses,
+# 7 m deep, which keep the sky off it).
+CULVERT_SPRING = -2.0
+CULVERT_DEPTH = 6.5
+
+
+def build_culverts():
+    """The canal's ends: a stone headwall under the end houses with an arch over the water,
+    an iron grate in it, and the vaulted tunnel the water runs on into, out of the light.
+    The towpath on the other side ends against the wall. The tunnel's faces only face in,
+    so closed blocks of masonry round it keep the light out (shadows and light probes
+    see only front faces)."""
+    z0, z1 = TOW_N[1], TOW_S[0]
+    zc, r = (z0 + z1) / 2, (z1 - z0) / 2
+    ring, proud, seg = 0.32, 0.08, 16
+    bed = -3.4
+    # The arch (intrados) from the north foot over to the south one, and the arch stones'
+    # outer edge.
+    arc = [(zc - r * math.cos(math.pi * i / seg), CULVERT_SPRING + r * math.sin(math.pi * i / seg)) for i in range(seg + 1)]
+    outer = [(zc - (r + ring) * math.cos(math.pi * i / seg), CULVERT_SPRING + (r + ring) * math.sin(math.pi * i / seg)) for i in range(seg + 1)]
+    for sign in (-1, 1):
+        # d: metres beyond the market's edge, into the tunnel; facing the market is -d.
+        def w(d, y, z):
+            return (sign * (PLAZA_X + d), y, z)
+
+        def o(dd, dy, dz):
+            return (sign * dd, dy, dz)
+
+        def wbox(mat, d0, y0, za, d1, y1, zb, open_top=False):
+            a, b = w(d0, y0, za), w(d1, y1, zb)
+            box(S, mat, tuple(map(min, a, b)), tuple(map(max, a, b)), open_top=open_top)
+
+        facing = o(-1, 0, 0)
+        # The headwall's face, round the arch (beside it, the towpath's end and what the
+        # landing hides; over it, the spandrel up to the houses).
+        S.face([w(0, bed, 12.5), w(0, bed, z0), w(0, 0.0, z0), w(0, 0.0, 12.5)], "Stone", out=facing)
+        S.face([w(0, bed, z1), w(0, bed, CANAL_S), w(0, 0.0, CANAL_S), w(0, 0.0, z1)], "Stone", out=facing)
+        for (za, ya), (zb, yb) in zip(arc, arc[1:]):
+            S.face([w(0, ya, za), w(0, yb, zb), w(0, 0.0, zb), w(0, 0.0, za)], "Stone", out=facing)
+        # The arch stones, standing a little proud of the wall, and the keystone.
+        for i in range(seg):
+            (za, ya), (zb, yb) = arc[i], arc[i + 1]
+            (oa, pa), (ob, pb) = outer[i], outer[i + 1]
+            S.face([w(-proud, ya, za), w(-proud, yb, zb), w(-proud, pb, ob), w(-proud, pa, oa)], "Stone", out=facing)
+            mz, my = (oa + ob) / 2 - zc, (pa + pb) / 2 - CULVERT_SPRING
+            S.face([w(-proud, pa, oa), w(-proud, pb, ob), w(0, pb, ob), w(0, pa, oa)], "Stone", out=o(0, my, mz))
+            mz, my = (za + zb) / 2 - zc, (ya + yb) / 2 - CULVERT_SPRING
+            S.face([w(-proud, ya, za), w(-proud, yb, zb), w(0, yb, zb), w(0, ya, za)], "Stone", out=o(0, -my, -mz))
+        for za, zb in ((outer[0][0], z0), (z1, outer[-1][0])):
+            S.face([w(-proud, CULVERT_SPRING, za), w(-proud, CULVERT_SPRING, zb), w(0, CULVERT_SPRING, zb), w(0, CULVERT_SPRING, za)], "Stone", out=(0, -1, 0))
+        top = CULVERT_SPRING + r
+        wbox("Stone", -proud - 0.06, top - 0.06, zc - 0.2, 0.0, top + ring + 0.1, zc + 0.2)
+        # The tunnel: its walls, vault, bed, water and far end.
+        for z, n in ((z0, 1), (z1, -1)):
+            S.face([w(0, bed, z), w(CULVERT_DEPTH, bed, z), w(CULVERT_DEPTH, CULVERT_SPRING, z), w(0, CULVERT_SPRING, z)], "Stone", out=(0, 0, n))
+        for (za, ya), (zb, yb) in zip(arc, arc[1:]):
+            inward = o(0, CULVERT_SPRING - (ya + yb) / 2, zc - (za + zb) / 2)
+            S.face([w(0, ya, za), w(0, yb, zb), w(CULVERT_DEPTH, yb, zb), w(CULVERT_DEPTH, ya, za)], "Stone", out=inward)
+        wbox("Stone", 0.0, -3.6, z0, CULVERT_DEPTH, bed, z1)
+        WATER.face([w(0, WATER_Y, z0), w(CULVERT_DEPTH, WATER_Y, z0), w(CULVERT_DEPTH, WATER_Y, z1), w(0, WATER_Y, z1)], "Water", out=(0, 1, 0))
+        S.face([w(CULVERT_DEPTH, bed, z0)] + [w(CULVERT_DEPTH, y, z) for z, y in arc] + [w(CULVERT_DEPTH, bed, z1)], "Stone", out=facing)
+        # The masonry it runs through, up to the houses: beside it, over it and behind its
+        # end, a little back from its faces. Open at the top, inside the (hollow) houses,
+        # where it would be floor to walk on.
+        gap, end = 0.1, CULVERT_DEPTH + 0.5
+        crown = CULVERT_SPRING + r + gap
+        wbox("Stone", 0.3, -3.6, 12.5, end, 0.0, z0 - gap, open_top=True)
+        wbox("Stone", 0.3, -3.6, z1 + gap, end, 0.0, CANAL_S, open_top=True)
+        wbox("Stone", 0.3, crown, z0 - gap, end, 0.0, z1 + gap, open_top=True)
+        wbox("Stone", CULVERT_DEPTH + gap, -3.6, z0 - gap, end, crown, z1 + gap)
+        # The grate, set a little into the arch: bars from the bed into the vault, and two
+        # rails across.
+        bars = 14
+        for k in range(bars):
+            z = z0 + (k + 0.5) * (z1 - z0) / bars
+            y_top = CULVERT_SPRING + math.sqrt(max(r * r - (z - zc) ** 2, 0.0)) + 0.04
+            wbox("Iron", 0.14, bed, z - 0.025, 0.19, y_top, z + 0.025)
+        for y in (-2.25, -1.15):
+            half = r if y <= CULVERT_SPRING else math.sqrt(r * r - (y - CULVERT_SPRING) ** 2)
+            wbox("Iron", 0.12, y - 0.035, zc - half, 0.21, y + 0.035, zc + half)
 
 
 def build_bridges():
@@ -821,6 +905,8 @@ def build():
     build_houses()
     build_fountain()
     build_market()
+    # Last, so the meshes that were there before keep their vertex order.
+    build_culverts()
     objects = []
     for mat in sorted({f[1] for f in S.faces}):
         objects.append(make_object(S, only=mat))

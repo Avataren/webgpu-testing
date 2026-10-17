@@ -7,6 +7,9 @@
 -- the person, swings round behind them as they walk, and pulls in before the buildings
 -- (their colliders) instead of passing through walls. Right-drag looks around, the
 -- wheel zooms. The other shots hand the arm no target and place the camera themselves.
+--
+-- While someone is possessed (market/possess.lua), `Camera.hold` is that person: the
+-- camera stays on them in the shot it was in, with no cuts, until they are let go.
 
 local C = require("market/core")
 
@@ -65,7 +68,9 @@ end
 
 function Camera.name()
     local shot = Camera.SHOTS[Camera.shot]
-    if shot.chase and Camera.follow then
+    if Camera.hold then
+        return "You are " .. Camera.hold.name
+    elseif shot.chase and Camera.follow then
         return "The chase: " .. Camera.follow.name
     elseif shot.follow and Camera.follow then
         return "Following " .. Camera.follow.name
@@ -108,8 +113,15 @@ function Camera.update(dt, people)
     if not Camera.e then
         return
     end
-    Camera.time = Camera.time + dt
     local shot = Camera.SHOTS[Camera.shot]
+    if Camera.hold then
+        -- Someone possessed: stay on them (the controls turn the arm).
+        Camera.time = 0
+        Camera.follow = Camera.hold
+        ride(Camera.hold, shot)
+        return
+    end
+    Camera.time = Camera.time + dt
     if Camera.auto and Camera.time > (shot.follow and SHOT_TIME * 1.6 or SHOT_TIME) then
         Camera.next()
         shot = Camera.SHOTS[Camera.shot]

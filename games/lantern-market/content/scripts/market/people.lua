@@ -113,7 +113,8 @@ local function spawn(char, role_name, x, y, z, blackboard)
         perception = role.perception,
         blackboard = blackboard,
     })
-    local person = { e = e, char = char, role = role_name, name = name, speed = speed }
+    local person = { e = e, char = char, role = role_name, name = name, speed = speed,
+        run_speed = role.run_speed or 3.2 }
     table.insert(People.list, person)
     People.by_role[role_name] = People.by_role[role_name] or {}
     table.insert(People.by_role[role_name], person)

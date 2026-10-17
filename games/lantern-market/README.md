@@ -78,6 +78,7 @@ example `return { townsfolk = 12, vendors = 2, guards = 2, children = 3 }`.
 |---|---|
 | Tab, 1-9 | next camera shot, or a shot: the square, under the arcade, the towpath, from the terrace, the stage, the gate, following someone, overhead, the chase (the camera cuts to it when a purse is lifted) |
 | F | follow someone walking (their state, what they are doing and their needs show); the camera rides a spring arm that pulls in before walls; right-drag to look around, the wheel zooms |
+| Return | take over the person followed, and let them go again: their brain sleeps and you steer them with World of Warcraft style controls (W/S walk, A/D turn, Q/E sidestep, Shift walks slowly, left-drag looks, right-drag steers, both buttons run) over the navmesh, where the crowd makes way; the camera stays on them until you let go, and their brain starts afresh from there |
 | B | what everyone is doing, over their heads |
 | V | the AI's view: view cones, where people are going, a ring in each state's colour |
 | T | start a game of tag |
@@ -90,7 +91,8 @@ Over MCP: `ai_status` (everyone's brain, state and action), `ai_inspect {entity}
 person's blackboard, tree or machine and senses), `ai_debug {all: true}`, and
 `lua_eval {entity: "Director", code: "RT.status()"}`; `RT.gate()`, `RT.summon(x, y, z, n)`,
 `RT.shot(n)`, `RT.debug(true)`, `RT.ai(true)`, `RT.theft()` (the thief looks for a purse
-now) and `RT.tag()` are the other hooks, and `MARKET` holds the director's state.
+now), `RT.tag()` and `RT.possess()` (take over the person followed, or let go) are the
+other hooks, and `MARKET` holds the director's state.
 
 ## Without a GPU
 
@@ -153,7 +155,9 @@ costs about 0.3 ms a frame for the ninety.
   spots people go and what they do there, vendor posts, hideouts, from the level's
   numbers), `people.lua` (spawning each role with its brain, senses and blackboard; the
   cast size), `props.lua` (the carts and the gate as state machines), `camera.lua` (the
-  shots; the follow shots hand the spring arm its target) and `hud.lua`.
+  shots; the follow shots hand the spring arm its target), `possess.lua` (taking someone
+  over: their brain paused, `engine.third_person` driving their NavAgent with `nav_steer`)
+  and `hud.lua`.
 
 People are `NavAgent`s with `drive: transform` (the crowd moves them along the navmesh; no
 physics) and `AiAgent`s, spawned with `clone_entity` from templates, given their clips with
