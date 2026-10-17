@@ -128,9 +128,34 @@ def box(part, mat, lo, hi, top=None, bottom=None):
     ]
     for ids, m in faces:
         part.face([p[i] for i in ids], m, ref=c)
+    if part is S and mat not in ("Timber", "Iron"):
+        SOLIDS.append((lo, hi, lambda q: all(lo[i] < q[i] < hi[i] for i in range(3))))
 
 
 WINDOWS = [0]
+# Windows are as wide and high as their rooms are drawn (build_interiors.py's ROOM_W x
+# ROOM_H), so the rooms behind them keep their proportions.
+WINDOW_W, WINDOW_H = 1.2, 1.6
+# Masonry built so far (its bounds and a test for a point inside), which windows keep out of.
+SOLIDS = []
+
+
+def covered(lo, hi, out):
+    """Whether masonry built so far covers any of a window's pane: one behind the terrace,
+    a stair or a neighbour's wall would not be seen, or only in part."""
+    axis = next(a for a in range(3) if out[a])
+    a, b = [i for i in range(3) if i != axis]
+    face = (hi if out[axis] > 0 else lo)[axis] + 0.03 * out[axis]
+    near = [inside for s_lo, s_hi, inside in SOLIDS if s_lo[axis] < face < s_hi[axis] and s_lo[a] < hi[a] and s_hi[a] > lo[a] and s_lo[b] < hi[b] and s_hi[b] > lo[b]]
+    for i in range(9):
+        for j in range(9):
+            q = [0.0, 0.0, 0.0]
+            q[axis] = face
+            q[a] = lo[a] + (hi[a] - lo[a]) * i / 8
+            q[b] = lo[b] + (hi[b] - lo[b]) * j / 8
+            if any(inside(q) for inside in near):
+                return True
+    return False
 
 
 def window(part, lo, hi, out):
@@ -274,6 +299,12 @@ def wedge(part, mat, x0, x1, z_low, z_high, y_low, y_high, base_y=0.0, top=None)
     part.face([d, c, g, h], mat, ref=centre)
     part.face([a, d, h, e], mat, ref=centre)
     part.face([b, c, g, f], mat, ref=centre)
+    if part is S:
+        def inside(q):
+            t = (q[2] - z_low) / (z_high - z_low)
+            return x0 < q[0] < x1 and 0.0 < t < 1.0 and base_y < q[1] < y_low + (y_high - y_low) * t
+
+        SOLIDS.append(((x0, base_y, min(z_low, z_high)), (x1, max(y_low, y_high), max(z_low, z_high)), inside))
 
 
 def gable_roof(part, mat, x0, x1, z0, z1, eave, ridge, along="x", overhang=0.4, thick=0.18):
@@ -436,7 +467,7 @@ def build_bridges():
     box(S, "Stone", (-2.5, 2.9, CANAL_N - 0.6), (2.5, 6.0, CANAL_N + 0.6))
     box(S, "Stone", (-3.6, 6.0, CANAL_N - 0.8), (3.6, 6.3, CANAL_N + 0.8))
     gable_roof(ROOFS, "Roof", -3.6, 3.6, CANAL_N - 0.8, CANAL_N + 0.8, 6.3, 7.6, along="x", overhang=0.2)
-    window(S, (-0.5, 4.0, CANAL_N + 0.6), (0.5, 5.2, CANAL_N + 0.64), (0, 0, 1))
+    window(S, (-WINDOW_W / 2, 3.8, CANAL_N + 0.6), (WINDOW_W / 2, 3.8 + WINDOW_H, CANAL_N + 0.64), (0, 0, 1))
     # The wooden footbridge to the west.
     box(S, "Wood", (-15.0, -0.25, CANAL_N), (-13.0, 0.0, CANAL_S))
     for z in (CANAL_N + 0.3, (CANAL_N + CANAL_S) / 2, CANAL_S - 0.3):
@@ -456,8 +487,9 @@ def build_terrace():
     for k in range(6):
         x = -20.0 + 8.0 * k
         box(S, "Timber", (x - 0.8, 0.0, -16.05), (x + 0.8, 2.4, -15.95))
-        box(S, "Timber", (x + 2.2, 1.2, -16.05), (x + 3.4, 2.2, -15.95))
-        window(S, (x + 2.3, 1.3, -15.95), (x + 3.3, 2.1, -15.93), (0, 0, 1))
+        w = x + 2.8 - WINDOW_W / 2
+        box(S, "Timber", (w - 0.1, 0.6, -16.05), (w + WINDOW_W + 0.1, 0.8 + WINDOW_H, -15.95))
+        window(S, (w, 0.7, -15.95), (w + WINDOW_W, 0.7 + WINDOW_H, -15.93), (0, 0, 1))
     columns = [-24.0 + 4.0 * k for k in range(13)]
     for x in columns:
         cylinder(S, "Stone", (x, 0.0, -12.4), 0.32, 3.4, seg=14)
@@ -505,63 +537,56 @@ def clear_of_doors(face, at, half):
     return all(abs(at - door) >= DOOR_HALF + half for door in DOORS.get(face, ()))
 
 
-def window_top(y, base, storey, floor, eave):
-    """Where a window from `y` ends: 1.2 m up, or short of the floor band above it where
-    that comes lower (the two lie in one plane and would fight)."""
-    band = base + storey * (floor + 1) + 0.2
-    if band + 0.3 < eave and y + 1.2 > band + 1e-6:
-        return band - 0.05
-    return y + 1.2
-
-
-def house(x0, x1, z0, z1, base, eave, along, plaster, windows_on, seed):
+def house(x0, x1, z0, z1, base, eave, along, plaster, windows_on, seed, ground=None):
     ridge = eave + (3.4 if along != "x" else 2.6)
     gable_wall(S, plaster, x0, x1, z0, z1, base, eave, ridge, along=along)
     gable_roof(ROOFS, "Roof", x0, x1, z0, z1, eave, ridge + 0.05, along=along)
     # Timber framing (corner posts, a band per floor at this house's own floor height)
-    # and windows onto rooms on the side facing the plaza.
+    # and windows onto rooms on the side facing the plaza. Floors count from the street
+    # in front (`ground`, the terrace for the row behind it); each has a row of windows
+    # 0.85 m up, clear of the bands, where it fits under the eaves.
     face, sign = windows_on
+    ground = base if ground is None else ground
     storey = 2.45 + 0.15 * (seed % 4)
-    floors = int((eave - base - 1.2) // storey)
+    floors = int((eave - 0.25 - ground - 0.85 - WINDOW_H) // storey) + 1
+    bands = [y for y in (ground + storey * (f + 1) + 0.2 for f in range(floors + 1)) if y + 0.3 < eave]
     if face in ("z0", "z1"):
         z = z0 if face == "z0" else z1
         dz = -sign * 0.06
         span = (x0, x1)
         for x in (x0, x1):
             box(S, "Timber", (x - 0.14, base, min(z, z + dz * 1.4)), (x + 0.14, eave, max(z, z + dz * 1.4)))
-        for f in range(floors + 1):
-            y = base + storey * (f + 1) + 0.2
-            if y + 0.3 < eave:
-                box(S, "Timber", (x0, y, min(z, z + dz)), (x1, y + 0.24, max(z, z + dz)))
+        for y in bands:
+            box(S, "Timber", (x0, y, min(z, z + dz)), (x1, y + 0.24, max(z, z + dz)))
         count = max(2, int((span[1] - span[0]) // 2.3))
         for f in range(floors):
             for k in range(count):
                 x = span[0] + (span[1] - span[0]) * (k + 0.5) / count
-                if (k * 7 + f * 3 + seed) % 5 == 0 or (f == 0 and not clear_of_doors(face, x, 0.55)):
+                if (k * 7 + f * 3 + seed) % 5 == 0 or (f == 0 and not clear_of_doors(face, x, WINDOW_W / 2 + 0.35)):
                     continue
-                y = base + 1.2 + storey * f + (0.4 if f == 0 else 0.3)
-                top = window_top(y, base, storey, f, eave)
-                lo, hi = (x - 0.4, y, min(z, z + dz)), (x + 0.4, top, max(z, z + dz))
+                y = ground + storey * f + 0.85
+                lo, hi = (x - WINDOW_W / 2, y, min(z, z + dz)), (x + WINDOW_W / 2, y + WINDOW_H, max(z, z + dz))
+                if covered(lo, hi, (0, 0, -sign)):
+                    continue
                 window(S, lo, hi, (0, 0, -sign))
-                box(S, "Timber", (x - 0.55, y - 0.12, min(z, z + dz * 1.5)), (x + 0.55, y, max(z, z + dz * 1.5)))
+                box(S, "Timber", (x - WINDOW_W / 2 - 0.15, y - 0.12, min(z, z + dz * 1.5)), (x + WINDOW_W / 2 + 0.15, y, max(z, z + dz * 1.5)))
     else:
         x = x0 if face == "x0" else x1
         dx = -sign * 0.06
         count = max(2, int((z1 - z0) // 2.3))
         for z in (z0, z1):
             box(S, "Timber", (min(x, x + dx * 1.4), base, z - 0.14), (max(x, x + dx * 1.4), eave, z + 0.14))
-        for f in range(floors + 1):
-            y = base + storey * (f + 1) + 0.2
-            if y + 0.3 < eave:
-                box(S, "Timber", (min(x, x + dx), y, z0), (max(x, x + dx), y + 0.24, z1))
+        for y in bands:
+            box(S, "Timber", (min(x, x + dx), y, z0), (max(x, x + dx), y + 0.24, z1))
         for f in range(floors):
             for k in range(count):
                 z = z0 + (z1 - z0) * (k + 0.5) / count
-                if (k * 5 + f * 3 + seed) % 4 == 0 or (f == 0 and not clear_of_doors(face, z, 0.4)):
+                if (k * 5 + f * 3 + seed) % 4 == 0 or (f == 0 and not clear_of_doors(face, z, WINDOW_W / 2 + 0.2)):
                     continue
-                y = base + 1.2 + storey * f + (0.4 if f == 0 else 0.3)
-                top = window_top(y, base, storey, f, eave)
-                lo, hi = (min(x, x + dx), y, z - 0.4), (max(x, x + dx), top, z + 0.4)
+                y = ground + storey * f + 0.85
+                lo, hi = (min(x, x + dx), y, z - WINDOW_W / 2), (max(x, x + dx), y + WINDOW_H, z + WINDOW_W / 2)
+                if covered(lo, hi, (-sign, 0, 0)):
+                    continue
                 window(S, lo, hi, (-sign, 0, 0))
 
 
@@ -570,7 +595,7 @@ def build_houses():
     eaves = [9.0, 10.5, 9.5, 11.0, 9.0, 10.0, 11.5, 9.5]
     for k in range(8):
         x0 = -28.0 + 7.0 * k
-        house(x0, x0 + 7.0, -27.0, -20.0, 0.0, eaves[k], "z", HOUSE_PLASTERS[k % 4], ("z1", -1), k)
+        house(x0, x0 + 7.0, -27.0, -20.0, 0.0, eaves[k], "z", HOUSE_PLASTERS[k % 4], ("z1", -1), k, ground=TERRACE_Y)
     # South row beyond the canal.
     eaves = [8.0, 9.0, 7.5, 8.5, 9.5, 8.0, 7.5, 9.0]
     for k in range(8):
