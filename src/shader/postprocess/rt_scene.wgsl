@@ -41,9 +41,12 @@ const RT_INSTANCE_PARTICLES : u32 = 1u;
 const RT_INSTANCE_ADDITIVE : u32 = 2u;
 
 // TLAS instance masks (MASK_* in raytracing/scene.rs): what stops reflection and
-// refraction rays (opaque and transmissive surfaces, opaque particles), and the blended
-// particles they gather on the way.
-const RT_MASK_SURFACES : u32 = 0x07u;
+// refraction rays (opaque surfaces with or without shadows, transmissive surfaces, opaque
+// particles), the opaque surfaces alone, and the blended particles reflection rays gather
+// on the way. Shadow and ambient occlusion rays use 0x01 (MASK_OPAQUE): surfaces that
+// cast no shadow (0x10) and glass let light through.
+const RT_MASK_SURFACES : u32 = 0x17u;
+const RT_MASK_OPAQUE_SURFACES : u32 = 0x11u;
 const RT_MASK_BLENDED_PARTICLES : u32 = 0x08u;
 
 @group(3) @binding(0)

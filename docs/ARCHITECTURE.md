@@ -177,6 +177,13 @@ its TAA jitter and texture LOD bias depend on both.
 - **Acceleration structures are kept** across frames with the same instances (geometry,
   transforms, masks, shader-side entries) and no BLAS to build (`raytracing/scene.rs`,
   `instance_signature`); otherwise the TLAS is rebuilt as before.
+- **TLAS instance masks** (`MASK_*` in `raytracing/scene.rs`, `RT_MASK_*` in
+  `rt_scene.wgsl`) separate opaque surfaces, opaque surfaces that cast no shadow
+  (`cast_shadow: false`), transmissive surfaces and particles. Reflection, refraction,
+  probe and path-tracer bounce rays see all surfaces; shadow and ambient occlusion rays
+  pass the surfaces that cast no shadow, so a mesh left out of the shadow maps is left
+  out of the ray-traced shadows too (a light inside a lantern that casts no shadow still
+  gets out).
 - **Shader materials** fill the G-buffer from their own shader: a generated
   `fs_main_gbuffer` wraps the user's `fs_main` (`renderer/internal/shader_material.rs`)
   when it takes a struct with `world_pos` and `normal`; motion vectors come from the

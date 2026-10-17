@@ -28,6 +28,7 @@ use super::{RayTracedParticleBlend, RayTracedParticles, RayTracingStats};
 use crate::asset::{Assets, Handle, Mesh, MeshData};
 use crate::renderer::batch::{InstanceSource, SkinKey};
 use crate::renderer::internal::PreparedBatches;
+use crate::renderer::material::MaterialFlags;
 use crate::renderer::skinning::SkinningStage;
 use crate::renderer::{MaterialData, Vertex};
 
@@ -97,6 +98,11 @@ pub(crate) const MASK_TRANSMISSIVE: u8 = 0x02;
 /// are only gathered along a reflection ray (by a query of their own, with this mask).
 pub(crate) const MASK_PARTICLES_OPAQUE: u8 = 0x04;
 pub(crate) const MASK_PARTICLES_BLENDED: u8 = 0x08;
+/// Opaque surfaces that cast no shadow (`cast_shadow: false`, left out of the shadow
+/// maps): reflection, refraction and probe rays see them, but shadow and ambient
+/// occlusion rays pass them as the shadow maps do, so a light inside a lantern that casts
+/// no shadow still gets out.
+pub(crate) const MASK_OPAQUE_NO_SHADOW: u8 = 0x10;
 
 /// What a BLAS is built from: a rigid mesh, one skinned instance's deformed copy, or a
 /// particle system (by [`RayTracedParticles::id`]). Meshes drawn with cut-out materials
@@ -574,6 +580,8 @@ impl RayTracingScene {
                 }
                 let mask = if material.is_transmissive() {
                     MASK_TRANSMISSIVE
+                } else if material.flags.contains(MaterialFlags::NO_SHADOW) {
+                    MASK_OPAQUE_NO_SHADOW
                 } else {
                     MASK_OPAQUE
                 };

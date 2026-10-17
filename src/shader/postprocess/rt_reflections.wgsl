@@ -229,7 +229,7 @@ fn rt_seen_through(
     let ior = max(data.ior, 1.0);
     let f0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
     let fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(-dot(direction, material.normal), 0.0, 1.0), 5.0);
-    let behind = rt_closest_hit_masked(position + direction * RT_SHADOW_BIAS, direction, 1.0e3, 0x01u);
+    let behind = rt_closest_hit_masked(position + direction * RT_SHADOW_BIAS, direction, 1.0e3, RT_MASK_OPAQUE_SURFACES);
     var color : vec3<f32>;
     if behind.kind == RAY_QUERY_INTERSECTION_NONE {
         color = rt_environment(direction);
