@@ -1897,6 +1897,7 @@ impl Renderer {
             &[]
         };
         let camera = crate::renderer::raytracing::RtCamera {
+            position: self.camera_position,
             forward: (self.camera_target - self.camera_position)
                 .try_normalize()
                 .unwrap_or(Vec3::NEG_Z),

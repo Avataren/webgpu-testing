@@ -58,10 +58,13 @@ The test bed is `games/marionette` (its README has the benchmark numbers). The s
   lower-resolution caster set for far cascades would help the 1.1 ms shadow pass and the
   1,961 shadow draws.
 - **Ray tracing with crowds.** With ray tracing on, 1,000 skinned characters rebuild
-  about 2,900 BLAS a frame and fill VRAM, so the show runs raster only. BLAS refits
-  (`update_mode: PreferUpdate`) from the pool buffers (add `BLAS_INPUT` usage to the
-  pages) instead of rebuilds, and one BLAS per character rather than per mesh, are the
-  two steps.
+  about 2,900 BLAS a frame and fill VRAM, so the show runs raster only. Skinned BLAS are
+  now rebuilt only when the pose changed, and off-screen ones every 2-4 frames
+  (`skinned_rebuild_due` in `raytracing/scene.rs`), but every visible animated character
+  still rebuilds each frame (Lantern Market's wide shot: 149 meshes, 2.6 ms). BLAS refits
+  instead of rebuilds would be next, but wgpu-core 30 turns `update_mode: PreferUpdate`
+  into a full build ("only rebuild is implemented"), so they wait for wgpu; one BLAS per
+  character rather than per mesh is the other step.
 - **Batching is still sequential.** `PreparedBatches::from_batcher` sorts and lays out
   2,940 batches on one thread, and `RenderBatcher::add` hashes every object into a map
   each frame. A per-frame arena keyed by a stable batch id, and sorting only the batches

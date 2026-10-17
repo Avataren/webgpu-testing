@@ -215,6 +215,10 @@ struct SkinnedInstance {
     /// creation or a frame without skinning).
     has_previous: bool,
     last_used: u64,
+    /// The palette last skinned with, and the number of that pose (see
+    /// [`SkinningStage::pose`]).
+    palette: Option<Arc<[Mat4]>>,
+    pose: u64,
 }
 
 /// The source geometry of every skinned mesh in use, copied into pool pages so that one
@@ -318,6 +322,8 @@ pub(crate) struct SkinningStage {
     /// Which of each page's buffers holds this frame's poses; flips every frame.
     current: usize,
     frame: u64,
+    /// The last pose number handed out; numbers are never reused.
+    poses: u64,
     /// Instances skinned in the last frame.
     pub(crate) instance_count: u32,
     pub(crate) vertex_count: u32,
@@ -380,6 +386,7 @@ impl SkinningStage {
             pages: Vec::new(),
             current: 0,
             frame: 0,
+            poses: 0,
             instance_count: 0,
             vertex_count: 0,
             dispatch_count: 0,
@@ -421,6 +428,7 @@ impl SkinningStage {
                 continue;
             }
             if self.ensure_instance(device, key, job.mesh, source) {
+                self.note_pose(key, &job.palette);
                 ready.push((key, job));
             }
         }
@@ -448,6 +456,30 @@ impl SkinningStage {
         self.instances
             .get(&key)
             .map(|instance| &instance.meshes[self.current])
+    }
+
+    /// A number for the pose [`Self::mesh`] holds, which changes only when the instance
+    /// is skinned with a different palette (or is created anew): the same number means
+    /// the same deformed vertices, so copies of them made earlier are still current.
+    pub(crate) fn pose(&self, key: SkinKey) -> Option<u64> {
+        self.instances.get(&key).map(|instance| instance.pose)
+    }
+
+    /// Give `key` a new pose number when `palette` differs from the one it was last
+    /// skinned with. Skinned vertices depend only on the mesh and the palette.
+    fn note_pose(&mut self, key: SkinKey, palette: &Arc<[Mat4]>) {
+        let Some(instance) = self.instances.get_mut(&key) else {
+            return;
+        };
+        let same = instance
+            .palette
+            .as_ref()
+            .is_some_and(|last| Arc::ptr_eq(last, palette) || last[..] == palette[..]);
+        if !same {
+            self.poses += 1;
+            instance.pose = self.poses;
+            instance.palette = Some(Arc::clone(palette));
+        }
     }
 
     /// An instance's vertices as last frame deformed them (this frame's when there is no
@@ -504,6 +536,8 @@ impl SkinningStage {
                     slot,
                     has_previous: false,
                     last_used: self.frame,
+                    palette: None,
+                    pose: 0,
                 },
             );
             return true;
@@ -1231,6 +1265,51 @@ mod tests {
         assert_ne!(current.vertex_buffer(), a.vertex_buffer());
         assert_eq!(current.base_vertex(), a.base_vertex());
         assert_eq!(stage.previous_vertex_buffer(7), Some(a.vertex_buffer()));
+    }
+
+    /// An instance keeps its pose number while it is skinned with an equal palette (even
+    /// a new `Arc` of one) and gets a new one, never another instance's, when it changes.
+    #[test]
+    fn pose_numbers_change_only_with_the_palette() {
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("Skipping: no wgpu adapter");
+            return;
+        };
+        let (document, buffers, _) = crate::scene::SceneLoader::import_gltf_native(
+            std::path::Path::new("web/assets/skinned/Fox/Fox.glb"),
+        )
+        .unwrap();
+        let primitive = document
+            .meshes()
+            .next()
+            .unwrap()
+            .primitives()
+            .next()
+            .unwrap();
+        let data = crate::scene::loader::primitive_mesh_data_for_tests(&primitive, &buffers, 0.01)
+            .unwrap();
+        let mut assets = Assets::new();
+        let mesh = assets.meshes.insert(Mesh::from_data(&device, data));
+        let mut stage = SkinningStage::new(&device);
+        // Instances 1 and 2, skinned with the given palettes.
+        let mut run = |palettes: [Arc<[Mat4]>; 2]| {
+            let jobs: HashMap<SkinKey, SkinJob> = (1..)
+                .zip(palettes)
+                .map(|(key, palette)| (key, SkinJob { mesh, palette }))
+                .collect();
+            let mut encoder = device.create_command_encoder(&Default::default());
+            stage.run(&device, &queue, &mut encoder, &assets, &jobs);
+            queue.submit([encoder.finish()]);
+            (stage.pose(1).unwrap(), stage.pose(2).unwrap())
+        };
+
+        let first = run([fox_palette(0.0), fox_palette(0.0)]);
+        assert_ne!(first.0, first.1, "instances never share a pose number");
+        let same = run([fox_palette(0.0), fox_palette(0.0)]);
+        assert_eq!(same, first, "an equal palette keeps the pose");
+        let moved = run([fox_palette(0.0), fox_palette(1.0)]);
+        assert_eq!(moved.0, first.0);
+        assert!(moved.1 != first.1 && moved.1 != first.0);
     }
 
     #[test]

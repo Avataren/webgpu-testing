@@ -134,8 +134,10 @@ colour; other hits are shaded from the material (base colour, metallic-roughness
 and occlusion maps from the bindless texture array, mip level from ray cones) with
 ray-traced shadow rays. The apply pass weights reflections by the surface's specular
 colour (F0, packed with smoothness into the G-buffer position's w), so metals reflect fully
-and in their own colour. Skinned instances are traced too: each frame the deformed
-vertices are copied into the pool and their BLAS rebuilt (wgpu 30 has no refit). Both
+and in their own colour. Skinned instances are traced too: when their pose changes, the
+deformed vertices are copied into the pool and their BLAS rebuilt (wgpu 30 has no refit),
+at once while the camera sees them and every 2-4 frames while it does not (rays start
+from what the camera sees, so only on-screen instances must match their pose). Both
 reflection paths accumulate the half-resolution trace over frames before the blur, which
 removes the shimmer TAA's jitter caused on curved and detailed mirrors (in `games/rt-lab`,
 pixels changing between frames went from 0.47% to 0.15%, the same as with reflections

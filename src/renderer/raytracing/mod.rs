@@ -138,6 +138,10 @@ pub struct RayTracingStats {
     pub meshes: u32,
     /// Bottom-level structures built this frame (new or changed meshes).
     pub blas_builds: u32,
+    /// Skinned instances not rebuilt this frame: their pose had not changed, or they are
+    /// out of view and wait for their turn (raytracing/scene.rs, `skinned_rebuild_due`).
+    pub skinned_unchanged: u32,
+    pub skinned_deferred: u32,
     /// Vertices in the shared geometry pool (including space freed meshes left).
     pub pool_vertices: u32,
     /// Particle systems in the acceleration structure, and their live particle slots.

@@ -195,6 +195,8 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "tlas_instances": rt.instances,
                 "meshes": rt.meshes,
                 "blas_builds": rt.blas_builds,
+                "skinned_unchanged": rt.skinned_unchanged,
+                "skinned_deferred": rt.skinned_deferred,
                 "pool_vertices": rt.pool_vertices,
                 "particle_systems": rt.particle_systems,
                 "particles": rt.particles,

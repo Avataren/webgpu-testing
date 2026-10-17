@@ -5,10 +5,14 @@
 //! All geometry lives in one pool of storage buffers (vertices in the engine's own
 //! [`Vertex`] layout, plus mesh-relative indices), so a shader can fetch any hit triangle
 //! through one binding. Each BLAS is built from its range of the pool. A rigid mesh is
-//! uploaded and built once; a skinned instance gets a range of its own, which each frame
-//! receives a GPU copy of the vertices the skinning pass just deformed, and its BLAS is
-//! rebuilt from it (wgpu 30 cannot refit). The pool only grows; when geometry that is gone
-//! or changed wastes most of it, it is rebuilt from what is still in use.
+//! uploaded and built once; a skinned instance gets a range of its own, which receives a
+//! GPU copy of the vertices the skinning pass just deformed, and its BLAS is rebuilt from
+//! it (wgpu 30 cannot refit). That happens only when the pose changed, and for an instance
+//! out of the camera's view only every few frames (see [`skinned_rebuild_due`]): rays
+//! start from what the camera sees, so a pose a few frames old there only delays its
+//! shadows and reflections, while one on screen would put rays inside it. The pool only
+//! grows; when geometry that is gone or changed wastes most of it, it is rebuilt from what
+//! is still in use.
 //!
 //! GPU particle systems handed in by the application are geometry too: each keeps its
 //! particle mesh (the template) and room for a copy per particle slot in the pool. Every
@@ -48,11 +52,38 @@ struct RtInstance {
 const INSTANCE_PARTICLES: u32 = 1;
 const INSTANCE_ADDITIVE: u32 = 2;
 
-/// The camera billboarded particles turn to, as the particle shader turns them.
+/// The camera billboarded particles turn to, as the particle shader turns them, and
+/// skinned instances out of its view are rebuilt less often the further they are from.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RtCamera {
+    pub position: Vec3,
     pub forward: Vec3,
     pub up: Vec3,
+}
+
+/// A skinned instance out of the camera's view this close to it (metres) rebuilds its BLAS
+/// every [`SKINNED_OFFSCREEN_NEAR_INTERVAL`] frames, one further away every
+/// [`SKINNED_OFFSCREEN_FAR_INTERVAL`]: a nearby one may show in a mirror, where a pose
+/// that lags shows as stutter.
+const SKINNED_OFFSCREEN_NEAR: f32 = 8.0;
+const SKINNED_OFFSCREEN_NEAR_INTERVAL: u64 = 2;
+const SKINNED_OFFSCREEN_FAR_INTERVAL: u64 = 4;
+
+/// Whether a skinned instance whose pose changed rebuilds its BLAS this frame: at once
+/// while the camera sees it (rays start on it, and must not start inside a stale copy),
+/// otherwise on its turn by distance (see [`SKINNED_OFFSCREEN_NEAR`]). Each instance takes
+/// its turns on its own frames, so the rebuilds spread over them.
+fn skinned_rebuild_due(frame: u64, skin: SkinKey, on_screen: bool, distance: f32) -> bool {
+    if on_screen {
+        return true;
+    }
+    let interval = if distance < SKINNED_OFFSCREEN_NEAR {
+        SKINNED_OFFSCREEN_NEAR_INTERVAL
+    } else {
+        SKINNED_OFFSCREEN_FAR_INTERVAL
+    };
+    let phase = skin.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+    (frame + phase).is_multiple_of(interval)
 }
 
 /// `ExpandParams` in rt_particles.wgsl.
@@ -236,6 +267,8 @@ struct MeshEntry {
     last_used: u64,
     /// Bounding sphere in object space (centre, radius), for caustic photons.
     bounds: [f32; 4],
+    /// A skinned instance's pose the BLAS holds ([`SkinningStage::pose`]).
+    built_pose: Option<u64>,
 }
 
 /// Growable storage buffer that keeps its contents when it grows, up to what the device
@@ -368,6 +401,10 @@ pub(crate) struct RayTracingScene {
     /// Geometry was left out because the pool is full (warned once).
     warned_pool_full: bool,
     frame: u64,
+    /// Skinned instances this frame whose BLAS still held their pose, and those out of view
+    /// whose new pose waits for their turn (see [`skinned_rebuild_due`]).
+    skinned_unchanged: u32,
+    skinned_deferred: u32,
     stats: RayTracingStats,
 }
 
@@ -428,6 +465,8 @@ impl RayTracingScene {
             max_primitives: device.limits().max_blas_primitive_count,
             warned_pool_full: false,
             frame: 0,
+            skinned_unchanged: 0,
+            skinned_deferred: 0,
             stats: RayTracingStats::default(),
         }
     }
@@ -525,13 +564,15 @@ impl RayTracingScene {
 
         // Geometry first: the instances below need their pool offsets and BLAS.
         self.deformed_copies.clear();
+        self.skinned_unchanged = 0;
+        self.skinned_deferred = 0;
         let opaque = &batches.batches[batches.opaque_range.clone()];
         for batch in opaque {
             if batch.alpha_blend {
                 continue;
             }
             buffers_changed |=
-                self.ensure_geometry(device, queue, encoder, assets, skinning, batch);
+                self.ensure_geometry(device, queue, encoder, assets, skinning, batch, camera);
         }
         // Only systems handed in this frame are expanded and instanced.
         for entry in self.particles.values_mut() {
@@ -795,6 +836,8 @@ impl RayTracingScene {
             instances: count,
             meshes: self.meshes.len() as u32,
             blas_builds,
+            skinned_unchanged: self.skinned_unchanged,
+            skinned_deferred: self.skinned_deferred,
             pool_vertices: self.vertices.len as u32,
             particle_systems,
             particles: particle_count,
@@ -1040,8 +1083,9 @@ impl RayTracingScene {
 
     /// Make sure `batch`'s geometry has an up-to-date BLAS, uploading it to the pool when
     /// it is new or changed. A skinned instance (only once the skinning pass deformed it)
-    /// is queued in `deformed_copies` and rebuilt. Returns whether a pool buffer was
-    /// replaced.
+    /// whose pose changed is queued in `deformed_copies` and rebuilt, when it is due (see
+    /// [`skinned_rebuild_due`]). Returns whether a pool buffer was replaced.
+    #[allow(clippy::too_many_arguments)]
     fn ensure_geometry(
         &mut self,
         device: &wgpu::Device,
@@ -1050,6 +1094,7 @@ impl RayTracingScene {
         assets: &Assets,
         skinning: &SkinningStage,
         batch: &crate::renderer::internal::OrderedBatch,
+        camera: RtCamera,
     ) -> bool {
         let key = Self::geometry_key(batch);
         let mesh = match batch.skin {
@@ -1061,17 +1106,35 @@ impl RayTracingScene {
             return false;
         };
         let deformed = batch.skin.is_some();
+        let pose = batch.skin.and_then(|skin| skinning.pose(skin));
         let source = mesh.shared_data();
         if let Some(entry) = self.meshes.get_mut(&key) {
             if Arc::ptr_eq(&entry.source, source) {
-                if entry.last_used != self.frame && deformed {
-                    entry.needs_build = true;
-                    self.deformed_copies.push((
-                        mesh.vertex_buffer().clone(),
-                        mesh.vertex_byte_offset(),
-                        entry.vertex_base as u64 * VERTEX_STRIDE,
-                        entry.size.vertex_count as u64 * VERTEX_STRIDE,
-                    ));
+                if let Some(skin) = batch.skin {
+                    if entry.last_used != self.frame {
+                        let distance = batch.instances.first().map_or(0.0, |instance| {
+                            instance.transform.translation.distance(camera.position)
+                        });
+                        if pose.is_some() && entry.built_pose == pose {
+                            self.skinned_unchanged += 1;
+                        } else if !skinned_rebuild_due(
+                            self.frame,
+                            skin,
+                            batch.camera_sees_any(),
+                            distance,
+                        ) {
+                            self.skinned_deferred += 1;
+                        } else {
+                            entry.needs_build = true;
+                            entry.built_pose = pose;
+                            self.deformed_copies.push((
+                                mesh.vertex_buffer().clone(),
+                                mesh.vertex_byte_offset(),
+                                entry.vertex_base as u64 * VERTEX_STRIDE,
+                                entry.size.vertex_count as u64 * VERTEX_STRIDE,
+                            ));
+                        }
+                    }
                 }
                 entry.last_used = self.frame;
                 return false;
@@ -1156,6 +1219,7 @@ impl RayTracingScene {
                 needs_build: true,
                 last_used: self.frame,
                 bounds: bounding_sphere(&data.vertices),
+                built_pose: pose,
             },
         );
         vertices_grew || indices_grew
@@ -1299,6 +1363,23 @@ fn affine_rows(model: Mat4) -> [f32; 12] {
 mod tests {
     use super::*;
     use glam::{Quat, Vec3, Vec4};
+
+    /// On screen a skinned instance rebuilds every frame; out of view once in every 2
+    /// frames nearby and every 4 further away, on frames that differ between instances.
+    #[test]
+    fn skinned_rebuilds_out_of_view_take_turns() {
+        let due = |skin, on_screen, distance| {
+            (100..108)
+                .filter(|&frame| skinned_rebuild_due(frame, skin, on_screen, distance))
+                .collect::<Vec<u64>>()
+        };
+        assert_eq!(due(3, true, 50.0).len(), 8);
+        assert_eq!(due(3, false, 2.0).len(), 4);
+        assert_eq!(due(3, false, 50.0).len(), 2);
+        let phases: std::collections::HashSet<u64> =
+            (0..32).map(|skin| due(skin, false, 50.0)[0] % 4).collect();
+        assert!(phases.len() > 1, "instances share their turns");
+    }
 
     #[test]
     fn affine_rows_transform_points_like_the_matrix() {
