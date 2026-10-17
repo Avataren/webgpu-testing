@@ -4,6 +4,10 @@
       "command": "tools/engine-mcp/run.sh",
       "args": []
     },
+    "renderdoc": {
+      "command": "tools/renderdoc-mcp/run.sh",
+      "args": []
+    },
     "blender": {
       "command": "uvx",
       "args": [
