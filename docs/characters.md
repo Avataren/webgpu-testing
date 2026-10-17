@@ -187,7 +187,8 @@ role: Mixamo (`LeftArm`), Unreal mannequin (`upperarm_l`) and Rigify (`DEF-upper
 names all mean the same upper arm. Clips exported from another program or rig than the
 model are retargeted: each bone turns away from its rest pose as it does in the clip,
 measured in the character's own frame (a model facing -Z in its file takes clips from one
-facing +Z). That needs both skeletons to rest in the same posture (both in T-pose); a
+facing +Z), and moves its bones from the model's own rest, so the model keeps its
+proportions. That needs both skeletons to rest in the same posture (both in T-pose); a
 T-pose clip on an A-pose model bends the arms.
 
 ## Over MCP

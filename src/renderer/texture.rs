@@ -419,6 +419,23 @@ impl Texture {
         Self::from_rgba8(device, queue, source)
     }
 
+    /// Create texture from rgba8 image data, sampled as sRGB colour (`is_srgb`) or as
+    /// stored (data such as normal, metallic-roughness and occlusion maps)
+    pub fn from_bytes_in_color_space(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+        is_srgb: bool,
+        label: Option<&str>,
+    ) -> Self {
+        let (texture_format, view_format) = Self::formats_for_color_space(is_srgb);
+        let source = Self::rgba_source(bytes, width, height, texture_format, view_format, label);
+
+        Self::from_rgba8(device, queue, source)
+    }
+
     /// Create a procedural checkerboard texture
     pub fn checkerboard(
         device: &wgpu::Device,

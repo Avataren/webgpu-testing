@@ -263,9 +263,11 @@ to flicker, especially at a distant horizon.
   measured, with a Workbench thumbnail). The editor's Library pane and remote
   `library.search/info/add` read `library.json`; adding copies an animation into
   `content/animations/<name>.glb` (onto a character's animator) or imports a model.
-- **glTF**: `SceneLoader` / `src/scene/loader/` import glTF. Animation (`scene/animation.rs`)
-  drives node transforms and material properties with step, linear or cubic-spline
-  keyframes, bound to the entities a file was imported with.
+- **glTF**: `SceneLoader` / `src/scene/loader/` import glTF. Each texture is sampled as sRGB
+  when a material uses it for colour (base colour, emissive) and as stored when it holds
+  data (normal, metallic-roughness, occlusion), embedded or not (`srgb_textures`).
+  Animation (`scene/animation.rs`) drives node transforms and material properties with
+  step, linear or cubic-spline keyframes, bound to the entities a file was imported with.
 - **Skeletal animation** (`src/scene/skeletal/`):
   - Skinned glTF primitives keep `JOINTS_0`/`WEIGHTS_0` as a second stream on `MeshData`
     (`skin: Vec<SkinVertex>`, 16 bytes per vertex, four influences, weights quantized to
@@ -289,7 +291,8 @@ to flicker, especially at a distant horizon.
     humanoid role (`humanoid_key`: Mixamo, Unreal-mannequin and Rigify names map to one
     set of roles), so animation-only files drive any humanoid rig. Layers with bone masks,
     cross-fades, per-bone
-    translation retargeting by rest-length ratio and root motion
+    translation retargeting (a key's offset from the clip file's rest, scaled by the
+    rest-length ratio, moves the bone from its own rest) and root motion
     (`keep`/`in_place`/`apply`). Animators run only while
     `Scene::set_animation_playback(true)` (play mode), so the editor saves rest poses.
   - Rest-relative retargeting (`Binding::finish_frames`): a clip from another export of

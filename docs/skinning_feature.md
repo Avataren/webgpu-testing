@@ -76,7 +76,10 @@ in `tools/engine-mcp/README.md` and `.claude/skills/engine-mcp/SKILL.md`.
     when asked again), per-clip and global speed, negative speed;
   - layers (up to 8) with weights, fades and bone masks (a bone and everything below it);
   - retargets translations per bone by the ratio of target to source rest length, so clips
-    authored in centimetres or on other proportions keep their feet on the ground;
+    authored in centimetres or on other proportions keep their feet on the ground, and
+    applies each key as an offset from the clip file's rest to the bone's own rest, so a
+    character keeps its own bone lengths and directions (a clip made on Y Bot does not
+    move a cartoon's head, shoulders or toes to where Y Bot has them);
   - root motion: `keep`, `in_place` (removes horizontal travel of the top-most translated
     bone, keeps the bob) or `apply` (moves the animator entity instead, across loop wraps);
   - reports unknown clip names and unreadable libraries once instead of every frame.

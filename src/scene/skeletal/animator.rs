@@ -11,10 +11,11 @@
 //!   mask bone (e.g. an upper-body "wave" over a walk with mask `Spine`), weighted by
 //!   the layer weight.
 //!
-//! Translations are retargeted per bone by the ratio of the target's rest bone length
-//! to the source's, so clips authored in centimetres or on a taller character keep
-//! their feet on the ground. Rotations are copied (rigs must share rest orientations,
-//! as Mixamo rigs do).
+//! Translation keys move each bone from its own rest by their offset from the clip
+//! file's rest, scaled by the ratio of the target's rest bone length to the source's, so
+//! clips authored in centimetres or on a taller character keep their feet on the ground
+//! and every bone keeps its own length and direction. Rotations are copied (rigs must
+//! share rest orientations, as Mixamo rigs do).
 //!
 //! Root motion (the horizontal travel of the top-most translated bone, usually the
 //! hips) can be kept, removed (`in_place`) or transferred to the animator entity
@@ -799,21 +800,32 @@ struct BoundTrack {
     slot: usize,
     /// Multiplies translation keys (target rest length / source rest length).
     scale: f32,
+    /// The bone's rest translation in the clip's file and in the skeleton. A translation
+    /// key moves the bone from the skeleton's rest by the key's offset from the file's
+    /// rest, so every bone keeps its own length and direction: a character whose neck,
+    /// shoulders or toes sit elsewhere than on the rig the clip was made on is not
+    /// reshaped into that rig. `None` when the file does not have the node; keys are
+    /// then taken as they are.
+    rest_translation: Option<(Vec3, Vec3)>,
     /// The bone's rest in the clip's file: its parent frame (file root to parent) and
     /// its own rotation. `None` when the file does not have the node.
     source_rest: Option<(Quat, Quat)>,
     /// Retargeting, when the skeleton's rest differs from the clip file's: keys become
-    /// `pre * key * post` (translations `pre * key`), so each bone turns away from its
-    /// rest as it does in the clip, in the world. That covers the same rig exported with
-    /// other axes (a Mixamo FBX through Blender, whose bones point along Y, against a
-    /// GLB that kept Mixamo's joint orientations).
+    /// `pre * key * post` (translation offsets `pre * offset`), so each bone turns away
+    /// from its rest as it does in the clip, in the world. That covers the same rig
+    /// exported with other axes (a Mixamo FBX through Blender, whose bones point along
+    /// Y, against a GLB that kept Mixamo's joint orientations).
     retarget: Option<(Quat, Quat)>,
 }
 
 impl BoundTrack {
     fn translation(&self, key: Vec3) -> Vec3 {
-        let key = key * self.scale;
-        self.retarget.map_or(key, |(pre, _)| pre * key)
+        let (offset, rest) = match self.rest_translation {
+            Some((source, target)) => (key - source, target),
+            None => (key, Vec3::ZERO),
+        };
+        let offset = offset * self.scale;
+        rest + self.retarget.map_or(offset, |(pre, _)| pre * offset)
     }
 
     fn rotation(&self, key: Quat) -> Quat {
@@ -987,8 +999,7 @@ impl Binding {
                         source.map(|r| r.transform.translation),
                         binding.rest[slot].translation,
                     );
-                    let source_rest = source.map(|r| (r.parent_rotation, r.transform.rotation));
-                    tracks.push((track_index, slot, scale, source_rest));
+                    tracks.push((track_index, slot, scale, source));
                 }
                 // Bones whose rest translation is zero take the scale of the
                 // shallowest bone that has one, so root motion on a bone at the origin
@@ -1001,11 +1012,13 @@ impl Binding {
                     .unwrap_or(1.0);
                 let tracks: Vec<BoundTrack> = tracks
                     .into_iter()
-                    .map(|(track, slot, scale, source_rest)| BoundTrack {
+                    .map(|(track, slot, scale, source)| BoundTrack {
                         track,
                         slot,
                         scale: scale.unwrap_or(global),
-                        source_rest,
+                        rest_translation: source
+                            .map(|r| (r.transform.translation, binding.rest[slot].translation)),
+                        source_rest: source.map(|r| (r.parent_rotation, r.transform.rotation)),
                         retarget: None,
                     })
                     .collect();
@@ -2035,6 +2048,12 @@ mod tests {
                 set(&mut rig.world, rig.root, Quat::from_rotation_x(-quarter));
                 set(&mut rig.world, rig.hips, Quat::from_rotation_x(quarter));
                 set(&mut rig.world, rig.spine, spine_rest);
+                // The hips rest 1 m up in the world: +Z under the turned armature.
+                rig.world
+                    .get::<&mut TransformComponent>(rig.hips)
+                    .unwrap()
+                    .0
+                    .translation = Vec3::Z;
                 // The armature node came from the model's file.
                 rig.world
                     .insert_one(rig.root, GltfSource(PathBuf::from("soldier.glb")))
@@ -2220,6 +2239,55 @@ mod tests {
         assert!(spine
             .rotation
             .abs_diff_eq(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4), 1e-4));
+    }
+
+    #[test]
+    fn translation_keys_move_bones_from_their_own_rest() {
+        // The clip's rig rests its arm 30 cm out along X and raises it 10 cm. This
+        // skeleton's arm rests elsewhere (0.2 m out, 0.1 m up): it keeps that offset and
+        // takes the raise, scaled to its own length, instead of the clip rig's offset.
+        let mut arm = BoneTrack::new("Arm");
+        arm.translation = Some(linear_vec3(
+            &[0.0, 1.0],
+            &[Vec3::X * 30.0, Vec3::new(30.0, 10.0, 0.0)],
+        ));
+        let rest = |t: Vec3, depth| BoneRest {
+            transform: Transform::from_translation(t),
+            depth,
+            parent_rotation: Quat::IDENTITY,
+            position: t,
+        };
+        let library = ClipLibrary {
+            source: PathBuf::from("raise.glb"),
+            clips: vec![Arc::new(SkeletalClip::new("raise", vec![arm]))],
+            rest: HashMap::from([
+                ("hips".to_string(), rest(Vec3::Y * 100.0, 1)),
+                ("spine".to_string(), rest(Vec3::Y * 20.0, 2)),
+                ("arm".to_string(), rest(Vec3::X * 30.0, 3)),
+            ]),
+        };
+        let mut assets = Assets::new();
+        assets.insert_clip_library("raise.glb", library);
+        let mut rig = rig(1.0);
+        let arm_rest = Vec3::new(0.2, 0.1, 0.0);
+        rig.world
+            .get::<&mut TransformComponent>(rig.arm)
+            .unwrap()
+            .0
+            .translation = arm_rest;
+        let animator = Animator {
+            default_clip: Some("raise".into()),
+            ..Animator::with_library("raise.glb")
+        };
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.5);
+        let raised = arm_rest + Vec3::Y * 5.0 * (arm_rest.length() / 30.0);
+        let arm = local(&rig.world, rig.arm);
+        assert!(
+            arm.translation.abs_diff_eq(raised, 1e-4),
+            "{}",
+            arm.translation
+        );
     }
 
     #[test]

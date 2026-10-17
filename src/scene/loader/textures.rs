@@ -20,10 +20,12 @@ pub(super) fn load_textures<D: SceneImportDevice>(
 ) -> Result<Vec<ImportedTexture>, String> {
     log::info!("Loading textures...");
     let mut textures = Vec::new();
+    let srgb = srgb_textures(document);
 
     for gltf_texture in document.textures() {
         let source = gltf_texture.source();
         let base_name = gltf_texture.name().map(|name| name.to_string());
+        let is_srgb = srgb[gltf_texture.index()];
 
         match source.source() {
             gltf::image::Source::Uri { uri, .. } => {
@@ -51,7 +53,7 @@ pub(super) fn load_textures<D: SceneImportDevice>(
                         let renderer = &mut *ctx.renderer;
                         scene
                             .assets
-                            .get_or_load_texture(renderer, &candidate, false)
+                            .get_or_load_texture(renderer, &candidate, is_srgb)
                     };
 
                     match result {
@@ -103,12 +105,13 @@ pub(super) fn load_textures<D: SceneImportDevice>(
                 let pixels = rgba8_pixels(img_data);
                 let texture = {
                     let renderer_ref = &*ctx.renderer;
-                    Texture::from_bytes(
+                    Texture::from_bytes_in_color_space(
                         renderer_ref.device(),
                         renderer_ref.queue(),
                         &pixels,
                         img_data.width,
                         img_data.height,
+                        is_srgb,
                         Some(&format!("EmbeddedTexture_{}", source.index())),
                     )
                 };
@@ -132,6 +135,44 @@ pub(super) fn load_textures<D: SceneImportDevice>(
 
     log::info!("Loaded {} textures", textures.len());
     Ok(textures)
+}
+
+/// For each of the document's textures, whether it holds colour (base colour, emissive)
+/// and is sampled as sRGB, rather than data (normal, metallic-roughness and occlusion
+/// maps), which is sampled as stored: a normal map decoded as sRGB tilts every normal and
+/// breaks the shading at its UV seams. Textures no material uses, and textures used both
+/// ways, count as colour.
+fn srgb_textures(document: &gltf::Document) -> Vec<bool> {
+    let count = document.textures().len();
+    let mut color = vec![false; count];
+    let mut data = vec![false; count];
+    for material in document.materials() {
+        let pbr = material.pbr_metallic_roughness();
+        let uses = [
+            (pbr.base_color_texture().map(|info| info.texture()), true),
+            (material.emissive_texture().map(|info| info.texture()), true),
+            (
+                pbr.metallic_roughness_texture().map(|info| info.texture()),
+                false,
+            ),
+            (material.normal_texture().map(|info| info.texture()), false),
+            (
+                material.occlusion_texture().map(|info| info.texture()),
+                false,
+            ),
+        ];
+        for (texture, is_color) in uses {
+            let used = if is_color { &mut color } else { &mut data };
+            if let Some(flag) = texture.and_then(|texture| used.get_mut(texture.index())) {
+                *flag = true;
+            }
+        }
+    }
+    color
+        .into_iter()
+        .zip(data)
+        .map(|(color, data)| color || !data)
+        .collect()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -292,6 +333,31 @@ pub(super) fn rgba8_pixels(image: &gltf::image::Data) -> std::borrow::Cow<'_, [u
 #[cfg(test)]
 mod rgba_tests {
     use super::*;
+
+    #[test]
+    fn colour_textures_are_srgb_and_data_textures_linear() {
+        // Texture 0 is a base colour and emissive map, 1 a metallic-roughness and normal
+        // map, 2 unused, 3 a normal map in one material and a base colour in another.
+        let json = br#"{
+            "asset": {"version": "2.0"},
+            "images": [{"uri": "a.png"}],
+            "textures": [{"source": 0}, {"source": 0}, {"source": 0}, {"source": 0}],
+            "materials": [
+                {
+                    "pbrMetallicRoughness": {
+                        "baseColorTexture": {"index": 0},
+                        "metallicRoughnessTexture": {"index": 1}
+                    },
+                    "emissiveTexture": {"index": 0},
+                    "normalTexture": {"index": 1}
+                },
+                {"normalTexture": {"index": 3}},
+                {"pbrMetallicRoughness": {"baseColorTexture": {"index": 3}}}
+            ]
+        }"#;
+        let gltf = gltf::Gltf::from_slice(json).unwrap();
+        assert_eq!(srgb_textures(&gltf.document), [true, false, true, true]);
+    }
 
     #[test]
     fn rgb_images_expand_to_rgba() {
