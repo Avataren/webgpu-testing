@@ -144,6 +144,7 @@ pub fn handle_generate_animation_tree(ctx: &mut ActionContext, entity: Entity) -
     tree.start = generated.start;
     tree.states = generated.states;
     tree.transitions = generated.transitions;
+    tree.measured_scale = generated.measured_scale;
     tree.runtime = Default::default();
     let states: Vec<&str> = tree.states.iter().map(|s| s.name.as_str()).collect();
     let mut message = format!("Animation tree: {}", states.join(", "));

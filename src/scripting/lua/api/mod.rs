@@ -17,6 +17,8 @@ mod light_camera;
 mod logging;
 mod material;
 pub(crate) mod modules;
+#[cfg(feature = "navigation")]
+mod navigation;
 mod particles;
 mod physics;
 mod postprocess;
@@ -74,6 +76,8 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     settings::register_settings_api(lua)?;
     particles::register_particles_api(lua)?;
     physics::register_physics_api(lua)?;
+    #[cfg(feature = "navigation")]
+    navigation::register_navigation_api(lua)?;
     view::register_view_api(lua)?;
     stats::register_stats_api(lua)?;
     query::register_query_api(lua)?;

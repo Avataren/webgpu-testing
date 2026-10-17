@@ -107,6 +107,24 @@ impl RenderBridge {
             volume_shapes.extend(crate::physics::simulation_gizmos(scene.physics(), &node));
         }
 
+        // Navmeshes, agents and paths (and what the editor has selected of them).
+        #[cfg(feature = "navigation")]
+        {
+            let selected: Vec<hecs::Entity> = if gizmos_enabled {
+                scene
+                    .main_world()
+                    .query::<&SelectedInEditor>()
+                    .iter()
+                    .map(|(entity, _)| entity)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if let Some(geometry) = scene.navigation_debug_geometry(&selected) {
+                renderer.set_debug_geometry(geometry);
+            }
+        }
+
         // Picking between frames must see the gizmo at the size it was drawn.
         scene.set_gizmo_viewport_height(camera_vectors.viewport_height);
         let mut gizmo_shapes = volume_shapes;

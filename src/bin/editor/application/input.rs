@@ -61,6 +61,16 @@ impl EditorApplication {
             }
         });
 
+        // The path test takes clicks while it is on.
+        #[cfg(feature = "navigation")]
+        if self.shared.nav_path_tool.active {
+            if let Some(uv) = released_uv {
+                self.shared.nav_path_tool.pending_click = Some(uv);
+            }
+            self.selection_system_mut().reset_pointer_press();
+            return;
+        }
+
         let gizmo_idle = self.history_system().gizmo_drag().is_none();
         let selection = self.selection_system_mut();
         selection.set_pointer_primary_down(pointer_down);

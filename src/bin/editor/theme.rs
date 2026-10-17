@@ -79,6 +79,16 @@ pub mod icons {
     pub const ANIMATOR: &str = "🎬";
     pub const ANIMATION_TREE: &str = "🔀";
     pub const SPRING_CAMERA: &str = "📷";
+    #[cfg(feature = "navigation")]
+    pub const NAVMESH: &str = "🗺";
+    #[cfg(feature = "navigation")]
+    pub const NAV_AGENT: &str = "🚶";
+    #[cfg(feature = "navigation")]
+    pub const NAV_OBSTACLE: &str = "🚧";
+    #[cfg(feature = "navigation")]
+    pub const NAV_MODIFIER: &str = "🔧";
+    #[cfg(feature = "navigation")]
+    pub const NAV_LINK: &str = "🔗";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

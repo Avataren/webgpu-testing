@@ -9,8 +9,10 @@ name = "wgpu_cube"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = []
+default = ["navigation"]
 wasm = []
+# Navmesh generation, path finding and crowds of walking agents (src/navigation).
+navigation = []
 egui = ["dep:egui", "dep:egui-wgpu", "dep:egui-winit", "dep:egui_tiles", "dep:epaint_default_fonts"]
 profile = ["dep:once_cell"]
 optimized-allocator = []

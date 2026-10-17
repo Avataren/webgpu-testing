@@ -645,6 +645,42 @@ impl Server {
             }
             "project_save" => self.save_project(args).map(Output::Json),
             "playtest" => self.playtest(args),
+            "navmesh_bake" => {
+                let mut params = json!({});
+                if let Some(entity) = args.get("entity") {
+                    params["entity"] = entity.clone();
+                }
+                let started = self
+                    .engine
+                    .call("navigation.bake", params)
+                    .map_err(|err| err.to_string())?;
+                let timeout = args
+                    .get("timeout_seconds")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(180.0);
+                let begun = std::time::Instant::now();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    let status = self
+                        .engine
+                        .call("navigation.status", json!({}))
+                        .map_err(|err| err.to_string())?;
+                    if status["bake"].is_null() {
+                        return Ok(Output::Json(json!({
+                            "started": started["started"],
+                            "result": status["last_bake"],
+                            "status": status,
+                        })));
+                    }
+                    if begun.elapsed().as_secs_f64() > timeout {
+                        return Ok(Output::Json(json!({
+                            "started": started["started"],
+                            "still_baking": status["bake"],
+                            "note": "Still baking; check navigation_status later.",
+                        })));
+                    }
+                }
+            }
             "sound_inspect" | "sound_generate" | "texture_generate" | "texture_maps"
             | "texture_fetch" => {
                 let method = match name {

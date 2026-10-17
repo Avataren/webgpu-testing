@@ -103,8 +103,11 @@ states the clips allow):
 - **Locomotion**: a 2D blend space over `side_speed` (x) and `forward_speed` (y). Idle at
   (0, 0), the walk and run straight ahead at the speeds they travel (1.4 and 4.6 m/s for
   clips made in place), the backpedal behind, the strafes to the sides. Between points the
-  clips mix by weight and keep step; past the outermost points they play faster ("Match
-  speed").
+  clips mix by weight and keep step (the idle keeps its own pace); slower than the walk,
+  the walk slows down to 60% of its pace before the idle blends in; past the outermost
+  points they play faster ("Match speed"). The speeds are measured at the character's
+  size when the tree is generated: a copy scaled bigger or smaller (a crowd of clones)
+  scales them with it.
 - **Jump** when `jumped` fires, **Fall** while in the air, **Land** on a hard landing
   (`landed && landing_speed > 8`), and back to Locomotion when grounded.
 

@@ -43,6 +43,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/asset/` | Shared `Assets` (meshes, materials, textures) and handles |
 | `src/procgen/` | Profile lathes, beveled polygon extrusions, mesh composition, voxel meshes, seeded height fields/PBR maps and PCM sound synthesis |
 | `src/physics/` | Rapier physics: `RigidBody`/`Collider`/`CharacterController`/`SpringCamera` components, the per-scene `ScenePhysics`, collider wireframes |
+| `src/navigation/` | Navmeshes (feature `navigation`): Recast-style generation, tiled navmesh and queries, the crowd (ORCA avoidance), components and the per-scene `SceneNavigation` |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
 | `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
@@ -304,8 +305,10 @@ to flicker, especially at a distant horizon.
     own frame. Identical rigs get no correction; different rest postures (T versus A)
     are not handled.
   - Blends (`Animator::play_blend`): a group of clips posed by weight with one shared
-    phase (a walk and a run keep step), negative speed plays backwards, each clip's
-    `root_speed` (ground travel per second) is measured from its root track.
+    phase (a walk and a run keep step; a clip with `sync` off, such as an idle, keeps its
+    own), negative speed plays backwards (the same clip forward and backwards plays as
+    two), each clip's `root_speed` (ground travel per second) is measured from its root
+    track.
   - `AnimationTree` (`skeletal/tree.rs`, Godot-style): states playing a clip or a 1D/2D
     blend space (2D: the smallest enclosing triangle, barycentric weights), transitions
     with parsed conditions (`&& || !`, comparisons) and exit times, parameters fed from
@@ -313,7 +316,10 @@ to flicker, especially at a distant horizon.
     speeds along the facing, grounded, air time, landing speed, jumped/landed triggers).
     `update_trees` runs before `update_animators` and plays the current state through
     `play_blend` on layer 0. `AnimationTree::locomotion` builds one from clip names
-    (Mixamo's included), placing blend points at the clips' root speeds. `tree_animator`
+    (Mixamo's included), placing blend points at the clips' root speeds and recording
+    the animator's world scale (`measured_scale`; speed blends scale with a clone's
+    size). In speed blends the point at zero is unsynced and strides slow to 60% of
+    their pace before it blends in (`slow_strides`). `tree_animator`
     finds the animator a tree drives (itself, below, above); `animator_entity` finds the
     one a script means (itself, above, below).
   - Copy paths remap joints: `SceneAsset::instantiate` (entity indices),
@@ -391,6 +397,59 @@ the web too).
 - **Debugging**: the editor outlines the selected entity's collider (built from the
   components); `ScenePhysics::set_debug_draw` (Lua `physics_debug_draw`, remote
   `debug.physics`) draws every simulated collider, play mode included.
+
+## Navigation
+
+`src/navigation/` (cargo feature `navigation`, on by default; every use outside the module is
+`#[cfg(feature = "navigation")]`, so `--no-default-features` must keep building). The user
+guide is [`docs/navigation.md`](navigation.md).
+
+- **Generation** (`recast/`, `builder.rs`, `geometry.rs`): a port of Recast's pipeline, one
+  tile at a time on the thread pool. `NavGeometry` collects triangles (render meshes and/or
+  fixed colliders, `NavModifier` areas) and marks slopes; each tile rasterizes them into a
+  heightfield of spans per column (several floors per column), filters it (low obstacles,
+  ledges, low ceilings), builds the compact heightfield, erodes it by the agent radius,
+  partitions it into watershed regions, traces and simplifies contours, triangulates them
+  into convex polygons and adds height detail. Spans keep the exact height of their top
+  (`Span::top`), so agents stand on the floor, not up to a voxel above it.
+  `FORBIDDEN_AREA` (a `NavModifier` with `walkable: false`) marks spans the low-obstacle
+  filter must not make walkable; plain `NULL_AREA` tops (too steep) may still be stepped
+  onto when they are within a climb of the floor, like a curb.
+- **Navmesh** (`navmesh.rs`, `query.rs`): Detour-like tiles with `PolyRef` (salt, tile,
+  poly), internal and external links with portal ranges, off-mesh connections as two-vertex
+  polygons. Queries: A*, funnel straight path, corridor smoothing by raycasts, raycast,
+  move along surface, nearest polygon, random point, wall segments. A rebuilt tile gets a
+  new salt, so stale refs fail `is_valid`.
+- **Tile cache**: a bake can keep each tile's compact heightfield; carving obstacles
+  rebuild only the tiles they touch from it (carves are applied before erosion, so holes
+  grow by the agent radius), at most `TILE_REBUILDS_PER_FRAME` a frame.
+- **Crowd** (`crowd.rs`, `avoidance.rs`): Detour-crowd-like corridors (merge on move,
+  visibility shortcuts), corners and smooth steering, separation, ORCA (an RVO2 port with
+  the navmesh's wall segments as obstacles of a 5 cm radius: the navmesh already keeps the
+  agent radius from walls, so padding them again would close gaps the navmesh leaves open),
+  collision resolution and moves along the surface. A keep-to-one-side lean when someone
+  comes the other way, and giving way when stuck face to face, break the symmetric
+  deadlocks ORCA cannot. Replanning happens when the corridor turns invalid, a partial path
+  times out, the mesh generation changes, or an agent makes no progress.
+- **`SceneNavigation`** (`scene_nav.rs`, one per `Scene`, derived state like
+  `ScenePhysics`): loads bakes (a process-wide cache keyed by path and file stamp, shared
+  by play sessions), builds surfaces without bakes at play start, runs bake threads with
+  progress, syncs agents, obstacles and links from components, applies `NavCommand`s
+  queued by Lua (`ScriptCommands::navigation`) and remote calls, steps the crowd in
+  `Scene::step_navigation` after the scripts in play mode (while editing it only runs
+  bakes, commands and the debug view: `update_editor`), writes positions and facing back (or steers `CharacterController`s), feeds animation
+  trees and hands scripts their callbacks.
+- **Debug drawing** (`debug.rs` builds lines and triangles into `renderer::DebugGeometry`;
+  `renderer/debug_draw.rs` draws them after the scene, depth tested, plus a faint x-ray pass
+  with the depth test reversed). The debug flags and the editor's test path are
+  process-wide (`scene_nav::view_state`), because the editor replaces the `Scene` on
+  play, stop and undo.
+- **Editor**: `src/bin/editor/inspector/navigation.rs` (component sections, bake button and
+  progress, debug toggles, the test path tool), `application/navigation_system.rs` and
+  `action_handlers/navigation.rs`; the path tool takes Scene-view clicks in
+  `application/input.rs` and picks the navmesh with `SceneNavigation::pick`.
+- **Lua and remote**: `scripting/lua/api/navigation.rs` (queries run against the scene's
+  navigation through `NavigationGuard`, set while scripts run), `remote/handlers/navigation.rs`.
 
 ## Scripting (Lua)
 

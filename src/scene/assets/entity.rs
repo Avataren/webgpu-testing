@@ -85,6 +85,9 @@ pub struct SceneAssetEntity {
     pub spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation_tree: Option<crate::scene::skeletal::AnimationTree>,
+    /// Navmesh surface, agent, obstacle and modifier.
+    #[serde(skip)]
+    pub navigation: super::navigation::NavigationData,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +188,21 @@ struct SceneAssetEntityData {
     spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     animation_tree: Option<crate::scene::skeletal::AnimationTree>,
+    #[cfg(feature = "navigation")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nav_mesh_surface: Option<crate::navigation::NavMeshSurface>,
+    #[cfg(feature = "navigation")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nav_agent: Option<crate::navigation::NavAgent>,
+    #[cfg(feature = "navigation")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nav_obstacle: Option<crate::navigation::NavObstacle>,
+    #[cfg(feature = "navigation")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nav_modifier: Option<crate::navigation::NavModifier>,
+    #[cfg(feature = "navigation")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nav_link: Option<crate::navigation::NavLink>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -243,6 +261,16 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             character_controller: data.character_controller,
             spring_camera: data.spring_camera,
             animation_tree: data.animation_tree,
+            #[cfg(feature = "navigation")]
+            navigation: super::navigation::NavigationData {
+                nav_mesh_surface: data.nav_mesh_surface,
+                nav_agent: data.nav_agent,
+                nav_obstacle: data.nav_obstacle,
+                nav_modifier: data.nav_modifier,
+                nav_link: data.nav_link,
+            },
+            #[cfg(not(feature = "navigation"))]
+            navigation: Default::default(),
             camera: data.camera,
             scene_ref: data.scene_ref,
             skin: data.skin,
@@ -297,6 +325,16 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             character_controller: entity.character_controller,
             spring_camera: entity.spring_camera,
             animation_tree: entity.animation_tree,
+            #[cfg(feature = "navigation")]
+            nav_mesh_surface: entity.navigation.nav_mesh_surface,
+            #[cfg(feature = "navigation")]
+            nav_agent: entity.navigation.nav_agent,
+            #[cfg(feature = "navigation")]
+            nav_obstacle: entity.navigation.nav_obstacle,
+            #[cfg(feature = "navigation")]
+            nav_modifier: entity.navigation.nav_modifier,
+            #[cfg(feature = "navigation")]
+            nav_link: entity.navigation.nav_link,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,
@@ -674,6 +712,7 @@ impl SceneAssetEntity {
             character_controller,
             spring_camera,
             animation_tree,
+            navigation: super::navigation::NavigationData::capture(world, entity),
             camera,
             scene_ref: None,
             skin,

@@ -9,6 +9,8 @@ pub mod gpu_particles;
 pub mod graphics_settings;
 pub mod io;
 pub mod library;
+#[cfg(feature = "navigation")]
+pub mod navigation;
 pub mod physics;
 pub mod process;
 pub mod procgen;

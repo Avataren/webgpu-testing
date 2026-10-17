@@ -216,6 +216,7 @@ pub struct Renderer {
     gpu_timer: crate::renderer::gpu_timer::GpuTimer,
     /// Screen-space gizmo shapes drawn over the editor overlays.
     gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer,
+    debug_draw: crate::renderer::debug_draw::DebugDrawStage,
     /// The light probe debug view, drawn with the editor overlays.
     light_probe_debug: crate::renderer::light_probe_debug::LightProbeDebugStage,
     /// How the last light probe bake ended, as the app reported it.
@@ -409,6 +410,7 @@ impl Renderer {
             lights_group_shared: std::cell::Cell::new(false),
             gpu_timer,
             gizmo_shapes: crate::renderer::gizmo_shapes::GizmoShapeRenderer::new(),
+            debug_draw: crate::renderer::debug_draw::DebugDrawStage::default(),
             light_probe_debug: crate::renderer::light_probe_debug::LightProbeDebugStage::new(),
             light_probe_bake_outcome: None,
             camera_position: Vec3::ZERO,
@@ -969,6 +971,12 @@ impl Renderer {
     /// the gizmo meshes. Each frame replaces the last frame's.
     pub fn set_gizmo_shapes(&mut self, shapes: Vec<crate::renderer::gizmo_shapes::GizmoShape>) {
         self.gizmo_shapes.set_shapes(shapes);
+    }
+
+    /// World-space debug geometry (navmeshes, paths) drawn over the next frame, depth
+    /// tested against the scene. Each frame replaces the last frame's.
+    pub fn set_debug_geometry(&mut self, geometry: crate::renderer::debug_draw::DebugGeometry) {
+        self.debug_draw.set_geometry(geometry);
     }
 
     pub fn editor_overlays(&self) -> bool {
@@ -1911,6 +1919,19 @@ impl Renderer {
             &self.context.queue,
             &mut frame.encoder,
             &self.light_probes,
+            &surface_view,
+            surface_format,
+            &depth_view,
+            self.context.depth.format,
+            &self.camera_buffer.bind_layout,
+            &self.camera_buffer.stable_bind_group,
+            viewport,
+        );
+
+        frame.stats.overlay_draw_calls += self.debug_draw.render(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
             &surface_view,
             surface_format,
             &depth_view,

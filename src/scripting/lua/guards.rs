@@ -73,6 +73,11 @@ thread_local! {
     pub(crate) static ACTIVE_PHYSICS: RefCell<Option<TrackedPointer<ScenePhysics>>> = const { RefCell::new(None) };
     pub(crate) static PHYSICS_GENERATION: Cell<Generation> = const { Cell::new(0) };
 
+    #[cfg(feature = "navigation")]
+    pub(crate) static ACTIVE_NAVIGATION: RefCell<Option<TrackedPointer<crate::navigation::SceneNavigation>>> = const { RefCell::new(None) };
+    #[cfg(feature = "navigation")]
+    pub(crate) static NAVIGATION_GENERATION: Cell<Generation> = const { Cell::new(0) };
+
     pub(crate) static ACTIVE_EVENT_QUEUE: RefCell<Option<Rc<RefCell<Vec<ScriptEvent>>>>> = const { RefCell::new(None) };
     pub(crate) static ACTIVE_ENTITY: RefCell<Option<i64>> = const { RefCell::new(None) };
 }
@@ -309,6 +314,61 @@ pub(crate) fn with_active_physics<R>(
         // single-threaded and non-reentrantly.
         let physics = unsafe { &*tracked.ptr };
         f(physics)
+    })
+}
+
+/// Guard that lets Lua scripts query the scene's navigation (paths, agent states)
+/// while they run. Same constraints as [`PhysicsGuard`].
+#[cfg(feature = "navigation")]
+pub(crate) struct NavigationGuard<'a> {
+    _marker: PhantomData<(&'a crate::navigation::SceneNavigation, Rc<()>)>,
+}
+
+#[cfg(feature = "navigation")]
+impl<'a> NavigationGuard<'a> {
+    pub fn enter(navigation: &'a crate::navigation::SceneNavigation) -> Self {
+        let ptr = navigation as *const crate::navigation::SceneNavigation;
+        let generation = NAVIGATION_GENERATION.with(|gen| {
+            let new_gen = gen.get().wrapping_add(1);
+            gen.set(new_gen);
+            new_gen
+        });
+        ACTIVE_NAVIGATION
+            .with(|cell| *cell.borrow_mut() = Some(TrackedPointer::new(ptr, generation)));
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "navigation")]
+impl Drop for NavigationGuard<'_> {
+    fn drop(&mut self) {
+        ACTIVE_NAVIGATION.with(|cell| *cell.borrow_mut() = None);
+        NAVIGATION_GENERATION.with(|gen| gen.set(0));
+    }
+}
+
+/// Run `f` with the scene's navigation, or report that scripts cannot reach it here.
+#[cfg(feature = "navigation")]
+pub(crate) fn with_active_navigation<R>(
+    f: impl FnOnce(&crate::navigation::SceneNavigation) -> Result<R, mlua::Error>,
+) -> Result<R, mlua::Error> {
+    ACTIVE_NAVIGATION.with(|cell| {
+        let opt = cell.borrow();
+        let Some(tracked) = opt.as_ref() else {
+            return Err(mlua::Error::RuntimeError("navigation not available".into()));
+        };
+        debug_assert_eq!(
+            tracked.generation,
+            NAVIGATION_GENERATION.with(|gen| gen.get()),
+            "NavigationGuard generation mismatch - guard may have been dropped"
+        );
+        // SAFETY: as for `with_active_physics`: the pointer was set by a live
+        // `NavigationGuard` that borrows the navigation for its lifetime, and scripts
+        // run single-threaded and non-reentrantly.
+        let navigation = unsafe { &*tracked.ptr };
+        f(navigation)
     })
 }
 

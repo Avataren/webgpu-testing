@@ -501,6 +501,10 @@ the character's root, its model or a bone:
 - `animation_get(entity, name)` → the parameter's value (a number)
 - `animation_state(entity)` → `{state, previous, time, progress}` or `nil`
 - `animation_travel(entity, state[, fade])` - Go to a state now.
+- `animation_tree_generate(entity)` - Give the entity a locomotion tree built from its
+  animator's clips by name (as "Generate from clips"), fed by the character controller or
+  nav agent it belongs to; travelling clips then play in place. It is built after the hook
+  returns, from the clips added so far: spawn a crowd member, add its clips, then call it.
 
 ```lua
 -- A "Dance" state entered when dancing, left when the character moves:
@@ -644,6 +648,75 @@ function on_destroyed(self, reason) if controls then controls:release() end end
 To change it beyond that, copy `engine/third_person.lua` from the engine
 (`src/scripting/lua/modules/`) into your scripts folder as `engine/third_person.lua`: a
 project's own file takes its place.
+
+### Navigation
+Navmeshes, paths and agents that walk them (`docs/navigation.md` is the full guide).
+Entities get them as components, set up in the inspector's Navigation menu, over MCP or
+with `set_component`:
+
+- `NavMeshSurface` - a navmesh built from the scene's static geometry (bake it in the
+  inspector or with MCP `navmesh_bake`; without a bake it is built when play starts).
+  `agent_radius`, `agent_height`, `agent_max_climb`, `agent_max_slope`, voxel sizes,
+  `bounds`, `geometry` (`render_meshes`, `colliders`, `both`), `agent_type`.
+- `NavAgent` - walks a navmesh: `radius`, `speed`, `acceleration`, `turn_speed`,
+  `stopping_distance`, `avoidance`, `priority`, `separation`, `drive` (`transform` moves
+  it, `character` steers its `CharacterController`, `auto`), `destination` (headed for at
+  play start), `area_costs` (`{{area = 2, cost = 3}}`). An `AnimationTree` on or below it
+  is fed `speed`, `forward_speed`, `side_speed` and `grounded`.
+- `NavObstacle` - a `box` or `cylinder` footprint agents steer round; with `carve` it cuts a
+  hole into the navmesh once it stands still, so paths go round it (a parked cart, a closed
+  gate).
+- `NavLink` - an off-mesh connection from the entity to `end` (local): a jump, a drop, a
+  ladder (`bidirectional`).
+- `NavModifier` - on scenery: `ignore` it, make it `walkable = false` (solid, never walked
+  on), or give its tops an `area`.
+
+Agents walk in play mode after every script's `update` (before the physics), so a
+destination set in `update` is planned and walked the same frame.
+
+- `nav_set_destination(entity, x, y, z)` - walk there (the nearest point on the navmesh).
+  Returns false when the entity is not an agent.
+- `nav_stop(entity)`, `nav_warp(entity, x, y, z)` - stop where it is; put it somewhere else
+  at once.
+- `nav_face(entity, yaw)` - face `yaw` (radians about +Y; 0 faces +Z) while it stands;
+  walking hands the facing back to its movement.
+- `nav_agent_state(entity)` → `{state, position, velocity, speed, desired_velocity, target,
+  remaining_distance, partial, corners}` or `nil`. `state` is `idle`, `planning`, `moving`,
+  `arrived`, `failed`, `off_mesh` or `lost`; `partial` means the way is blocked for now and
+  it walks as near as it can (it keeps retrying).
+- `nav_find_path(x0, y0, z0, x1, y1, z1[, {agent_type}])` → `{points = {{x, y, z}, ...},
+  complete, length}` or `nil`.
+- `nav_closest_point(x, y, z[, radius])` → `{x, y, z}` or `nil`.
+- `nav_random_point([x, y, z, radius])` - a random point on the navmesh, reachable from the
+  polygon nearest `x, y, z` within `radius` when given (start it on the main floor).
+- `nav_raycast(x0, y0, z0, x1, y1, z1)` → `{hit, point, normal}`: walking a straight line
+  over the floor, where a wall stops it.
+- `nav_pick(ox, oy, oz, dx, dy, dz)` → `{x, y, z}` where a ray (from
+  `screen_to_world_ray`) first meets a navmesh, on any floor, or `nil`: click-to-move.
+- `nav_debug_draw(enabled | {mesh, agents, paths, obstacles, x_ray})`.
+- `nav_rebuild([surface])` - build the navmeshes again from the scene as it is now.
+- `nav_status()` → `{surfaces = {{entity, name, tiles, polys, source, agents}}, agents,
+  obstacles, carving}`.
+
+Callbacks on an agent's script: `on_nav_arrived(self)`, `on_nav_failed(self, reason)`,
+`on_nav_link_start(self, {start, finish, link})` and `on_nav_link_end(self)`.
+
+```lua
+-- Click to send this agent somewhere; wander after arriving.
+function update(self, dt)
+    if is_mouse_button_just_pressed(0) then
+        local m = get_mouse_position()
+        local ray = m and screen_to_world_ray(m.x, m.y)
+        local p = ray and nav_pick(ray.ox, ray.oy, ray.oz, ray.dx, ray.dy, ray.dz)
+        if p then nav_set_destination(self, p.x, p.y, p.z) end
+    end
+end
+
+function on_nav_arrived(self)
+    local p = nav_random_point(0, 0, 6, 20)
+    if p then nav_set_destination(self, p.x, p.y, p.z) end
+end
+```
 
 ### Files a game ships
 

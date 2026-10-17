@@ -263,6 +263,10 @@ pub struct BlendClip {
     pub weight: f32,
     /// Its playback rate; negative plays it backwards (a walk as a backpedal).
     pub speed: f32,
+    /// Keep it in step with the blend's other synced clips (when the blend syncs).
+    /// False for a clip with no stride to match, such as the idle of a locomotion
+    /// blend: it plays at its own pace, and its length does not slow the walk.
+    pub sync: bool,
 }
 
 /// Options for [`Animator::play_blend`].
@@ -417,9 +421,31 @@ impl Animator {
                 fade_to(playing, 0.0, fade);
             }
         }
+        // A clip can be in a blend twice: forward, and backwards for the other way (a
+        // walk as a backpedal). Each direction plays on its own; the same clip the same
+        // way twice plays once, with both shares.
+        let mut merged: Vec<BlendClip> = Vec::with_capacity(clips.len());
         for blend in clips {
+            let backwards = blend.speed < 0.0;
+            match merged
+                .iter_mut()
+                .find(|other| other.clip == blend.clip && (other.speed < 0.0) == backwards)
+            {
+                Some(other) => {
+                    if blend.weight > other.weight {
+                        other.speed = blend.speed;
+                    }
+                    other.weight += blend.weight.max(0.0);
+                }
+                None => merged.push(blend.clone()),
+            }
+        }
+        for blend in &merged {
+            let backwards = blend.speed < 0.0;
             let index = layer.clips.iter().position(|playing| {
-                playing.group.as_deref() == Some(group) && playing.name == blend.clip
+                playing.group.as_deref() == Some(group)
+                    && playing.name == blend.clip
+                    && (playing.speed < 0.0) == backwards
             });
             let playing = match index {
                 Some(index) => &mut layer.clips[index],
@@ -439,7 +465,7 @@ impl Animator {
             playing.blend = blend.weight.max(0.0);
             playing.speed = blend.speed;
             playing.looping = options.looping;
-            playing.sync = options.sync;
+            playing.sync = options.sync && blend.sync;
             if restart || playing.fading_out() {
                 playing.finished = false;
             }
@@ -521,13 +547,19 @@ impl Animator {
 
     /// How far the blend `group` on `layer` has played through its cycle (0..1), and
     /// whether it reached its end (a blend that does not loop), once it has started.
+    /// The cycle is the synced clips' when there are any.
     pub fn blend_progress(&self, group: &str, layer: usize) -> Option<(f32, bool)> {
         let layer = self.state.layers.get(layer)?;
-        let strongest = layer
-            .clips
-            .iter()
-            .filter(|playing| playing.group.as_deref() == Some(group))
-            .max_by(|a, b| a.blend.total_cmp(&b.blend))?;
+        let members = || {
+            layer
+                .clips
+                .iter()
+                .filter(|playing| playing.group.as_deref() == Some(group))
+        };
+        let strongest = members()
+            .filter(|playing| playing.sync)
+            .max_by(|a, b| a.blend.total_cmp(&b.blend))
+            .or_else(|| members().max_by(|a, b| a.blend.total_cmp(&b.blend)))?;
         let progress = if strongest.sync {
             strongest.phase
         } else {
@@ -1821,11 +1853,13 @@ mod tests {
                     clip: "mixamo.com".into(),
                     weight: 0.75,
                     speed: 1.0,
+                    sync: true,
                 },
                 BlendClip {
                     clip: "wave".into(),
                     weight: 0.25,
                     speed: -1.0,
+                    sync: true,
                 },
             ],
             BlendOptions {
@@ -1844,6 +1878,114 @@ mod tests {
         assert_eq!(walk.effective_weight(), 0.75);
         let (progress, finished) = animator.blend_progress("Locomotion", 0).unwrap();
         assert!((progress - 0.25).abs() < 1e-4 && !finished);
+    }
+
+    #[test]
+    fn a_clip_in_a_blend_both_ways_plays_each_way() {
+        // A generated locomotion tree without a back clip plays the walk backwards for
+        // walking back; walking forward, that entry has no share and must not take the
+        // forward walk's.
+        let (mut rig, mut assets) = setup(Animator::with_library("walk.glb"));
+        let mut animator = rig.world.remove_one::<Animator>(rig.root).unwrap();
+        let blend = |forward: f32| {
+            [
+                BlendClip {
+                    clip: "wave".into(),
+                    weight: 1.0 - forward,
+                    speed: 1.0,
+                    sync: false,
+                },
+                BlendClip {
+                    clip: "mixamo.com".into(),
+                    weight: forward,
+                    speed: 1.0,
+                    sync: true,
+                },
+                BlendClip {
+                    clip: "mixamo.com".into(),
+                    weight: 0.0,
+                    speed: -1.0,
+                    sync: true,
+                },
+            ]
+        };
+        let options = BlendOptions {
+            fade: 0.0,
+            ..BlendOptions::default()
+        };
+        animator.play_blend("Locomotion", &blend(0.9), options);
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        {
+            let mut animator = rig.world.get::<&mut Animator>(rig.root).unwrap();
+            animator.play_blend("Locomotion", &blend(0.8), options);
+        }
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        let animator = rig.world.get::<&Animator>(rig.root).unwrap();
+        let clips = &animator.state.layers[0].clips;
+        let forward = clips
+            .iter()
+            .find(|c| c.name == "mixamo.com" && c.speed > 0.0)
+            .unwrap();
+        let back = clips
+            .iter()
+            .find(|c| c.name == "mixamo.com" && c.speed < 0.0)
+            .unwrap();
+        assert!((forward.effective_weight() - 0.8).abs() < 1e-5);
+        assert_eq!(back.effective_weight(), 0.0);
+        assert!((forward.time - 0.5).abs() < 1e-4, "{}", forward.time);
+        assert!((back.time - 0.5).abs() < 1e-4, "{}", back.time);
+        assert_eq!(animator.status(0).clip.as_deref(), Some("mixamo.com"));
+    }
+
+    #[test]
+    fn unsynced_clips_of_a_blend_keep_their_own_pace() {
+        // A 4 s idle under a 1 s walk: synced, the walk would take 1.75 s a step.
+        let mut library = walk_library();
+        let mut arm = BoneTrack::new("Arm");
+        arm.rotation = Some(linear_quat(
+            &[0.0, 4.0],
+            &[Quat::IDENTITY, Quat::from_rotation_z(1.0)],
+        ));
+        library
+            .clips
+            .push(Arc::new(SkeletalClip::new("idle", vec![arm])));
+        let mut assets = Assets::new();
+        assets.insert_clip_library("walk.glb", library);
+        let mut rig = rig(1.0);
+        let mut animator = Animator::with_library("walk.glb");
+        animator.play_blend(
+            "Locomotion",
+            &[
+                BlendClip {
+                    clip: "idle".into(),
+                    weight: 0.25,
+                    speed: 1.0,
+                    sync: false,
+                },
+                BlendClip {
+                    clip: "mixamo.com".into(),
+                    weight: 0.75,
+                    speed: 1.0,
+                    sync: true,
+                },
+            ],
+            BlendOptions {
+                fade: 0.0,
+                ..BlendOptions::default()
+            },
+        );
+        rig.world.insert_one(rig.root, animator).unwrap();
+        update_animators(&mut rig.world, &mut assets, 0.25);
+        let animator = rig.world.get::<&Animator>(rig.root).unwrap();
+        let clips = &animator.state.layers[0].clips;
+        let walk = clips.iter().find(|c| c.name == "mixamo.com").unwrap();
+        let idle = clips.iter().find(|c| c.name == "idle").unwrap();
+        assert!((walk.time - 0.25).abs() < 1e-4, "{}", walk.time);
+        assert!((idle.time - 0.25).abs() < 1e-4, "{}", idle.time);
+        // The blend's cycle is the walk's.
+        let (progress, _) = animator.blend_progress("Locomotion", 0).unwrap();
+        assert!((progress - 0.25).abs() < 1e-4, "{progress}");
     }
 
     #[test]
@@ -2037,6 +2179,7 @@ mod tests {
             clip: "wave".into(),
             weight: 1.0,
             speed: 1.0,
+            sync: true,
         }];
         animator.play_blend("Wave", &wave, options);
         rig.world.insert_one(rig.root, animator).unwrap();

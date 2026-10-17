@@ -207,6 +207,16 @@ pub struct SceneEntityComponentsSummary {
     pub spring_camera: Option<crate::physics::SpringCamera>,
     pub animator: Option<crate::scene::skeletal::Animator>,
     pub animation_tree: Option<crate::scene::skeletal::AnimationTree>,
+    #[cfg(feature = "navigation")]
+    pub nav_mesh_surface: Option<crate::navigation::NavMeshSurface>,
+    #[cfg(feature = "navigation")]
+    pub nav_agent: Option<crate::navigation::NavAgent>,
+    #[cfg(feature = "navigation")]
+    pub nav_obstacle: Option<crate::navigation::NavObstacle>,
+    #[cfg(feature = "navigation")]
+    pub nav_modifier: Option<crate::navigation::NavModifier>,
+    #[cfg(feature = "navigation")]
+    pub nav_link: Option<crate::navigation::NavLink>,
 }
 
 #[cfg(feature = "egui")]
@@ -356,6 +366,26 @@ impl SceneHierarchySnapshot {
                     spring_camera,
                     animator,
                     animation_tree,
+                    #[cfg(feature = "navigation")]
+                    nav_mesh_surface: entity_ref
+                        .get::<&crate::navigation::NavMeshSurface>()
+                        .map(|component| (*component).clone()),
+                    #[cfg(feature = "navigation")]
+                    nav_agent: entity_ref
+                        .get::<&crate::navigation::NavAgent>()
+                        .map(|component| (*component).clone()),
+                    #[cfg(feature = "navigation")]
+                    nav_obstacle: entity_ref
+                        .get::<&crate::navigation::NavObstacle>()
+                        .map(|component| (*component).clone()),
+                    #[cfg(feature = "navigation")]
+                    nav_modifier: entity_ref
+                        .get::<&crate::navigation::NavModifier>()
+                        .map(|component| (*component).clone()),
+                    #[cfg(feature = "navigation")]
+                    nav_link: entity_ref
+                        .get::<&crate::navigation::NavLink>()
+                        .map(|component| (*component).clone()),
                 },
             );
         }

@@ -46,6 +46,10 @@
 //! - `animation_state(entity)` returns `{state, previous, time, progress}` (the state's
 //!   name, the one before, seconds in it, and how far its motion has played, 0..1).
 //! - `animation_travel(entity, state[, fade])` goes to a state now.
+//! - `animation_tree_generate(entity)` gives the entity a locomotion tree built from its
+//!   animator's clips by name (idle, walk, run, strafes, jump; as the inspector's
+//!   "Generate from clips"), fed by the character controller or nav agent it belongs to.
+//!   Travelling clips then play in place. Done after the hook, with the clips added so far.
 //!
 //! The tree plays on layer 0; `animator_play(e, clip, { layer = 1 })` still overlays a
 //! clip (an upper-body wave with `animator_set_layer(e, 1, { mask = "Spine" })`).
@@ -191,6 +195,16 @@ pub(crate) fn register_animation_api(lua: &Lua) -> LuaResult<()> {
         "animator_add_clips",
         lua.create_function(|_, (entity, path): (i64, String)| {
             queue(entity, AnimatorCommand::AddLibrary(PathBuf::from(path)))
+        })?,
+    )?;
+
+    globals.set(
+        "animation_tree_generate",
+        lua.create_function(|_, entity: i64| {
+            with_active_commands(|commands| {
+                commands.generate_trees.push(entity);
+                Ok(())
+            })
         })?,
     )?;
 

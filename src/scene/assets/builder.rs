@@ -257,6 +257,7 @@ impl SceneAssetEntityBuilder {
             character_controller: None,
             spring_camera: None,
             animation_tree: None,
+            navigation: Default::default(),
             source_entity: None,
         }
     }

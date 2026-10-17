@@ -54,6 +54,10 @@ pub struct Scene {
     /// Rigid bodies, characters and spring cameras of the main world; stepped in play
     /// mode after scripts, rebuilt from the components after a reset.
     physics: crate::physics::ScenePhysics,
+    /// Navmeshes, agents and obstacles of the main world; agents step in play mode after
+    /// scripts and before the physics.
+    #[cfg(feature = "navigation")]
+    navigation: crate::navigation::SceneNavigation,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -84,6 +88,8 @@ impl Scene {
             show_skeletons: false,
             animation_playback: true,
             physics: crate::physics::ScenePhysics::new(),
+            #[cfg(feature = "navigation")]
+            navigation: crate::navigation::SceneNavigation::new(),
         }
     }
 
@@ -121,7 +127,15 @@ impl Scene {
         let clips = self
             .animator_clips(entity)
             .ok_or("no Animator on the entity, below it or above it (import a skinned model)")?;
-        crate::scene::skeletal::AnimationTree::locomotion(&clips)
+        let mut tree = crate::scene::skeletal::AnimationTree::locomotion(&clips)?;
+        // The clips' speeds were measured at the animator's size now.
+        let world = self.main_world();
+        tree.measured_scale = crate::scene::skeletal::tree_animator(world, entity)
+            .and_then(|animator| world.get::<&WorldTransform>(animator).ok())
+            .map_or(0.0, |transform| {
+                crate::scene::skeletal::tree::uniform_scale(transform.0.scale)
+            });
+        Ok(tree)
     }
 
     /// When the clips of the animator that `entity`'s tree drives travel over the ground
@@ -157,6 +171,46 @@ impl Scene {
 
     pub fn physics_mut(&mut self) -> &mut crate::physics::ScenePhysics {
         &mut self.physics
+    }
+
+    /// The scene's navigation (see [`crate::navigation`]).
+    #[cfg(feature = "navigation")]
+    pub fn navigation(&self) -> &crate::navigation::SceneNavigation {
+        &self.navigation
+    }
+
+    #[cfg(feature = "navigation")]
+    pub fn navigation_mut(&mut self) -> &mut crate::navigation::SceneNavigation {
+        &mut self.navigation
+    }
+
+    /// The navigation's debug drawing for this frame (with what `selected` entities
+    /// are), or `None` when there is nothing to draw.
+    #[cfg(feature = "navigation")]
+    pub(crate) fn navigation_debug_geometry(
+        &mut self,
+        selected: &[hecs::Entity],
+    ) -> Option<crate::renderer::debug_draw::DebugGeometry> {
+        let main_node = self.nodes.get(self.main_scene)?;
+        let world = main_node.instance().world();
+        if !self.navigation.wants_debug_geometry(world, selected) {
+            return None;
+        }
+        Some(self.navigation.debug_geometry(world, selected))
+    }
+
+    /// Start baking the navmesh of `surface` (or the scene's first `NavMeshSurface`) in
+    /// the background; [`crate::navigation::SceneNavigation::poll_bake`] finishes it.
+    #[cfg(feature = "navigation")]
+    pub fn start_navmesh_bake(
+        &mut self,
+        surface: Option<hecs::Entity>,
+    ) -> Result<hecs::Entity, String> {
+        let Some(main_node) = self.nodes.get(self.main_scene) else {
+            return Err("the scene has no main world".into());
+        };
+        let world = main_node.instance().world();
+        self.navigation.start_bake(world, &self.assets, surface)
     }
 
     /// Scene time scripts advanced by since the last call: the sum of this frame's play
@@ -493,6 +547,8 @@ impl Scene {
     pub fn reset_script_runtime(&mut self) {
         self.runtime.reset_script_runtime();
         self.physics.reset();
+        #[cfg(feature = "navigation")]
+        self.navigation.reset();
         self.script_effects_reset = true;
     }
 
@@ -803,11 +859,16 @@ impl Scene {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
             let _physics_guard = PhysicsGuard::enter(&self.physics);
+            #[cfg(feature = "navigation")]
+            let _navigation_guard =
+                crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, true));
         }
         // The simulation only runs in play mode.
         self.runtime.scripting_mut().take_physics_commands();
+        #[cfg(feature = "navigation")]
+        self.step_navigation(0.0, true);
     }
 
     /// Scripts convert between the screen and the world through the camera as it is now,
@@ -839,6 +900,9 @@ impl Scene {
         let world = main_node.instance_mut().world_mut();
         let _input_guard = InputStateGuard::enter(&self.input_state);
         let _physics_guard = PhysicsGuard::enter(&self.physics);
+        #[cfg(feature = "navigation")]
+        let _navigation_guard =
+            crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
         self.runtime.scripting_mut().eval(world, code, entity)
     }
 
@@ -964,13 +1028,53 @@ impl Scene {
             let world = main_node.instance_mut().world_mut();
             let _input_guard = InputStateGuard::enter(&self.input_state);
             let _physics_guard = PhysicsGuard::enter(&self.physics);
+            #[cfg(feature = "navigation")]
+            let _navigation_guard =
+                crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, editor_mode));
         } else {
             error!("Cannot run scripts: main scene node is missing");
         }
 
+        #[cfg(feature = "navigation")]
+        self.step_navigation(dt, editor_mode);
         self.step_physics(dt, editor_mode);
+    }
+
+    /// Run the navigation after scripts (taking their commands): agents walk, obstacles
+    /// carve, and character-driven agents' steering goes to this frame's physics. In
+    /// the editor (or paused) it only keeps navmeshes loaded and finishes bakes.
+    #[cfg(feature = "navigation")]
+    fn step_navigation(&mut self, dt: f64, editor_mode: bool) {
+        let commands = self.runtime.scripting_mut().take_navigation_commands();
+        self.navigation.queue(commands);
+        let Some(main_node) = self.nodes.get_mut(self.main_scene) else {
+            return;
+        };
+        let world = main_node.instance_mut().world_mut();
+        if editor_mode || dt <= 0.0 {
+            self.navigation.update_editor(world, &self.assets);
+        } else {
+            let (navigation, assets) = (&mut self.navigation, &self.assets);
+            let steering =
+                frame_timings::time("navigation", || navigation.step(world, assets, dt as f32));
+            self.physics.queue(steering);
+        }
+        let events: Vec<_> = self
+            .navigation
+            .take_events()
+            .into_iter()
+            .filter(|event| {
+                world
+                    .satisfies::<&crate::scripting::LuaScriptComponent>(event.entity)
+                    .unwrap_or(false)
+            })
+            .map(|event| (event.entity, event.callback, event.data))
+            .collect();
+        if !events.is_empty() {
+            self.runtime.scripting_mut().queue_callbacks(events);
+        }
     }
 
     /// Run the physics after scripts (whose commands it takes), and hand the scripts
@@ -1144,6 +1248,7 @@ impl Scene {
 
         self.apply_script_post_process();
         self.apply_script_environment();
+        self.apply_script_trees();
 
         let commands = self.runtime.scripting_mut().take_pending_asset_commands();
         // Asset commands may still attach materials created earlier in the frame, so
@@ -1226,6 +1331,23 @@ impl Scene {
         }
         if created {
             self.propagate_transforms();
+        }
+    }
+
+    /// Give the entities scripts asked for (`animation_tree_generate`) a locomotion tree
+    /// from their animator's clips, as the inspector's "Generate from clips" does, and
+    /// play clips that travel in place (whatever moves the character moves it).
+    fn apply_script_trees(&mut self) {
+        for entity in self.runtime.scripting_mut().take_pending_trees() {
+            match self.locomotion_tree(entity) {
+                Ok(tree) => {
+                    self.play_travelling_clips_in_place(entity);
+                    if let Err(err) = self.main_world_mut().insert_one(entity, tree) {
+                        warn!(target: "script", "animation_tree_generate: {err}");
+                    }
+                }
+                Err(err) => warn!(target: "script", "animation_tree_generate: {err}"),
+            }
         }
     }
 

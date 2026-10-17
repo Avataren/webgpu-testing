@@ -39,7 +39,12 @@ use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInsp
 use crate::theme::{self, icons};
 
 mod animation;
+#[cfg(feature = "navigation")]
+mod navigation;
 mod physics;
+
+#[cfg(feature = "navigation")]
+pub use navigation::{NavigationPanelStatus, NavigationRequest, PathTestStatus};
 
 pub use animation::{AnimationPanelStatus, TreeLive};
 
@@ -217,6 +222,9 @@ pub enum InspectorAction {
         entity: Entity,
         script: bool,
     },
+    /// Bake a navmesh, change the navigation debug view or the path test.
+    #[cfg(feature = "navigation")]
+    Navigation(NavigationRequest),
 }
 
 /// What the light probe section asks of the renderer.
@@ -309,6 +317,7 @@ pub fn show_entity_inspector(
     content_root: Option<&Path>,
     light_probes: &LightProbePanelStatus,
     animation: &AnimationPanelStatus,
+    #[cfg(feature = "navigation")] navigation_status: &NavigationPanelStatus,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
     let entity = data.entity;
@@ -402,6 +411,8 @@ pub fn show_entity_inspector(
     }
 
     physics::show_physics_sections(ui, entity, components, &mut actions);
+    #[cfg(feature = "navigation")]
+    navigation::show_navigation_sections(ui, entity, components, navigation_status, &mut actions);
 
     animation::show_animation_sections(
         ui,
@@ -560,6 +571,8 @@ fn add_component_menu(
         InspectorAction::AddScript { entity },
     );
     physics::add_physics_menu(ui, entity, components, actions);
+    #[cfg(feature = "navigation")]
+    navigation::add_navigation_menu(ui, entity, components, actions);
     animation::add_animation_menu(ui, entity, components, actions);
 }
 

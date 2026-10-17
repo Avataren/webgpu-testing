@@ -5,7 +5,10 @@
 //!   parameter (`blend_1d`, e.g. idle/walk/run by speed) or two (`blend_2d`, e.g. walking
 //!   forward, backward and strafing by the velocity relative to the character's facing).
 //!   Blend spaces keep their clips in step and can speed playback up past their
-//!   outermost clips so feet do not slide.
+//!   outermost clips so feet do not slide. In a speed blend space (`scale_speed`) the
+//!   clip at zero (the idle) keeps its own pace instead (it has no stride to match),
+//!   slower than the first stride the strides slow down before the idle blends in, and
+//!   a character scaled from the size the speeds were measured at scales them.
 //! - **Transitions** move from one state (or any, `"*"`) to another when their condition
 //!   holds (`"!grounded && air_time > 0.15"`), optionally only once the state has
 //!   played a share of its motion (`after`), cross-fading over `fade` seconds. The first
@@ -26,7 +29,7 @@ use hecs::{Entity, World};
 use serde::{Deserialize, Serialize};
 
 use super::animator::{Animator, BlendClip, BlendOptions, ClipInfo};
-use crate::scene::components::{Children, Parent};
+use crate::scene::components::{Children, Parent, WorldTransform};
 
 fn one() -> f32 {
     1.0
@@ -73,7 +76,9 @@ pub enum Motion {
     Blend1d {
         parameter: String,
         points: Vec<BlendPoint>,
-        /// Past the outermost point, play faster in proportion (feet keep pace).
+        /// The parameter is a speed: past the outermost point, play faster in
+        /// proportion (feet keep pace); the point at zero stands still, so it is not
+        /// kept in step with the strides.
         #[serde(default)]
         scale_speed: bool,
     },
@@ -159,6 +164,11 @@ pub struct AnimationTree {
     pub transitions: Vec<AnimationTreeTransition>,
     /// Starting values of parameters scripts set.
     pub parameters: BTreeMap<String, f32>,
+    /// The world scale of the character's animator when its speed blend spaces were
+    /// measured (a generated tree records it). On a character scaled otherwise (a
+    /// bigger or smaller clone), those blends scale their points by the difference, so
+    /// strides keep pace with the ground. 0 takes the points as they are.
+    pub measured_scale: f32,
     /// Playback state; not saved.
     #[serde(skip)]
     pub runtime: TreeRuntime,
@@ -172,6 +182,7 @@ impl Default for AnimationTree {
             states: Vec::new(),
             transitions: Vec::new(),
             parameters: BTreeMap::new(),
+            measured_scale: 0.0,
             runtime: TreeRuntime::default(),
         }
     }
@@ -194,6 +205,9 @@ pub struct TreeRuntime {
     pub triggers: HashSet<String>,
     /// A state a script asked to go to (`animation_travel`) and the fade.
     pub travel: Option<(String, f32)>,
+    /// The character's scale relative to [`AnimationTree::measured_scale`], for speed
+    /// blends (0 is taken as 1).
+    pub size: f32,
     /// Parsed conditions, by transition index (with the text they were parsed from).
     conditions: Vec<(String, Result<Condition, String>)>,
     /// Problems already logged.
@@ -385,7 +399,8 @@ impl AnimationTree {
     /// Hand state `index`'s blend for the current parameters to the animator.
     fn play(&self, index: usize, fade: f32, entering: bool, animator: &mut Animator) {
         let state = &self.states[index];
-        let (clips, rate) = motion_blend(&state.motion, &|name| self.value(name));
+        let (clips, rate) =
+            motion_blend(&state.motion, &|name| self.value(name), self.runtime.size);
         let clips: Vec<BlendClip> = clips
             .into_iter()
             .map(|mut clip| {
@@ -408,15 +423,19 @@ impl AnimationTree {
 }
 
 /// The clips of `motion` with their shares for the current parameter values, and the
-/// rate to play them at.
-fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>, f32) {
-    let clip = |name: &str, weight: f32, speed: f32| BlendClip {
+/// rate to play them at. Speed blends read their speeds on a character `size` times the
+/// one they were measured on (0 is taken as 1).
+fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32, size: f32) -> (Vec<BlendClip>, f32) {
+    let clip = |name: &str, weight: f32, speed: f32, sync: bool| BlendClip {
         clip: name.to_string(),
         weight,
         speed,
+        sync,
     };
+    // A bigger character covers more ground per stride: its speeds count for less.
+    let size = if size > 0.0 { size } else { 1.0 };
     match motion {
-        Motion::Clip { clip: name, speed } => (vec![clip(name, 1.0, *speed)], 1.0),
+        Motion::Clip { clip: name, speed } => (vec![clip(name, 1.0, *speed, true)], 1.0),
         Motion::Blend1d {
             parameter,
             points,
@@ -425,7 +444,11 @@ fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>
             if points.is_empty() {
                 return (Vec::new(), 1.0);
             }
-            let v = value(parameter);
+            let v = if *scale_speed {
+                value(parameter) / size
+            } else {
+                value(parameter)
+            };
             let mut sorted: Vec<&BlendPoint> = points.iter().collect();
             sorted.sort_by(|a, b| a.at.total_cmp(&b.at));
             let first = sorted[0];
@@ -439,7 +462,8 @@ fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>
                             .iter()
                             .find(|(index, _)| *index == i)
                             .map_or(0.0, |(_, w)| *w);
-                        clip(&point.clip, weight, point.speed)
+                        let stands = *scale_speed && point.at.abs() < 1.0e-3;
+                        clip(&point.clip, weight, point.speed, !stands)
                     })
                     .collect()
             };
@@ -457,7 +481,12 @@ fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>
             let upper = sorted.iter().position(|point| point.at > v).unwrap_or(1);
             let (a, b) = (sorted[upper - 1], sorted[upper]);
             let t = ((v - a.at) / (b.at - a.at).max(1.0e-6)).clamp(0.0, 1.0);
-            (all(&[(upper - 1, 1.0 - t), (upper, t)]), 1.0)
+            let mut clips = all(&[(upper - 1, 1.0 - t), (upper, t)]);
+            if *scale_speed {
+                let paces: Vec<f32> = sorted.iter().map(|point| point.at.abs()).collect();
+                slow_strides(&mut clips, &paces, v.abs());
+            }
+            (clips, 1.0)
         }
         Motion::Blend2d {
             x,
@@ -466,6 +495,7 @@ fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>
             scale_speed,
         } => {
             let at = Vec2::new(value(x), value(y));
+            let at = if *scale_speed { at / size } else { at };
             let positions: Vec<Vec2> = points.iter().map(|p| Vec2::from(p.at)).collect();
             let (weights, reached) = blend_2d_weights(&positions, at);
             let rate =
@@ -474,14 +504,57 @@ fn motion_blend(motion: &Motion, value: &dyn Fn(&str) -> f32) -> (Vec<BlendClip>
                 } else {
                     1.0
                 };
-            (
-                points
-                    .iter()
-                    .zip(weights)
-                    .map(|(point, weight)| clip(&point.clip, weight, point.speed))
-                    .collect(),
-                rate,
-            )
+            let mut clips: Vec<BlendClip> = points
+                .iter()
+                .zip(weights)
+                .map(|(point, weight)| {
+                    let stands = *scale_speed && Vec2::from(point.at).length() < 1.0e-3;
+                    clip(&point.clip, weight, point.speed, !stands)
+                })
+                .collect();
+            if *scale_speed {
+                let paces: Vec<f32> = points.iter().map(|p| Vec2::from(p.at).length()).collect();
+                slow_strides(&mut clips, &paces, reached.length());
+            }
+            (clips, rate)
+        }
+    }
+}
+
+/// The share of their pace strides slow down to before the clip that stands still blends
+/// in.
+const SLOWEST_STRIDE: f32 = 0.6;
+
+/// Between standing and striding in a speed blend: play the strides slower, down to
+/// [`SLOWEST_STRIDE`] of their pace, before mixing in the stand (the clips with `sync`
+/// off). Mixed in, the stand shrinks the steps but leaves them as quick: legs twitching
+/// under a body that glides. `paces` are the clips' speeds at full weight; `speed` is
+/// how fast the character goes.
+fn slow_strides(clips: &mut [BlendClip], paces: &[f32], speed: f32) {
+    let standing: f32 = clips.iter().filter(|c| !c.sync).map(|c| c.weight).sum();
+    let striding: f32 = clips.iter().filter(|c| c.sync).map(|c| c.weight).sum();
+    if standing <= 1.0e-4 || striding <= 1.0e-4 {
+        return;
+    }
+    let pace = clips
+        .iter()
+        .zip(paces)
+        .filter(|(c, _)| c.sync)
+        .map(|(c, pace)| c.weight * pace)
+        .sum::<f32>()
+        / striding;
+    if pace <= 1.0e-3 {
+        return;
+    }
+    let share = speed / pace;
+    let rate = share.clamp(SLOWEST_STRIDE, 1.0);
+    let strides = (share / rate).min(1.0);
+    for clip in clips.iter_mut() {
+        if clip.sync {
+            clip.weight *= strides / striding;
+            clip.speed *= rate;
+        } else {
+            clip.weight *= (1.0 - strides) / standing;
         }
     }
 }
@@ -534,25 +607,38 @@ pub(crate) fn blend_2d_weights(points: &[Vec2], at: Vec2) -> (Vec<f32>, Vec2) {
         }
         return (weights, at);
     }
-    // Outside: the closest point on any segment between two points.
-    let mut closest = (f32::INFINITY, 0usize, 0usize, 0.0f32, points[0]);
+    // Outside: the closest point on any segment between two points. Of segments as
+    // close, the shortest: with points in a line (idle, walk and run along forward
+    // speed) a speed between the walk and the run blends those two, not the idle and
+    // the run.
+    let mut closest = (
+        f32::INFINITY,
+        f32::INFINITY,
+        0usize,
+        0usize,
+        0.0f32,
+        points[0],
+    );
     for i in 0..n {
         for j in i..n {
             let (a, b) = (points[i], points[j]);
             let ab = b - a;
-            let t = if ab.length_squared() > 1.0e-9 {
-                ((at - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+            let length = ab.length_squared();
+            let t = if length > 1.0e-9 {
+                ((at - a).dot(ab) / length).clamp(0.0, 1.0)
             } else {
                 0.0
             };
             let p = a + ab * t;
             let d = p.distance_squared(at);
-            if d < closest.0 {
-                closest = (d, i, j, t, p);
+            let tie = 1.0e-6 + 1.0e-4 * d;
+            let nearer = d < closest.0 - tie;
+            if nearer || ((d - closest.0).abs() <= tie && length < closest.1) {
+                closest = (d, length, i, j, t, p);
             }
         }
     }
-    let (_, i, j, t, p) = closest;
+    let (_, _, i, j, t, p) = closest;
     weights[i] += 1.0 - t;
     weights[j] += t;
     (weights, p)
@@ -869,6 +955,12 @@ pub(crate) fn update_trees(world: &mut World, dt: f32) {
         else {
             continue;
         };
+        tree.runtime.size = match world.get::<&WorldTransform>(target) {
+            Ok(transform) if tree.measured_scale > 0.0 => {
+                uniform_scale(transform.0.scale) / tree.measured_scale
+            }
+            _ => 1.0,
+        };
         if let Ok(mut animator) = world.get::<&mut Animator>(target) {
             tree.evaluate(dt, &mut animator);
         }
@@ -876,6 +968,11 @@ pub(crate) fn update_trees(world: &mut World, dt: f32) {
             *slot = tree;
         }
     }
+}
+
+/// One number for a (near enough) uniform scale.
+pub(crate) fn uniform_scale(scale: glam::Vec3) -> f32 {
+    scale.abs().element_sum() / 3.0
 }
 
 // ------------------------------------------------------------------------------------
@@ -1277,12 +1374,27 @@ mod tests {
             ],
             scale_speed: true,
         };
-        let (clips, rate) = motion_blend(&motion, &|_| 4.0);
+        let (clips, rate) = motion_blend(&motion, &|_| 4.0, 1.0);
         assert_eq!(rate, 1.0);
         assert!((clips[1].weight - 0.5).abs() < 1e-5 && (clips[2].weight - 0.5).abs() < 1e-5);
-        let (clips, rate) = motion_blend(&motion, &|_| 9.0);
+        let (clips, rate) = motion_blend(&motion, &|_| 9.0, 1.0);
         assert_eq!(clips[2].weight, 1.0);
         assert!((rate - 1.5).abs() < 1e-5);
+        // The idle stands still: it keeps its own pace, the strides keep step.
+        assert!(!clips[0].sync && clips[1].sync && clips[2].sync);
+        // A character twice the size walks at 4 where the points say 2.
+        let (clips, _) = motion_blend(&motion, &|_| 4.0, 2.0);
+        assert!((clips[1].weight - 1.0).abs() < 1e-5, "{clips:?}");
+        // Slower than the walk: the walk slows down to 60% of its pace, then the idle
+        // blends in (the steps cover the ground either way).
+        let (clips, _) = motion_blend(&motion, &|_| 1.6, 1.0);
+        assert!((clips[1].weight - 1.0).abs() < 1e-5, "{clips:?}");
+        assert!((clips[1].speed - 0.8).abs() < 1e-5, "{clips:?}");
+        assert_eq!(clips[0].weight, 0.0);
+        let (clips, _) = motion_blend(&motion, &|_| 0.6, 1.0);
+        assert!((clips[1].speed - 0.6).abs() < 1e-5, "{clips:?}");
+        assert!((clips[1].weight - 0.5).abs() < 1e-5, "{clips:?}");
+        assert!((clips[0].weight - 0.5).abs() < 1e-5 && clips[0].speed == 1.0);
     }
 
     #[test]
@@ -1305,6 +1417,37 @@ mod tests {
         let (weights, reached) = blend_2d_weights(&points, Vec2::new(0.0, 4.0));
         assert!((weights[1] - 1.0).abs() < 1e-4, "{weights:?}");
         assert!((reached.y - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn points_in_a_line_blend_their_neighbours() {
+        // A generated tree without strafes: idle, walk, run and the walk backwards, all
+        // along forward speed.
+        let points = [
+            Vec2::ZERO,
+            Vec2::new(0.0, 1.5),
+            Vec2::new(0.0, 5.0),
+            Vec2::new(0.0, -1.5),
+        ];
+        for side in [0.0, 5.0e-8, -0.003, 0.4] {
+            let (weights, _) = blend_2d_weights(&points, Vec2::new(side, 2.2));
+            let t = 0.7 / 3.5;
+            assert!(
+                weights[0] < 1e-4 && (weights[1] - (1.0 - t)).abs() < 1e-3,
+                "side {side}: {weights:?}"
+            );
+            assert!((weights[2] - t).abs() < 1e-3, "side {side}: {weights:?}");
+            let (weights, _) = blend_2d_weights(&points, Vec2::new(side, 0.6));
+            assert!(
+                (weights[0] - 0.6).abs() < 1e-3 && (weights[1] - 0.4).abs() < 1e-3,
+                "side {side}: {weights:?}"
+            );
+            let (weights, _) = blend_2d_weights(&points, Vec2::new(side, -0.75));
+            assert!(
+                (weights[0] - 0.5).abs() < 1e-3 && (weights[3] - 0.5).abs() < 1e-3,
+                "side {side}: {weights:?}"
+            );
+        }
     }
 
     #[test]

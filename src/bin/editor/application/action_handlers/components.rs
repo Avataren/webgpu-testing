@@ -191,7 +191,8 @@ pub fn handle_add_environment(ctx: &mut ActionContext, entity: Entity) -> Action
 }
 
 /// Handle AddLightProbeVolume action: a volume of the default size around the entity.
-/// Handle SetPhysics: add, replace or (with null) remove a physics component.
+/// Handle SetPhysics: add, replace or (with null) remove a physics or navigation
+/// component.
 pub fn handle_set_physics(
     ctx: &mut ActionContext,
     entity: Entity,
@@ -199,6 +200,21 @@ pub fn handle_set_physics(
     value: serde_json::Value,
 ) -> ActionResult {
     let world = ctx.scene.main_world_mut();
+    #[cfg(feature = "navigation")]
+    if wgpu_cube::navigation::edit::canonical_name(component).is_some() {
+        let before = wgpu_cube::navigation::edit::component_json(world, entity, component);
+        if before.as_ref() == Some(&value) || (before.is_none() && value.is_null()) {
+            return ActionResult::no_change();
+        }
+        return match wgpu_cube::navigation::edit::patch_component(world, entity, component, &value)
+        {
+            Ok(()) => ActionResult::scene_changed(),
+            Err(err) => {
+                log::warn!("Cannot change {component} of {entity:?}: {err}");
+                ActionResult::no_change()
+            }
+        };
+    }
     let before = wgpu_cube::physics::edit::component_json(world, entity, component);
     if before.as_ref() == Some(&value) || (before.is_none() && value.is_null()) {
         return ActionResult::no_change();

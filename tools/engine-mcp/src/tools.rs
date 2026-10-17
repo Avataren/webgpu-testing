@@ -223,6 +223,11 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "collider": { "type": ["object", "null"], "description": "Collision shape, or null to remove. On its own the entity is fixed scenery. {shape: {kind: auto} (fits the mesh: primitives exactly, other meshes as triangles for scenery or convex hull for dynamic bodies) | {kind: box, size: [x,y,z]} | {kind: sphere, radius} | {kind: capsule, radius, height} | {kind: cylinder, radius, height} | {kind: mesh} | {kind: convex_hull}, offset: [x,y,z], friction (0.6), restitution (0), density (1), sensor (trigger volume: scripts get on_trigger_enter/exit), include_children (also the meshes of descendants: imported models and levels)}. Sizes are local units, stretched by the entity's scale. Only given fields change." },
         "character_controller": { "type": ["object", "null"], "description": "Walking character (capsule move-and-slide; the entity origin is the feet), or null to remove. Steered from Lua: character_move(e, x, z, run), character_jump(e), character_state(e). Fields: radius (0.3), height (1.8), max_slope (deg, 50), step_height (0.35), snap_distance (0.3), walk_speed (2.2), run_speed (6), acceleration (40), air_control (0.35), gravity (22), jump_height (1.3), air_jumps (0), coyote_time (0.12), jump_buffer (0.15), max_fall_speed (45), face_movement (true), turn_speed (deg/s, 720), yaw_offset (deg; models should face +Z), push_mass (80 kg), ride_platforms (true). Only given fields change." },
         "spring_camera": { "type": ["object", "null"], "description": "Third-person spring-arm camera (give the entity a camera too), or null to remove: {target: entity name (empty = parent), pivot_offset: [0,1.5,0], distance (4.5), min_distance, max_distance, yaw, pitch (deg, -15 looks down), min_pitch, max_pitch, shoulder_offset, mouse_look (true: turns while the cursor is locked or right mouse held), sensitivity (deg/pixel), invert_y, zoom_step (m per wheel notch), follow_lag (s), vertical_lag (s), collision (pull in before scenery), probe_radius, auto_follow (swing behind a moving target, 0 = off)}. Only given fields change." },
+        "nav_mesh_surface": { "type": ["object", "null"], "description": "Navmesh built from the scene's static geometry (bake it with navmesh_bake; without a bake it is built when play starts), or null to remove. Floors over floors (bridges, tunnels, balconies) stay separate. Fields: agent_radius (0.4), agent_height (1.8), agent_max_climb (0.45), agent_max_slope (deg, 45), cell_size (0.2), cell_height (0.1), tile_size (cells, 48; obstacles rebuild the tiles they touch), min_region_area (m2, 1), merge_region_area (8), max_edge_length (12), max_edge_error (cells, 1.3), detail_sample_distance (m, 1.2; 0 = no height detail), detail_sample_max_error (0.1), geometry (render_meshes|colliders|both), collect (all|children), bounds ([x,y,z] box around the entity, zero = everything), baked (project path, set by a bake), build_on_start (true), agent_type (\"\"). Only given fields change." },
+        "nav_agent": { "type": ["object", "null"], "description": "Walks the navmesh to destinations (Lua nav_set_destination(e, x, y, z), nav_stop, nav_agent_state; callbacks on_nav_arrived/on_nav_failed), steering around other agents (ORCA) and moving obstacles, replanning when the navmesh changes; or null to remove. The entity origin is the feet; models face +Z (else yaw_offset). Moves the transform, or steers a CharacterController when the entity has one (drive auto|transform|character). An AnimationTree with from_character gets its speeds. Fields: radius (0.35), height (1.8), speed (1.5 m/s), acceleration (8), turn_speed (deg/s, 540), stopping_distance (0.15), avoidance (true), priority (0..1, 0.5), separation (1), face_movement (true), yaw_offset, drive, agent_type, destination ([x,y,z] to head for at play start), area_costs ([{area, cost}])." },
+        "nav_obstacle": { "type": ["object", "null"], "description": "Something that moves about on the navmesh (cart, door, crate): agents steer around it while it moves; standing still it carves a hole into the navmesh (tiles rebuilt, paths reroute). Or null to remove. Fields: shape ({kind: box, size: [x,y,z]} | {kind: cylinder, radius, height}; local units), offset, carve (true), carve_only_stationary (true), move_threshold (m, 0.1), stationary_time (s, 0.5)." },
+        "nav_link": { "type": ["object", "null"], "description": "Off-mesh link from the entity to end (local offset): a jump down, a gap, a ladder; agents whose path uses it cross in an arc (Lua callbacks on_nav_link_start(self, {start, finish, link}) / on_nav_link_end). Or null to remove. Fields: end ([x,y,z], default [0,0,2]), bidirectional (false: only entity -> end), radius (m, 0.5: how far each end reaches for the floor), area (63)." },
+        "nav_modifier": { "type": ["object", "null"], "description": "How an entity's geometry (and its children's, include_children) goes into navmeshes, or null to remove: ignore (leave it out), walkable (false: solid but never walked on, like rooftops), area (1..63; 63 plain ground; agents' area_costs make areas cheaper or dearer)." },
         "animation_tree": { "type": ["object", "null"], "description": "Animation state machine (like Godot's AnimationTree) driving the character's animator (on the entity, the nearest below, or above), or null to remove. {generate: true} builds a locomotion tree from the character's clips by name (idle/walk/run/backpedal/strafes in a 2D blend space at the speeds the clips travel, then Jump/Fall/Land states); put it on the character root. Fields: from_character (default true: the CharacterController feeds speed, forward_speed, side_speed, vertical_speed, grounded, air_time, landing_speed and the triggers jumped and landed), start, parameters {name: number}, states [{name, motion: {kind: clip, clip, speed} | {kind: blend_1d, parameter, points: [{at, clip, speed}], scale_speed} | {kind: blend_2d, x, y, points: [{at: [x, y], clip, speed}], scale_speed}, looping, speed}], transitions [{from (a state or \"*\"), to, when (e.g. \"!grounded && air_time > 0.15\"), fade, after (0..1 share of the state played)}]. entity_get shows playing {state, previous, time, progress, parameters} in play mode. Lua: animation_set/trigger/get/state/travel." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
             "axis": vec3("Rotation axis"),
@@ -466,7 +471,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "nav_mesh_surface", "nav_agent", "nav_obstacle", "nav_modifier", "nav_link", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -1112,6 +1117,51 @@ pub fn tools() -> Vec<Tool> {
             description: "Draw every collider the physics simulation has as wireframes (green fixed, orange dynamic, blue kinematic, cyan characters, yellow sensors), in the viewport and screenshots. The simulation exists only in play mode (bodies is 0 when editing); the editor always outlines the selected entity's collider. Returns body and step counts and gravity.",
             schema: object(json!({ "enabled": { "type": "boolean" } }), &[]),
             action: Action::Engine("debug.physics"),
+        },
+        Tool {
+            name: "navmesh_bake",
+            description: "Bake the navmesh of a nav_mesh_surface (entity, or the scene's first) from the scene's static geometry, in the background, and wait for it: saved as content/navigation/<surface name>.navmesh with the surface's baked path set (project_save keeps it). Returns the result (tiles, polygons, triangles, milliseconds) and the navigation status. Editing only (stop play first).",
+            schema: object(json!({
+                "entity": entity_ref(),
+                "timeout_seconds": { "type": "number", "description": "How long to wait (default 180)" }
+            }), &[]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "navigation_status",
+            description: "The scene's navmeshes (tiles, polygons, baked or built at play start, stale settings, load errors), agents, obstacles (and how many carve), the debug view, a running bake and the last one.",
+            schema: empty(),
+            action: Action::Engine("navigation.status"),
+        },
+        Tool {
+            name: "navigation_debug",
+            description: "Draw navigation in the view and screenshots (depth tested): mesh (polygons tinted by area, walls dark, tiles checkered), agents (bodies coloured by state: grey idle, green walking, blue arrived, red failed; velocity arrows), paths (agents' corners to their destinations), obstacles (red carving, orange moving), x_ray (show what scenery hides, faintly). all: true or false sets every layer. Only given fields change.",
+            schema: object(json!({
+                "all": { "type": "boolean" },
+                "mesh": { "type": "boolean" },
+                "agents": { "type": "boolean" },
+                "paths": { "type": "boolean" },
+                "obstacles": { "type": "boolean" },
+                "x_ray": { "type": "boolean" }
+            }), &[]),
+            action: Action::Engine("navigation.debug"),
+        },
+        Tool {
+            name: "navigation_path",
+            description: "Find a path over the navmesh between two points ([x,y,z]) or entities, and draw it (magenta; red when the goal cannot be reached and it stops as near as it can). Returns complete, length and the corner points. clear: true removes the drawn path.",
+            schema: object(json!({
+                "from": { "anyOf": [{ "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }, { "type": "integer" }, { "type": "string" }] },
+                "to": { "anyOf": [{ "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }, { "type": "integer" }, { "type": "string" }] },
+                "show": { "type": "boolean", "description": "Draw it (default true)" },
+                "clear": { "type": "boolean" }
+            }), &[]),
+            action: Action::Engine("navigation.path"),
+        },
+        Tool {
+            name: "navigation_agents",
+            description: "Every nav_agent with its state (idle, planning, moving, arrived, failed, off_mesh, lost), position, speed, destination, distance left and whether its path is blocked (partial). Agents walk only in play mode.",
+            schema: empty(),
+            action: Action::Engine("navigation.agents"),
         },
         Tool {
             name: "asset_reload",

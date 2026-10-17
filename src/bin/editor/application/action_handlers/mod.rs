@@ -13,6 +13,8 @@ pub mod environment;
 pub mod lights;
 pub mod materials;
 pub mod misc;
+#[cfg(feature = "navigation")]
+pub mod navigation;
 pub mod particles;
 pub mod scripts;
 pub mod shader;

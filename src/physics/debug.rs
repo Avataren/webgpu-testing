@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use glam::{Mat4, Vec3};
-use hecs::World;
+use hecs::{Entity, World};
 use rapier3d::prelude as rp;
 
 use super::components::{BodyKind, CharacterController, Collider, RigidBody};
@@ -132,6 +132,164 @@ pub(crate) fn simulation_gizmos(physics: &ScenePhysics, node: &Transform) -> Vec
     shapes
 }
 
+/// The shape `entity`'s collider components give it and the shape's world pose, built
+/// from the components (no simulation needed). Characters get their capsule.
+fn component_shape(
+    world: &World,
+    assets: &Assets,
+    entity: Entity,
+) -> Option<(rp::SharedShape, Mat4)> {
+    let collider = world.get::<&Collider>(entity).ok().map(|c| (*c).clone());
+    let body = world.get::<&RigidBody>(entity).ok().map(|b| b.kind);
+    let character = world
+        .get::<&CharacterController>(entity)
+        .ok()
+        .map(|c| (*c).clone());
+    if collider.is_none() && body.is_none() && character.is_none() {
+        return None;
+    }
+    let transform = world_transform(world, entity);
+    let body_pose = Mat4::from_rotation_translation(transform.rotation, transform.translation);
+    if let Some(controller) = character {
+        let (capsule, center) = super::character::body_capsule(&controller);
+        return Some((
+            capsule,
+            body_pose * Mat4::from_translation(Vec3::Y * center),
+        ));
+    }
+    let collider = collider.unwrap_or_default();
+    let dynamic = body == Some(BodyKind::Dynamic);
+    let body_frame = body_pose.inverse();
+    let mut source = ShapeSource::default();
+    let own = world
+        .get::<&MeshComponent>(entity)
+        .ok()
+        .and_then(|mesh| assets.meshes.get(mesh.0));
+    if let Some(mesh) = own {
+        source
+            .meshes
+            .push((mesh.data(), body_frame * transform.matrix()));
+        source.primitive = world
+            .get::<&PrimitiveMeshComponent>(entity)
+            .ok()
+            .map(|primitive| primitive.descriptor);
+    }
+    let children = if collider.include_children {
+        super::world::child_meshes(world, entity)
+    } else {
+        Vec::new()
+    };
+    if !children.is_empty() {
+        source.primitive = None;
+    }
+    for child in &children {
+        if let Some(mesh) = assets.meshes.get(child.mesh.0) {
+            source.meshes.push((mesh.data(), body_frame * child.world));
+        }
+    }
+    let (shape, pose) = build_shape(&collider, transform.scale, &source, dynamic)?;
+    Some((shape, body_pose * pose_matrix(&pose)))
+}
+
+/// Append `shape`'s surface at `pose` as triangles.
+#[cfg(feature = "navigation")]
+fn shape_triangles(
+    shape: &dyn rp::Shape,
+    pose: Mat4,
+    verts: &mut Vec<Vec3>,
+    tris: &mut Vec<[u32; 3]>,
+) {
+    let mut push = |points: Vec<Vec3>, indices: &[[u32; 3]]| {
+        let base = verts.len() as u32;
+        verts.extend(points.into_iter().map(|p| pose.transform_point3(p)));
+        tris.extend(
+            indices
+                .iter()
+                .map(|[a, b, c]| [base + a, base + b, base + c]),
+        );
+    };
+    let point = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+    if let Some(ball) = shape.as_ball() {
+        let (points, indices) = ball.to_trimesh(CURVE_SUBDIVISIONS, CURVE_SUBDIVISIONS / 2);
+        push(
+            points.iter().map(|p| point(p.x, p.y, p.z)).collect(),
+            &indices,
+        );
+    } else if let Some(cuboid) = shape.as_cuboid() {
+        let (points, indices) = cuboid.to_trimesh();
+        push(
+            points.iter().map(|p| point(p.x, p.y, p.z)).collect(),
+            &indices,
+        );
+    } else if let Some(capsule) = shape.as_capsule() {
+        let (points, indices) = capsule.to_trimesh(CURVE_SUBDIVISIONS, CURVE_SUBDIVISIONS / 2);
+        push(
+            points.iter().map(|p| point(p.x, p.y, p.z)).collect(),
+            &indices,
+        );
+    } else if let Some(cylinder) = shape.as_cylinder() {
+        let (points, indices) = cylinder.to_trimesh(CURVE_SUBDIVISIONS);
+        push(
+            points.iter().map(|p| point(p.x, p.y, p.z)).collect(),
+            &indices,
+        );
+    } else if let Some(hull) = shape.as_convex_polyhedron() {
+        let (points, indices) = hull.to_trimesh();
+        push(
+            points.iter().map(|p| point(p.x, p.y, p.z)).collect(),
+            &indices,
+        );
+    } else if let Some(mesh) = shape.as_trimesh() {
+        push(
+            mesh.vertices()
+                .iter()
+                .map(|p| point(p.x, p.y, p.z))
+                .collect(),
+            mesh.indices(),
+        );
+    } else if let Some(compound) = shape.as_compound() {
+        for (part_pose, part) in compound.shapes() {
+            shape_triangles(part.as_ref(), pose * pose_matrix(part_pose), verts, tris);
+        }
+    }
+}
+
+/// The surfaces of the fixed colliders (scenery: no body, or a fixed one; not sensors
+/// or characters) as world-space triangles, per entity.
+#[cfg(feature = "navigation")]
+pub(crate) fn fixed_collider_triangles(
+    world: &World,
+    assets: &Assets,
+    mut keep: impl FnMut(Entity) -> bool,
+) -> Vec<(Entity, Vec<Vec3>, Vec<[u32; 3]>)> {
+    let mut out = Vec::new();
+    let mut query = world.query::<&Collider>();
+    for (entity, collider) in query.iter() {
+        if collider.sensor || !keep(entity) {
+            continue;
+        }
+        let moving = world
+            .get::<&RigidBody>(entity)
+            .is_ok_and(|body| body.kind != BodyKind::Fixed);
+        if moving
+            || world
+                .satisfies::<&CharacterController>(entity)
+                .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some((shape, pose)) = component_shape(world, assets, entity) else {
+            continue;
+        };
+        let (mut verts, mut tris) = (Vec::new(), Vec::new());
+        shape_triangles(shape.as_ref(), pose, &mut verts, &mut tris);
+        if !tris.is_empty() {
+            out.push((entity, verts, tris));
+        }
+    }
+    out
+}
+
 /// Wireframes of the colliders the selected entities would get, built from their
 /// components (the editor has no running simulation).
 pub(crate) fn selected_collider_gizmos(
@@ -142,68 +300,26 @@ pub(crate) fn selected_collider_gizmos(
     let mut shapes = Vec::new();
     let mut query = world.query::<&SelectedInEditor>();
     for (entity, _) in query.iter() {
-        let collider = world.get::<&Collider>(entity).ok().map(|c| (*c).clone());
-        let body = world.get::<&RigidBody>(entity).ok().map(|b| b.kind);
-        let character = world
-            .get::<&CharacterController>(entity)
-            .ok()
-            .map(|c| (*c).clone());
-        if collider.is_none() && body.is_none() && character.is_none() {
+        let Some((shape, pose)) = component_shape(world, assets, entity) else {
             continue;
-        }
-        let transform = world_transform(world, entity);
-        let body_pose = Mat4::from_rotation_translation(transform.rotation, transform.translation);
-        let mut segments = Vec::new();
-        let color = if let Some(controller) = character {
-            let (capsule, center) = super::character::body_capsule(&controller);
-            let pose = body_pose * Mat4::from_translation(Vec3::Y * center);
-            shape_segments(capsule.as_ref(), pose, &mut segments);
+        };
+        let sensor = world.get::<&Collider>(entity).is_ok_and(|c| c.sensor);
+        let body = world.get::<&RigidBody>(entity).ok().map(|b| b.kind);
+        let color = if world
+            .satisfies::<&CharacterController>(entity)
+            .unwrap_or(false)
+        {
             CHARACTER_COLOR
         } else {
-            let collider = collider.unwrap_or_default();
-            let dynamic = body == Some(BodyKind::Dynamic);
-            let body_frame = body_pose.inverse();
-            let mut source = ShapeSource::default();
-            let own = world
-                .get::<&MeshComponent>(entity)
-                .ok()
-                .and_then(|mesh| assets.meshes.get(mesh.0));
-            if let Some(mesh) = own {
-                source
-                    .meshes
-                    .push((mesh.data(), body_frame * transform.matrix()));
-                source.primitive = world
-                    .get::<&PrimitiveMeshComponent>(entity)
-                    .ok()
-                    .map(|primitive| primitive.descriptor);
-            }
-            let children = if collider.include_children {
-                super::world::child_meshes(world, entity)
-            } else {
-                Vec::new()
-            };
-            if !children.is_empty() {
-                source.primitive = None;
-            }
-            for child in &children {
-                if let Some(mesh) = assets.meshes.get(child.mesh.0) {
-                    source.meshes.push((mesh.data(), body_frame * child.world));
-                }
-            }
-            if let Some((shape, pose)) = build_shape(&collider, transform.scale, &source, dynamic) {
-                shape_segments(
-                    shape.as_ref(),
-                    body_pose * pose_matrix(&pose),
-                    &mut segments,
-                );
-            }
-            match (collider.sensor, body) {
+            match (sensor, body) {
                 (true, _) => SENSOR_COLOR,
                 (_, Some(BodyKind::Dynamic)) => DYNAMIC_COLOR,
                 (_, Some(BodyKind::Kinematic)) => KINEMATIC_COLOR,
                 _ => FIXED_COLOR,
             }
         };
+        let mut segments = Vec::new();
+        shape_segments(shape.as_ref(), pose, &mut segments);
         shapes.extend(lines(segments, color, node));
     }
     shapes

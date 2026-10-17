@@ -69,6 +69,8 @@ pub struct EditorBehavior<'a> {
     pub workspace_info: SceneHierarchyWorkspaceInfo,
     pub light_probe_status: &'a LightProbePanelStatus,
     pub animation_status: &'a AnimationPanelStatus,
+    #[cfg(feature = "navigation")]
+    pub navigation_status: &'a crate::inspector::NavigationPanelStatus,
     pub library: &'a mut LibraryPanelState,
     pub library_actions: &'a mut Vec<LibraryAction>,
     /// The selected entity and its name, which library animations can be added to.
@@ -217,6 +219,8 @@ impl EditorBehavior<'_> {
                                 self.content_root.as_deref(),
                                 self.light_probe_status,
                                 self.animation_status,
+                                #[cfg(feature = "navigation")]
+                                self.navigation_status,
                             );
                             self.inspector_actions.extend(actions);
                         } else {

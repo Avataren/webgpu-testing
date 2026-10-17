@@ -187,6 +187,16 @@ impl<'shared> EditorAppAccess<'shared> {
         &mut self.shared.light_probe_status
     }
 
+    #[cfg(feature = "navigation")]
+    pub(super) fn navigation_status_mut(&mut self) -> &mut crate::inspector::NavigationPanelStatus {
+        &mut self.shared.navigation_status
+    }
+
+    #[cfg(feature = "navigation")]
+    pub(super) fn nav_path_tool_mut(&mut self) -> &mut super::navigation_system::NavPathTool {
+        &mut self.shared.nav_path_tool
+    }
+
     pub fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();

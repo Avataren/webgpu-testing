@@ -10,6 +10,8 @@ mod core;
 mod history_system;
 mod input;
 mod light_probe_system;
+#[cfg(feature = "navigation")]
+mod navigation_system;
 mod particle_system;
 mod picking;
 mod project_system;
@@ -478,6 +480,8 @@ impl EditorApplication {
             let workspace_info = scene_hierarchy_window.workspace_info();
             let light_probe_status = &shared.light_probe_status;
             let animation_status = &shared.animation_status;
+            #[cfg(feature = "navigation")]
+            let navigation_status = &shared.navigation_status;
             let library = &mut shared.library_panel;
 
             egui::CentralPanel::default_margins()
@@ -489,6 +493,8 @@ impl EditorApplication {
                         let mut behavior = EditorBehavior {
                             light_probe_status,
                             animation_status,
+                            #[cfg(feature = "navigation")]
+                            navigation_status,
                             library,
                             library_actions: &mut library_actions,
                             library_target,

@@ -163,6 +163,12 @@ pub struct EditorSharedState {
     pub(super) library_panel: crate::library_panel::LibraryPanelState,
     /// Inspector requests for the renderer's light probes, carried out on the GPU update.
     pub(super) light_probe_requests: Vec<crate::inspector::LightProbeRequest>,
+    /// The scene's navigation state for the inspector (NavigationSystem).
+    #[cfg(feature = "navigation")]
+    pub(super) navigation_status: crate::inspector::NavigationPanelStatus,
+    /// The path test: whether clicks in the Scene view set its ends, and its ends.
+    #[cfg(feature = "navigation")]
+    pub(super) nav_path_tool: super::navigation_system::NavPathTool,
 }
 
 impl EditorSharedState {
@@ -376,6 +382,10 @@ impl EditorApplicationBuilder {
         };
         systems.push(Box::new(SceneCreationSystem));
         systems.push(Box::new(LightProbeSystem::default()));
+        #[cfg(feature = "navigation")]
+        systems.push(Box::new(
+            super::navigation_system::NavigationSystem::default(),
+        ));
         systems.push(Box::new(AnimationPanelSystem::default()));
         let particle_system_index = {
             let system = EditorParticleSystem::default();
@@ -424,6 +434,10 @@ impl EditorApplicationBuilder {
             animation_status: Default::default(),
             library_panel: Default::default(),
             light_probe_requests: Vec::new(),
+            #[cfg(feature = "navigation")]
+            navigation_status: Default::default(),
+            #[cfg(feature = "navigation")]
+            nav_path_tool: Default::default(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]

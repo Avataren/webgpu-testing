@@ -58,6 +58,11 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "collider",
     "character_controller",
     "spring_camera",
+    "nav_mesh_surface",
+    "nav_agent",
+    "nav_obstacle",
+    "nav_modifier",
+    "nav_link",
     "animation_tree",
     "billboard",
     "depth_state",
@@ -90,6 +95,10 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "light_probe_volume" => has::<LightProbeVolume>(world, entity),
         "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
             crate::physics::edit::has_component(world, entity, name)
+        }
+        #[cfg(feature = "navigation")]
+        "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {
+            crate::navigation::edit::has_component(world, entity, name)
         }
         "animation_tree" => has::<AnimationTree>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
@@ -383,6 +392,12 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     }
     for name in crate::physics::edit::COMPONENT_NAMES {
         if let Some(value) = crate::physics::edit::component_json(world, entity, name) {
+            out[name] = value;
+        }
+    }
+    #[cfg(feature = "navigation")]
+    for name in crate::navigation::edit::COMPONENT_NAMES {
+        if let Some(value) = crate::navigation::edit::component_json(world, entity, name) {
             out[name] = value;
         }
     }
@@ -951,6 +966,15 @@ pub(super) fn apply_patch(
                     value,
                 )?
             }
+            #[cfg(feature = "navigation")]
+            "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {
+                crate::navigation::edit::patch_component(
+                    ctx.gpu.scene.main_world_mut(),
+                    entity,
+                    key,
+                    value,
+                )?
+            }
             "animation_tree" => patch_animation_tree(ctx, entity, value)?,
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
@@ -1067,6 +1091,7 @@ fn patch_animation_tree(
         tree.start = generated.start;
         tree.states = generated.states;
         tree.transitions = generated.transitions;
+        tree.measured_scale = generated.measured_scale;
     }
     let tree: AnimationTree = patch_serde(&tree, &Value::Object(fields))?;
     ctx.gpu
@@ -1835,6 +1860,14 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         "rigid_body" | "collider" | "character_controller" | "spring_camera" => {
             let _ = crate::physics::edit::patch_component(world, entity, component, &Value::Null);
         }
+        #[cfg(feature = "navigation")]
+        "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {
+            let _ =
+                crate::navigation::edit::patch_component(world, entity, component, &Value::Null);
+        }
+        // Built without navigation: there is nothing of the kind to remove.
+        #[cfg(not(feature = "navigation"))]
+        "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {}
         "animation_tree" => remove::<AnimationTree>(world, entity),
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),

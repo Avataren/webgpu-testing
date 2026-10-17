@@ -38,6 +38,11 @@ pub(crate) struct ScriptCommands {
     pub environment: Vec<serde_json::Value>,
     /// Velocity, impulse, character and spring camera changes for the scene's physics.
     pub physics: Vec<crate::physics::PhysicsCommand>,
+    /// Destinations, stops and warps for the scene's navigation agents.
+    #[cfg(feature = "navigation")]
+    pub navigation: Vec<crate::navigation::NavCommand>,
+    /// `animation_tree_generate` requests (entity handles), for the scene.
+    pub generate_trees: Vec<i64>,
 }
 
 impl ScriptCommands {
@@ -51,6 +56,9 @@ impl ScriptCommands {
             post_process: Vec::new(),
             environment: Vec::new(),
             physics: Vec::new(),
+            #[cfg(feature = "navigation")]
+            navigation: Vec::new(),
+            generate_trees: Vec::new(),
         }
     }
 
@@ -487,6 +495,8 @@ impl ScriptCommands {
         let mut result = ScriptApplyResult {
             particle_bursts: std::mem::take(&mut self.particle_bursts),
             physics: std::mem::take(&mut self.physics),
+            #[cfg(feature = "navigation")]
+            navigation: std::mem::take(&mut self.navigation),
             ..ScriptApplyResult::default()
         };
         let mut deferred_parents: Vec<(Entity, i64)> = Vec::new();
@@ -674,6 +684,16 @@ impl ScriptCommands {
                 .push(PendingPostProcess { target, patch });
         }
         result.environment.append(&mut self.environment);
+        for handle in std::mem::take(&mut self.generate_trees) {
+            match self
+                .resolve_entity_bits(handle)
+                .ok()
+                .and_then(Entity::from_bits)
+            {
+                Some(entity) if world.contains(entity) => result.generate_trees.push(entity),
+                _ => warn!(target: "script", "animation_tree_generate: no entity {handle}"),
+            }
+        }
 
         Ok(result)
     }
@@ -1252,6 +1272,13 @@ impl ScriptCommands {
                 }
                 Ok(crate::physics::edit::component_json(world, entity, name))
             }
+            #[cfg(feature = "navigation")]
+            ComponentKind::Navigation(name) => {
+                if !world.contains(entity) {
+                    return Err("Entity does not exist".to_string());
+                }
+                Ok(crate::navigation::edit::component_json(world, entity, name))
+            }
         }
     }
 
@@ -1394,9 +1421,13 @@ impl ScriptCommands {
                     )
                     .map_err(|e| e.to_string())?;
             }
-            // Physics components merge the given fields into what is there.
+            // Physics and navigation components merge the given fields into what is there.
             Some(ComponentKind::Physics(name)) => {
                 crate::physics::edit::patch_component(world, entity, name, value)?;
+            }
+            #[cfg(feature = "navigation")]
+            Some(ComponentKind::Navigation(name)) => {
+                crate::navigation::edit::patch_component(world, entity, name, value)?;
             }
             Some(_) => {
                 return Err(format!(
@@ -1494,6 +1525,15 @@ impl ScriptCommands {
                     .remove_one::<ParticleEmitterComponent>(entity)
                     .map_err(|e| e.to_string())?;
             }
+            #[cfg(feature = "navigation")]
+            Some(ComponentKind::Navigation(name)) => {
+                crate::navigation::edit::patch_component(
+                    world,
+                    entity,
+                    name,
+                    &serde_json::Value::Null,
+                )?;
+            }
             Some(ComponentKind::Physics(name)) => {
                 crate::physics::edit::patch_component(
                     world,
@@ -1532,6 +1572,9 @@ pub(crate) enum ComponentKind {
     ParticleEmitter,
     /// A physics component, by its snake_case name.
     Physics(&'static str),
+    /// A navigation component, by its snake_case name.
+    #[cfg(feature = "navigation")]
+    Navigation(&'static str),
 }
 
 pub(crate) fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
@@ -1550,6 +1593,10 @@ pub(crate) fn component_kind_from_name(component_name: &str) -> Option<Component
         "MaterialComponent" | "Material" => Some(ComponentKind::Material),
         "PrimitiveMeshComponent" => Some(ComponentKind::PrimitiveMesh),
         "ParticleEmitterComponent" => Some(ComponentKind::ParticleEmitter),
+        #[cfg(feature = "navigation")]
+        other if crate::navigation::edit::canonical_name(other).is_some() => {
+            crate::navigation::edit::canonical_name(other).map(ComponentKind::Navigation)
+        }
         other => crate::physics::edit::canonical_name(other).map(ComponentKind::Physics),
     }
 }
@@ -1572,6 +1619,10 @@ pub(crate) fn component_matches(world: &World, entity: Entity, kind: ComponentKi
         ComponentKind::ParticleEmitter => world.satisfies::<&ParticleEmitterComponent>(entity),
         ComponentKind::Physics(name) => {
             Ok(crate::physics::edit::has_component(world, entity, name))
+        }
+        #[cfg(feature = "navigation")]
+        ComponentKind::Navigation(name) => {
+            Ok(crate::navigation::edit::has_component(world, entity, name))
         }
     }
     .unwrap_or(false)
@@ -1853,6 +1904,10 @@ pub(crate) struct ScriptApplyResult {
     pub asset_commands: Vec<PendingAssetCommand>,
     pub particle_bursts: Vec<crate::gpu_particles::ParticleBurst>,
     pub physics: Vec<crate::physics::PhysicsCommand>,
+    #[cfg(feature = "navigation")]
+    pub navigation: Vec<crate::navigation::NavCommand>,
+    /// Entities to give a generated locomotion `AnimationTree`.
+    pub generate_trees: Vec<Entity>,
     pub post_process: Vec<PendingPostProcess>,
     /// `set_environment` patches, in order.
     pub environment: Vec<serde_json::Value>,

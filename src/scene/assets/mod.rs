@@ -2,6 +2,7 @@
 mod builder;
 mod core;
 mod entity;
+mod navigation;
 mod prefabs;
 mod resources;
 pub mod serialization;
@@ -511,6 +512,7 @@ mod tests {
                 character_controller: None,
                 spring_camera: None,
                 animation_tree: None,
+                navigation: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -587,6 +589,7 @@ mod tests {
                 character_controller: None,
                 spring_camera: None,
                 animation_tree: None,
+                navigation: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -732,6 +735,7 @@ mod tests {
                 character_controller: None,
                 spring_camera: None,
                 animation_tree: None,
+                navigation: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -842,6 +846,7 @@ mod tests {
                     character_controller: None,
                     spring_camera: None,
                     animation_tree: None,
+                    navigation: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -881,6 +886,7 @@ mod tests {
                     character_controller: None,
                     spring_camera: None,
                     animation_tree: None,
+                    navigation: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -965,6 +971,7 @@ mod tests {
                     character_controller: None,
                     spring_camera: None,
                     animation_tree: None,
+                    navigation: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -1004,6 +1011,7 @@ mod tests {
                     character_controller: None,
                     spring_camera: None,
                     animation_tree: None,
+                    navigation: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,

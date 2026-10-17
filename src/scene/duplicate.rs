@@ -118,6 +118,8 @@ fn copy_components(world: &World, source: Entity) -> hecs::EntityBuilder {
     copy::<PostProcessVolume>(world, source, &mut builder);
     copy::<LightProbeVolume>(world, source, &mut builder);
     crate::physics::edit::clone_components(world, source, &mut builder);
+    #[cfg(feature = "navigation")]
+    crate::navigation::edit::clone_components(world, source, &mut builder);
     copy::<Billboard>(world, source, &mut builder);
     copy::<DepthState>(world, source, &mut builder);
     copy::<RotateAnimation>(world, source, &mut builder);

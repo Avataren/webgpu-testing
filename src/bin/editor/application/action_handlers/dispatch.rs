@@ -188,6 +188,10 @@ pub fn dispatch_action(
             handle_update_light_probe_volume(&mut ctx, entity, component)
         }
         InspectorAction::LightProbes(request) => handle_light_probe_request(&mut ctx, request),
+        #[cfg(feature = "navigation")]
+        InspectorAction::Navigation(request) => {
+            super::navigation::handle_navigation_request(&mut ctx, request)
+        }
 
         // Shader actions
         InspectorAction::EditShader {

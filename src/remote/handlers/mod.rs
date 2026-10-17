@@ -11,6 +11,8 @@ mod graphics;
 mod info;
 mod input;
 mod light_probes;
+#[cfg(feature = "navigation")]
+mod navigation;
 mod procedural;
 mod rendering;
 mod scripting;
@@ -104,6 +106,24 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "debug.physics",
         "Draw every simulated collider ({enabled}); report bodies, steps and gravity",
     ),
+    (
+        "navigation.status",
+        "Navmeshes (tiles, polygons, baked or built), agents, obstacles, a running bake and the last one",
+    ),
+    (
+        "navigation.bake",
+        "Bake a NavMeshSurface's navmesh in the background into content/navigation ({entity})",
+    ),
+    (
+        "navigation.debug",
+        "Draw the navmesh, agents, paths and obstacles ({mesh, agents, paths, obstacles, x_ray, all})",
+    ),
+    (
+        "navigation.path",
+        "A path between two points or entities, drawn in the view ({from, to, show, clear})",
+    ),
+    ("navigation.closest", "The navmesh point nearest a point ({point, radius})"),
+    ("navigation.agents", "Every NavAgent's state, position, speed and destination"),
     ("mesh.lathe", "Revolve a radius/height profile into a UV-mapped mesh"),
     ("mesh.extrude", "Extrude a concave XY polygon with bevel, twist and taper"),
     ("mesh.compose", "Combine transformed procedural shapes into one reusable mesh"),
@@ -313,6 +333,18 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "debug.skeleton" => animation::debug_skeleton(params, ctx),
         "character.make" => animation::make_character(params, ctx),
         "debug.physics" => animation::debug_physics(params, ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.status" => navigation::status(ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.bake" => navigation::bake(params, ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.debug" => navigation::debug(params, ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.path" => navigation::path(params, ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.closest" => navigation::closest(params, ctx),
+        #[cfg(feature = "navigation")]
+        "navigation.agents" => navigation::agents(ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
         "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {
             geometry::generate(method, params, ctx)

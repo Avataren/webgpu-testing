@@ -147,6 +147,11 @@ struct ScriptOutputs {
     pending_environment: Vec<serde_json::Value>,
     /// Physics changes waiting for the scene's simulation.
     physics_commands: Vec<crate::physics::PhysicsCommand>,
+    /// Navigation changes waiting for the scene's agents.
+    #[cfg(feature = "navigation")]
+    navigation_commands: Vec<crate::navigation::NavCommand>,
+    /// Entities waiting for a generated locomotion tree.
+    pending_trees: Vec<Entity>,
 }
 
 impl ScriptOutputs {
@@ -165,6 +170,9 @@ impl ScriptOutputs {
         self.pending_asset_commands.extend(result.asset_commands);
         self.particle_bursts.extend(result.particle_bursts);
         self.physics_commands.extend(result.physics);
+        #[cfg(feature = "navigation")]
+        self.navigation_commands.extend(result.navigation);
+        self.pending_trees.extend(result.generate_trees);
         self.pending_post_process.extend(result.post_process);
         self.pending_environment.extend(result.environment);
 
@@ -984,6 +992,17 @@ impl ScriptingState {
     /// Physics changes scripts asked for since the last call.
     pub fn take_physics_commands(&mut self) -> Vec<crate::physics::PhysicsCommand> {
         std::mem::take(&mut self.outputs.physics_commands)
+    }
+
+    /// Entities scripts asked a locomotion tree for (`animation_tree_generate`).
+    pub fn take_pending_trees(&mut self) -> Vec<Entity> {
+        std::mem::take(&mut self.outputs.pending_trees)
+    }
+
+    /// Navigation changes scripts asked for since the last call.
+    #[cfg(feature = "navigation")]
+    pub fn take_navigation_commands(&mut self) -> Vec<crate::navigation::NavCommand> {
+        std::mem::take(&mut self.outputs.navigation_commands)
     }
 
     /// Call `callback(self_entity, data)` on each entity's script at the start of the

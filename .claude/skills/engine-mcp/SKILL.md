@@ -240,6 +240,15 @@ engine you launched; save first).
   "Third-person controller"). `debug_physics
   {enabled: true}` draws every collider; the editor outlines the selected one. The
   simulation is rebuilt when play starts, so check physics in play mode (`playtest`).
+- Navigation (`docs/navigation.md`): `entity_spawn {name: "NavMesh", nav_mesh_surface: {}}`
+  then `navmesh_bake` (bakes the scene's static geometry, floors over floors stay separate;
+  saved under `content/navigation/`, `project_save` keeps the path). Mark what nobody walks
+  on with `nav_modifier: {walkable: false}` (water, roofs) or `{ignore: true}`, moving
+  props with `nav_obstacle: {}` (steered round, carved once still), jumps and drops with
+  `nav_link: {end}`. Characters get `nav_agent: {speed}`; Lua sends them with
+  `nav_set_destination` and gets `on_nav_arrived`; an animation tree on an agent is fed its
+  speed. `navigation_debug {mesh, agents, paths}` draws it in screenshots,
+  `navigation_path {from, to}` tests a path, `navigation_agents` lists states (play mode).
 - Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`
   writes tileable PNGs (noise, bricks, checker, wood, marble, voronoi) and matching
   normal, height, metallic/roughness and occlusion maps into `content/textures`.
