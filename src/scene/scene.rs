@@ -1083,6 +1083,22 @@ impl Scene {
         #[cfg(feature = "navigation")]
         self.step_navigation(dt, editor_mode);
         self.step_physics(dt, editor_mode);
+        self.step_audio(dt, editor_mode);
+    }
+
+    /// Play mode's sound: the listener follows the camera (or an
+    /// `AudioListener`), `AudioSource`s start, and sounds follow their entities.
+    fn step_audio(&self, dt: f64, editor_mode: bool) {
+        if editor_mode {
+            return;
+        }
+        if let Some(main) = self.nodes.get(self.main_scene) {
+            let world = main.instance().world();
+            let camera = self.active_camera_entity();
+            frame_timings::time("audio", || {
+                crate::audio::update_scene(world, camera, dt as f32)
+            });
+        }
     }
 
     fn has_ai_agents(&self) -> bool {

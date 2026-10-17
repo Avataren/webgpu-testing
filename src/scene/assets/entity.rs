@@ -91,6 +91,9 @@ pub struct SceneAssetEntity {
     /// Navmesh surface, agent, obstacle and modifier.
     #[serde(skip)]
     pub navigation: super::navigation::NavigationData,
+    /// The sound it plays and whether it is the listener.
+    #[serde(skip)]
+    pub audio: super::audio::AudioData,
     #[serde(default)]
     pub camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,6 +211,10 @@ struct SceneAssetEntityData {
     #[cfg(feature = "navigation")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nav_link: Option<crate::navigation::NavLink>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio_source: Option<crate::audio::AudioSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio_listener: Option<crate::audio::AudioListener>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -277,6 +284,10 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             },
             #[cfg(not(feature = "navigation"))]
             navigation: Default::default(),
+            audio: super::audio::AudioData {
+                audio_source: data.audio_source,
+                audio_listener: data.audio_listener,
+            },
             camera: data.camera,
             scene_ref: data.scene_ref,
             skin: data.skin,
@@ -342,6 +353,8 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             nav_modifier: entity.navigation.nav_modifier,
             #[cfg(feature = "navigation")]
             nav_link: entity.navigation.nav_link,
+            audio_source: entity.audio.audio_source,
+            audio_listener: entity.audio.audio_listener,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,
@@ -724,6 +737,7 @@ impl SceneAssetEntity {
                 .ok()
                 .map(|agent| (*agent).clone()),
             navigation: super::navigation::NavigationData::capture(world, entity),
+            audio: super::audio::AudioData::capture(world, entity),
             camera,
             scene_ref: None,
             skin,

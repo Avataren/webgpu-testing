@@ -48,10 +48,31 @@ impl BusLayout {
     }
 }
 
-/// The buses of a project, master first.
+/// The project-wide settings of positional sound.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpatialLayout {
+    /// Pitch shifts from motion; each `AudioSource` also has its own scale.
+    pub doppler: bool,
+    /// World units per second (343 for metres).
+    pub speed_of_sound: f32,
+}
+
+impl Default for SpatialLayout {
+    fn default() -> Self {
+        Self {
+            doppler: true,
+            speed_of_sound: 343.0,
+        }
+    }
+}
+
+/// The buses of a project, master first, and its spatial settings.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MixerLayout {
     pub buses: Vec<BusLayout>,
+    #[serde(default)]
+    pub spatial: SpatialLayout,
 }
 
 impl Default for MixerLayout {
@@ -61,6 +82,7 @@ impl Default for MixerLayout {
                 .into_iter()
                 .map(BusLayout::named)
                 .collect(),
+            spatial: SpatialLayout::default(),
         }
     }
 }

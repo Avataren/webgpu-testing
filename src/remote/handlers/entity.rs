@@ -63,6 +63,8 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "nav_obstacle",
     "nav_modifier",
     "nav_link",
+    "audio_source",
+    "audio_listener",
     "ai_agent",
     "animation_tree",
     "billboard",
@@ -102,6 +104,7 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
             crate::navigation::edit::has_component(world, entity, name)
         }
         "ai_agent" => crate::ai::edit::has_component(world, entity),
+        "audio_source" | "audio_listener" => crate::audio::edit::has_component(world, entity, name),
         "animation_tree" => has::<AnimationTree>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
@@ -474,6 +477,11 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     #[cfg(feature = "navigation")]
     for name in crate::navigation::edit::COMPONENT_NAMES {
         if let Some(value) = crate::navigation::edit::component_json(world, entity, name) {
+            out[name] = value;
+        }
+    }
+    for name in crate::audio::edit::COMPONENT_NAMES {
+        if let Some(value) = crate::audio::edit::component_json(world, entity, name) {
             out[name] = value;
         }
     }
@@ -1066,6 +1074,12 @@ pub(super) fn apply_patch(
             "ai_agent" => {
                 crate::ai::edit::patch_component(ctx.gpu.scene.main_world_mut(), entity, value)?
             }
+            "audio_source" | "audio_listener" => crate::audio::edit::patch_component(
+                ctx.gpu.scene.main_world_mut(),
+                entity,
+                key,
+                value,
+            )?,
             "animation_tree" => patch_animation_tree(ctx, entity, value)?,
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),
@@ -1969,6 +1983,9 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         #[cfg(not(feature = "navigation"))]
         "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {}
         "ai_agent" => remove::<crate::ai::AiAgent>(world, entity),
+        "audio_source" | "audio_listener" => {
+            let _ = crate::audio::edit::patch_component(world, entity, component, &Value::Null);
+        }
         "animation_tree" => remove::<AnimationTree>(world, entity),
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),

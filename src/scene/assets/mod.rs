@@ -1,4 +1,5 @@
 // Submodules
+mod audio;
 mod builder;
 mod core;
 mod entity;
@@ -518,6 +519,7 @@ mod tests {
                 animation_tree: None,
                 ai_agent: None,
                 navigation: Default::default(),
+                audio: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -596,6 +598,7 @@ mod tests {
                 animation_tree: None,
                 ai_agent: None,
                 navigation: Default::default(),
+                audio: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -743,6 +746,7 @@ mod tests {
                 animation_tree: None,
                 ai_agent: None,
                 navigation: Default::default(),
+                audio: Default::default(),
                 camera: None,
                 scene_ref: None,
                 skin: None,
@@ -855,6 +859,7 @@ mod tests {
                     animation_tree: None,
                     ai_agent: None,
                     navigation: Default::default(),
+                    audio: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -896,6 +901,7 @@ mod tests {
                     animation_tree: None,
                     ai_agent: None,
                     navigation: Default::default(),
+                    audio: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -982,6 +988,7 @@ mod tests {
                     animation_tree: None,
                     ai_agent: None,
                     navigation: Default::default(),
+                    audio: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,
@@ -1023,6 +1030,7 @@ mod tests {
                     animation_tree: None,
                     ai_agent: None,
                     navigation: Default::default(),
+                    audio: Default::default(),
                     camera: None,
                     scene_ref: None,
                     skin: None,

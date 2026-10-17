@@ -228,7 +228,7 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "view.preview",
         "Lay the game out at another view shape ({aspect} or {size: [w, h]}; {} restores)",
     ),
-    ("audio.play", "Play a sound file (volume, pitch, loop, bus)"),
+    ("audio.play", "Play a sound file (volume, pitch, loop, bus; position and spatial settings place it in the world)"),
     ("audio.stop", "Stop one sound, or all"),
     (
         "audio.inspect",
@@ -593,10 +593,41 @@ fn audio_play(params: &Value) -> RemoteResult {
         pitch: opt_f64(params, "pitch").unwrap_or(1.0) as f32,
         looped: opt_bool(params, "loop").unwrap_or(false),
         bus: opt_str(params, "bus").map(str::to_string),
+        spatial: spatial_options(params)?,
+        ..Default::default()
     };
     let since = crate::audio::next_id();
     let id = crate::audio::play(path, options)?;
     Ok(json!({ "id": id, "played": crate::audio::history(since)[0].clone() }))
+}
+
+/// A positioned play: `position` (with optional `spatial` "auto" | "2d" | "3d",
+/// `min_distance`, `max_distance`, `rolloff` "inverse" | "linear", `doppler`).
+fn spatial_options(params: &Value) -> Result<Option<crate::audio::SpatialOptions>, String> {
+    use super::json::{opt_f64, opt_str};
+    let Some(position) = params.get("position") else {
+        return Ok(None);
+    };
+    let mut spatial =
+        crate::audio::SpatialOptions::at(super::json::vec3_from_json(position)?.to_array());
+    if let Some(mode) = opt_str(params, "spatial") {
+        spatial.mode = serde_json::from_value(json!(mode))
+            .map_err(|_| format!("spatial must be auto, 2d, 3d or off, not {mode:?}"))?;
+    }
+    if let Some(rolloff) = opt_str(params, "rolloff") {
+        spatial.rolloff = serde_json::from_value(json!(rolloff))
+            .map_err(|_| format!("rolloff must be inverse or linear, not {rolloff:?}"))?;
+    }
+    if let Some(v) = opt_f64(params, "min_distance") {
+        spatial.min_distance = v as f32;
+    }
+    if let Some(v) = opt_f64(params, "max_distance") {
+        spatial.max_distance = v as f32;
+    }
+    if let Some(v) = opt_f64(params, "doppler") {
+        spatial.doppler = v as f32;
+    }
+    Ok(Some(spatial))
 }
 
 /// `audio.bus {bus, gain_db?, pan?, mute?, solo?, save?}`

@@ -293,8 +293,8 @@ impl Output {
         }
     }
 
-    /// Posts the commands sent so far.
-    fn flush(&mut self) {
+    /// Posts the commands sent so far, as one message.
+    pub(super) fn flush(&mut self) {
         if !self.commands.is_empty() {
             let bytes = std::mem::take(&mut self.commands);
             self.post(Outgoing::Commands(bytes));
@@ -375,6 +375,7 @@ impl Output {
         id: u64,
         path: &Path,
         options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
         _master_volume: f32,
     ) -> Result<bool, String> {
         if let Some(ClipState::Failed(err)) = self.clips.get(path) {
@@ -391,6 +392,8 @@ impl Output {
             gain: options.volume.max(0.0),
             pitch: options.pitch,
             looped: options.looped,
+            priority: options.priority,
+            spatial,
             ..Play::new(VoiceId(id), ClipId(0), bus)
         };
         self.voices.insert(id);
@@ -407,6 +410,32 @@ impl Output {
         }
         self.flush();
         Ok(true)
+    }
+
+    pub(super) fn set_listener(&mut self, listener: cubed_mixer::Listener) {
+        if matches!(self.context, Some(Some(_))) {
+            self.send(Command::SetListener(listener));
+        }
+    }
+
+    /// Moves a voice; a play still waiting for its file starts from there.
+    pub(super) fn move_voice(&mut self, id: u64, position: [f32; 3], velocity: [f32; 3]) {
+        if let Some((_, play)) = self.waiting.iter_mut().find(|(_, p)| p.voice.0 == id) {
+            if let Some(spatial) = &mut play.spatial {
+                spatial.position = position;
+                spatial.velocity = velocity;
+            }
+        } else if self.voices.contains(&id) {
+            self.send(Command::SetVoicePosition {
+                voice: VoiceId(id),
+                position,
+                velocity,
+            });
+        }
+    }
+
+    pub(super) fn is_playing(&self, id: u64) -> bool {
+        self.voices.contains(&id)
     }
 
     fn stop_fade(&self) -> u32 {

@@ -216,6 +216,19 @@ pub fn handle_set_physics(
             }
         };
     }
+    if wgpu_cube::audio::edit::canonical_name(component).is_some() {
+        let before = wgpu_cube::audio::edit::component_json(world, entity, component);
+        if before.as_ref() == Some(&value) || (before.is_none() && value.is_null()) {
+            return ActionResult::no_change();
+        }
+        return match wgpu_cube::audio::edit::patch_component(world, entity, component, &value) {
+            Ok(()) => ActionResult::scene_changed(),
+            Err(err) => {
+                log::warn!("Cannot change {component} of {entity:?}: {err}");
+                ActionResult::no_change()
+            }
+        };
+    }
     #[cfg(feature = "navigation")]
     if wgpu_cube::navigation::edit::canonical_name(component).is_some() {
         let before = wgpu_cube::navigation::edit::component_json(world, entity, component);

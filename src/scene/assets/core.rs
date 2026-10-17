@@ -525,6 +525,7 @@ impl SceneAsset {
                 builder.add(component.clone());
             }
             entity.navigation.add_to(&mut builder);
+            entity.audio.add_to(&mut builder);
 
             builders.push(builder);
         }

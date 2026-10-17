@@ -19,10 +19,13 @@
 //! first clicks or presses a key; sounds played before that start then. Without an
 //! output device sounds are recorded in the history but not heard.
 
+pub mod components;
+pub mod edit;
 mod layout;
 mod mix;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod scene;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
@@ -32,7 +35,8 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-pub use layout::{BusLayout, MixerLayout, DEFAULT_BUS, LAYOUT_FILE, MASTER};
+pub use components::{AudioListener, AudioSource, RolloffSetting, SpatialSetting};
+pub use layout::{BusLayout, MixerLayout, SpatialLayout, DEFAULT_BUS, LAYOUT_FILE, MASTER};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::decode_pcm;
@@ -55,6 +59,63 @@ pub struct PlayOptions {
     pub looped: bool,
     /// The bus to play on; `None` is [`DEFAULT_BUS`].
     pub bus: Option<String>,
+    /// Who loses when a bus runs out of voices: lower priorities first.
+    pub priority: u8,
+    /// Where it plays from; `None` plays it as it is.
+    pub spatial: Option<SpatialOptions>,
+}
+
+/// Where a sound plays from, and how it fades with distance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpatialOptions {
+    /// `Off` plays it as it is; `Auto` is 2D or 3D after the listener's camera.
+    pub mode: SpatialSetting,
+    pub position: [f32; 3],
+    /// World units per second, for doppler.
+    pub velocity: [f32; 3],
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub rolloff: RolloffSetting,
+    /// Scales the doppler shift; 0 turns it off for this sound.
+    pub doppler: f32,
+}
+
+impl SpatialOptions {
+    /// At `position`, with an `AudioSource`'s defaults.
+    pub fn at(position: [f32; 3]) -> SpatialOptions {
+        let defaults = AudioSource::default();
+        SpatialOptions {
+            mode: defaults.spatial,
+            position,
+            velocity: [0.0; 3],
+            min_distance: defaults.min_distance,
+            max_distance: defaults.max_distance,
+            rolloff: defaults.rolloff,
+            doppler: defaults.doppler,
+        }
+    }
+}
+
+impl PlayOptions {
+    /// How an `AudioSource` at `position` plays.
+    pub fn from_source(source: &AudioSource, position: [f32; 3]) -> PlayOptions {
+        PlayOptions {
+            volume: source.volume.max(0.0),
+            pitch: source.pitch,
+            looped: source.looped,
+            bus: (!source.bus.is_empty()).then(|| source.bus.clone()),
+            priority: source.priority,
+            spatial: (source.spatial != SpatialSetting::Off).then_some(SpatialOptions {
+                mode: source.spatial,
+                position,
+                velocity: [0.0; 3],
+                min_distance: source.min_distance,
+                max_distance: source.max_distance,
+                rolloff: source.rolloff,
+                doppler: source.doppler,
+            }),
+        }
+    }
 }
 
 impl Default for PlayOptions {
@@ -64,6 +125,8 @@ impl Default for PlayOptions {
             pitch: 1.0,
             looped: false,
             bus: None,
+            priority: 128,
+            spatial: None,
         }
     }
 }
@@ -87,6 +150,10 @@ struct Audio {
     output: Output,
     /// The project whose bus layout is applied (`Some(None)`: no project).
     layout_root: Option<Option<PathBuf>>,
+    /// The listener's camera is orthographic: `Auto` sounds play in 2D.
+    listener_planar: bool,
+    /// Play mode's listener, sources and entity-attached sounds.
+    scene: scene::SceneAudio,
 }
 
 impl Audio {
@@ -98,6 +165,8 @@ impl Audio {
             history: VecDeque::new(),
             output: Output::default(),
             layout_root: None,
+            listener_planar: false,
+            scene: scene::SceneAudio::default(),
         }
     }
 
@@ -167,25 +236,124 @@ pub fn resolve_path(path: &str) -> Result<PathBuf, String> {
 /// sound is recorded but silent.
 pub fn play(path: &str, options: PlayOptions) -> Result<u64, String> {
     let path = resolve_path(path)?;
+    with_audio(|audio| audio.play(path, options))
+}
+
+/// Like [`play`], and the sound follows `entity` as it moves (in play mode).
+pub fn play_attached(
+    path: &str,
+    options: PlayOptions,
+    entity: hecs::Entity,
+) -> Result<u64, String> {
+    let path = resolve_path(path)?;
     with_audio(|audio| {
-        let id = audio.next_id;
-        let audible = audio
+        let position = options.spatial.map(|s| s.position).unwrap_or_default();
+        let id = audio.play(path, options)?;
+        audio.scene.attach(id, entity, position);
+        Ok(id)
+    })
+}
+
+/// Starts an entity's `AudioSource` at `position` (scripts' `play_audio_source`);
+/// a spatial one follows the entity.
+pub fn play_source(
+    entity: hecs::Entity,
+    source: &AudioSource,
+    position: [f32; 3],
+) -> Result<u64, String> {
+    let path = resolve_path(&source.clip)?;
+    with_audio(|audio| {
+        let options = PlayOptions::from_source(source, position);
+        let spatial = options.spatial.is_some();
+        let id = audio.play(path, options)?;
+        audio.scene.started(entity, id, spatial.then_some(position));
+        Ok(id)
+    })
+}
+
+/// Stops the sound an entity's `AudioSource` is playing. Returns whether it was.
+pub fn stop_source(entity: hecs::Entity) -> bool {
+    with_audio(|audio| match audio.scene.voice_of(entity) {
+        Some(id) => audio.output.stop(id),
+        None => false,
+    })
+}
+
+/// Moves a playing spatial sound (with its velocity, for doppler).
+pub fn move_sound(id: u64, position: [f32; 3], velocity: [f32; 3]) {
+    with_audio(|audio| {
+        audio.output.move_voice(id, position, velocity);
+        audio.output.flush();
+    });
+}
+
+/// Play mode's sound for this frame: the listener follows an `AudioListener`
+/// (or `camera`), `AudioSource`s start, and sounds attached to entities follow
+/// them.
+pub(crate) fn update_scene(world: &hecs::World, camera: Option<hecs::Entity>, dt: f32) {
+    // Nothing to do (and no device to open) for a scene without sound.
+    let idle = AUDIO.with(|cell| cell.borrow().is_none())
+        && world.query::<&AudioSource>().iter().next().is_none();
+    if idle {
+        return;
+    }
+    with_audio(|audio| scene::update(audio, world, camera, dt));
+}
+
+/// The range rings of the selected entities' `AudioSource`s, for the editor.
+pub(crate) fn debug_geometry(
+    world: &hecs::World,
+    selected: &[hecs::Entity],
+) -> Option<crate::renderer::debug_draw::DebugGeometry> {
+    scene::debug_geometry(world, selected)
+}
+
+impl Audio {
+    fn play(&mut self, path: PathBuf, options: PlayOptions) -> Result<u64, String> {
+        let id = self.next_id;
+        let spatial = self.spatial(options.spatial.as_ref());
+        let audible = self
             .output
-            .play(id, &path, &options, audio.master_volume)?;
-        audio.next_id += 1;
-        let time = audio.started.elapsed().as_secs_f64();
-        audio.history.push_back(Played {
+            .play(id, &path, &options, spatial, self.master_volume)?;
+        self.next_id += 1;
+        let time = self.started.elapsed().as_secs_f64();
+        self.history.push_back(Played {
             id,
             path,
             options,
             time,
             audible,
         });
-        while audio.history.len() > HISTORY_LEN {
-            audio.history.pop_front();
+        while self.history.len() > HISTORY_LEN {
+            self.history.pop_front();
         }
         Ok(id)
-    })
+    }
+
+    /// The mixer's placement for a sound: `Auto` becomes 2D or 3D after the
+    /// listener's camera.
+    fn spatial(&self, options: Option<&SpatialOptions>) -> Option<cubed_mixer::Spatial> {
+        let o = options?;
+        let mode = match o.mode {
+            SpatialSetting::Off => return None,
+            SpatialSetting::Planar => cubed_mixer::SpatialMode::Planar,
+            SpatialSetting::Full => cubed_mixer::SpatialMode::Full,
+            SpatialSetting::Auto if self.listener_planar => cubed_mixer::SpatialMode::Planar,
+            SpatialSetting::Auto => cubed_mixer::SpatialMode::Full,
+        };
+        Some(cubed_mixer::Spatial {
+            mode,
+            position: o.position,
+            velocity: o.velocity,
+            min_distance: o.min_distance.max(0.001),
+            max_distance: o.max_distance.max(o.min_distance),
+            rolloff: match o.rolloff {
+                RolloffSetting::Inverse => cubed_mixer::Rolloff::Inverse,
+                RolloffSetting::Linear => cubed_mixer::Rolloff::Linear,
+            },
+            doppler: o.doppler.max(0.0),
+        })
+    }
 }
 
 /// Stop one sound (with a few milliseconds' fade). Returns whether it was still playing.
@@ -199,6 +367,7 @@ pub fn stop_all() {
     AUDIO.with(|cell| {
         if let Some(audio) = cell.borrow_mut().as_mut() {
             audio.output.stop_all();
+            audio.scene.clear();
         }
     });
 }
@@ -249,6 +418,10 @@ pub fn history(since: u64) -> Value {
                     "id": played.id,
                     "path": path.display().to_string(),
                     "bus": played.options.bus.as_deref().unwrap_or(DEFAULT_BUS),
+                    "spatial": played.options.spatial.map(|s| json!({
+                        "mode": s.mode,
+                        "position": s.position,
+                    })),
                     "volume": played.options.volume,
                     "pitch": played.options.pitch,
                     "loop": played.options.looped,

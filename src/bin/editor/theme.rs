@@ -90,6 +90,8 @@ pub mod icons {
     #[cfg(feature = "navigation")]
     pub const NAV_LINK: &str = "🔗";
     pub const AI: &str = "🧠";
+    pub const AUDIO_SOURCE: &str = "🔊";
+    pub const AUDIO_LISTENER: &str = "👂";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

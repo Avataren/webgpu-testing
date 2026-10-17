@@ -259,6 +259,7 @@ impl SceneAssetEntityBuilder {
             animation_tree: None,
             ai_agent: None,
             navigation: Default::default(),
+            audio: Default::default(),
             source_entity: None,
         }
     }

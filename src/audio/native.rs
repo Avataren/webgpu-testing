@@ -153,6 +153,7 @@ impl Output {
         id: u64,
         path: &Path,
         options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
         _master_volume: f32,
     ) -> Result<bool, String> {
         self.poll();
@@ -166,9 +167,35 @@ impl Output {
             gain: options.volume.max(0.0),
             pitch: options.pitch,
             looped: options.looped,
+            priority: options.priority,
+            spatial,
             ..Play::new(VoiceId(id), clip, bus)
         }));
         Ok(true)
+    }
+
+    pub(super) fn set_listener(&mut self, listener: cubed_mixer::Listener) {
+        self.send_if_open([Command::SetListener(listener)]);
+    }
+
+    pub(super) fn move_voice(&mut self, id: u64, position: [f32; 3], velocity: [f32; 3]) {
+        if self.voices.contains_key(&id) {
+            self.send_if_open([Command::SetVoicePosition {
+                voice: VoiceId(id),
+                position,
+                velocity,
+            }]);
+        }
+    }
+
+    /// Whether the voice may still be playing (as of the last poll).
+    pub(super) fn is_playing(&self, id: u64) -> bool {
+        self.voices.contains_key(&id)
+    }
+
+    /// Commands go out as they are sent natively.
+    pub(super) fn flush(&mut self) {
+        self.poll();
     }
 
     fn stop_fade(&self) -> u32 {

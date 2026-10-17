@@ -131,6 +131,16 @@ impl RenderBridge {
                 }
                 (navigation, ai) => navigation.or(ai),
             };
+            let geometry = match (
+                geometry,
+                crate::audio::debug_geometry(scene.main_world(), &selected),
+            ) {
+                (Some(mut geometry), Some(audio)) => {
+                    geometry.append(audio);
+                    Some(geometry)
+                }
+                (geometry, audio) => geometry.or(audio),
+            };
             if let Some(geometry) = geometry {
                 renderer.set_debug_geometry(geometry);
             }

@@ -889,14 +889,35 @@ Modules should only define things when loaded. Spawn entities and play sounds fr
 the script calls in its hooks.
 
 ### Audio
-- `play_sound(path[, {volume = 1, pitch = 1, loop = false, bus = "sfx"}])` → `id` - Play a
-  wav, ogg, mp3 or flac file. Paths are relative to the project (`"content/audio/hit.wav"`)
-  or absolute. `pitch` is the playback speed. `bus` is the mixer bus it plays on.
+- `play_sound(path[, {volume = 1, pitch = 1, loop = false, bus = "sfx", priority = 128,
+  entity, position, spatial, min_distance, max_distance, rolloff, doppler}])` → `id` - Play
+  a wav, ogg, mp3 or flac file. Paths are relative to the project
+  (`"content/audio/hit.wav"`) or absolute. `pitch` is the playback speed. `bus` is the
+  mixer bus it plays on. The rest place it in the world (below).
+- `move_sound(id, position[, velocity])` - Move a sound played at a position
+- `play_audio_source(entity)` / `stop_audio_source(entity)` - Start or stop an entity's
+  `AudioSource`
 - `stop_sound(id)` - Stop one sound (with a 5 ms fade, so it does not click)
 - `stop_all_sounds()` - Stop everything
 - `set_master_volume(volume)` - Gain applied to every sound, on top of the master fader
 - `set_bus_volume(bus, db)` - A bus's fader in dB (0 unchanged, -80 silent)
 - `set_bus_muted(bus, muted)` - Mute or unmute a bus
+
+Sounds can play from a place in the world. `play_sound(path, {entity = e})` plays from
+an entity and follows it; `{position = {x, y, z}}` plays from a point, which
+`move_sound(id, position[, velocity])` moves. Options for both: `spatial` ("auto", the
+default: 2D under an orthographic camera, else 3D; "2d"; "3d"; "off"), `min_distance`
+(full volume within, 1), `max_distance` (50), `rolloff` ("inverse": min/distance, stops
+falling at max; "linear": silent at max) and `doppler` (pitch shift from motion; 1, or 0
+for none). In 3D a sound pans by direction and softens behind the listener; in 2D the
+depth along the camera's view does not count and it pans by its offset across the
+screen. The listener is the active camera, or an entity with an `AudioListener`.
+
+An entity's `AudioSource` component (clip, bus, volume, pitch, loop, play_on_start and
+the spatial settings above) plays from it in play mode: at the start, or when a script
+calls `play_audio_source(entity)`; `stop_audio_source(entity)` stops it. Set them up in
+the inspector (Add Component > Audio) or with `set_component(e, "AudioSource", {clip =
+"content/audio/hum.wav", loop = true})`.
 
 Every sound plays on a bus of the project's mixer: `sfx` unless it names another. The
 default buses are `master`, `music`, `sfx`, `ambience`, `ui` and `voice`, each feeding

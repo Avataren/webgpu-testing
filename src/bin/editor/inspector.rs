@@ -41,6 +41,7 @@ use crate::theme::{self, icons};
 
 mod ai;
 mod animation;
+mod audio;
 #[cfg(feature = "navigation")]
 mod navigation;
 mod physics;
@@ -437,6 +438,7 @@ pub fn show_entity_inspector(
     physics::show_physics_sections(ui, entity, components, &mut actions);
     #[cfg(feature = "navigation")]
     navigation::show_navigation_sections(ui, entity, components, navigation_status, &mut actions);
+    audio::show_audio_sections(ui, entity, components, &mut actions);
     ai::show_ai_section(ui, entity, components, ai_status, &mut actions);
 
     animation::show_animation_sections(
@@ -600,6 +602,7 @@ fn add_component_menu(
     navigation::add_navigation_menu(ui, entity, components, actions);
     ai::add_ai_menu(ui, entity, components, actions);
     animation::add_animation_menu(ui, entity, components, actions);
+    audio::add_audio_menu(ui, entity, components, actions);
 }
 
 fn show_transform_section(

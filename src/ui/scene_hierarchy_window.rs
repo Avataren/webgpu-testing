@@ -218,6 +218,8 @@ pub struct SceneEntityComponentsSummary {
     #[cfg(feature = "navigation")]
     pub nav_link: Option<crate::navigation::NavLink>,
     pub ai_agent: Option<crate::ai::AiAgent>,
+    pub audio_source: Option<crate::audio::AudioSource>,
+    pub audio_listener: Option<crate::audio::AudioListener>,
 }
 
 #[cfg(feature = "egui")]
@@ -389,6 +391,12 @@ impl SceneHierarchySnapshot {
                         .map(|component| (*component).clone()),
                     ai_agent: entity_ref
                         .get::<&crate::ai::AiAgent>()
+                        .map(|component| (*component).clone()),
+                    audio_source: entity_ref
+                        .get::<&crate::audio::AudioSource>()
+                        .map(|component| (*component).clone()),
+                    audio_listener: entity_ref
+                        .get::<&crate::audio::AudioListener>()
                         .map(|component| (*component).clone()),
                 },
             );
