@@ -1850,6 +1850,7 @@ impl PostProcess {
                     normal: &self.normal_source.view,
                     position: &self.position_source.view,
                     sampler: &self.sampler_linear,
+                    depth: ssao_depth,
                 },
             );
         }

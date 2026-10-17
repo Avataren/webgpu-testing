@@ -35,6 +35,9 @@ var rt_scene_sampler : sampler;
 var rt_opaque_scene : texture_2d<f32>;
 @group(1) @binding(175)
 var rt_particle_scene : texture_2d<f32>;
+// The scene's depth (single-sample), the G-buffer's size: where reflected rays start.
+@group(1) @binding(176)
+var rt_scene_depth : texture_depth_2d;
 
 // Hit surfaces at least this smooth get a second reflection ray (a mirror seen in a
 // mirror). It is not blurred by the surface's roughness, so rougher surfaces would show a
@@ -322,7 +325,9 @@ fn fs_rt_reflection_trace(in : VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let n = decode_normal_oct(textureLoad(rt_gbuffer_normal, pixel, 0).xy);
-    let origin = position.xyz;
+    // From the depth buffer: from about 16 m from the origin the G-buffer's rounding can
+    // outgrow the offset below and start rays inside the surface.
+    let origin = gbuffer_precise_position(rt_scene_depth, pixel, dims, position.xyz);
     rt_rng_state = (u32(pixel.x) * 1973u + u32(pixel.y) * 9277u + u32(post_uniform.output.z) * 26699u) | 1u;
     let v = normalize(origin - post_uniform.camera_position.xyz);
     let r = reflect(v, n);

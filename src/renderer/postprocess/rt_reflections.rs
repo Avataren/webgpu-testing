@@ -32,6 +32,9 @@ pub struct RtReflectionInputs<'a> {
     /// are traced): where they differ, particles cover the screen.
     pub opaque: &'a wgpu::TextureView,
     pub particles: &'a wgpu::TextureView,
+    /// The scene's single-sample depth (the resolved copy under MSAA): reflected rays
+    /// start from the position it gives, which is more precise than `position`'s.
+    pub depth: &'a wgpu::TextureView,
 }
 
 /// The trace shader: post-processing helpers plus the main pass's material, lighting and
@@ -94,6 +97,16 @@ impl RtReflectionStage {
                 sampler_entry(173),
                 unfilterable(174),
                 unfilterable(175),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 176,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -182,6 +195,7 @@ impl RtReflectionStage {
                     },
                     texture(174, inputs.opaque),
                     texture(175, inputs.particles),
+                    texture(176, inputs.depth),
                 ],
             })
         };

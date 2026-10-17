@@ -50,28 +50,6 @@ fn rt_ao_blocked(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> b
     return rayQueryGetCommittedIntersection(&query).kind != RAY_QUERY_INTERSECTION_NONE;
 }
 
-// The surface at G-buffer `pixel` at full precision: rebuilt from the depth buffer through
-// the jittered camera the G-buffer was drawn with. The G-buffer's half-float position is
-// rounded to steps of 4-8 mm between 4 and 16 m from the origin, enough to put it behind
-// the surface, where every ray hits the surface itself (stripes of full occlusion across
-// characters away from the origin). Where depth shows another surface than the G-buffer
-// (further than that rounding allows), the G-buffer's `rounded` position stands.
-fn rt_ao_surface(pixel : vec2<i32>, dims : vec2<i32>, rounded : vec3<f32>) -> vec3<f32> {
-    let depth = textureLoad(rt_ao_depth, pixel, 0);
-    if depth >= 1.0 {
-        return rounded;
-    }
-    let viewport_uv = scene_to_viewport_uv((vec2<f32>(pixel) + 0.5) / vec2<f32>(dims));
-    let ndc = vec2<f32>(viewport_uv.x * 2.0 - 1.0, 1.0 - viewport_uv.y * 2.0);
-    let world = post_uniform.view_proj_inv * vec4<f32>(ndc, depth, 1.0);
-    let position = world.xyz / world.w;
-    let largest = max(abs(rounded.x), max(abs(rounded.y), abs(rounded.z)));
-    if distance(position, rounded) > 0.01 + 2e-3 * largest {
-        return rounded;
-    }
-    return position;
-}
-
 @fragment
 fn fs_rt_ao(in : VertexOutput) -> @location(0) vec4<f32> {
     if post_uniform.effects.x < 0.5 {
@@ -83,7 +61,9 @@ fn fs_rt_ao(in : VertexOutput) -> @location(0) vec4<f32> {
     if position.w < 0.5 {
         return vec4<f32>(1.0);
     }
-    let surface = rt_ao_surface(pixel, dims, position.xyz);
+    // From the depth buffer: the G-buffer's rounding would start rays inside the surface
+    // (stripes of full occlusion across characters away from the origin).
+    let surface = gbuffer_precise_position(rt_ao_depth, pixel, dims, position.xyz);
     let n = decode_normal_oct(textureLoad(rt_ao_normal, pixel, 0).xy);
     let distance_to_camera = distance(post_uniform.camera_position.xyz, surface);
     let origin = surface + n * (0.005 + 0.001 * distance_to_camera);

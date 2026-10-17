@@ -93,6 +93,34 @@ fn scene_to_viewport_uv(uv : vec2<f32>) -> vec2<f32> {
     return (uv - post_uniform.viewport_offset) / scale;
 }
 
+// The surface at G-buffer `pixel` (of `dims`) at full precision, for rays to start from:
+// rebuilt from the scene's single-sample `depth` (the G-buffer's size) through the
+// jittered camera the G-buffer was drawn with. The G-buffer's half-float position
+// `rounded` is off by up to half a step of 3.9 mm from 4 m from the origin, 7.8 mm from
+// 8 m, 15.6 mm from 16 m, which can put it behind the surface, where a ray hits the
+// surface itself. Where depth shows another surface than the G-buffer (further than that
+// rounding allows), `rounded` stands.
+fn gbuffer_precise_position(
+    depth : texture_depth_2d,
+    pixel : vec2<i32>,
+    dims : vec2<i32>,
+    rounded : vec3<f32>,
+) -> vec3<f32> {
+    let z = textureLoad(depth, pixel, 0);
+    if z >= 1.0 {
+        return rounded;
+    }
+    let viewport_uv = scene_to_viewport_uv((vec2<f32>(pixel) + 0.5) / vec2<f32>(dims));
+    let ndc = vec2<f32>(viewport_uv.x * 2.0 - 1.0, 1.0 - viewport_uv.y * 2.0);
+    let world = post_uniform.view_proj_inv * vec4<f32>(ndc, z, 1.0);
+    let position = world.xyz / world.w;
+    let largest = max(abs(rounded.x), max(abs(rounded.y), abs(rounded.z)));
+    if distance(position, rounded) > 0.01 + 2e-3 * largest {
+        return rounded;
+    }
+    return position;
+}
+
 // While upscaling, output-resolution passes read the G-buffer and occlusion from the
 // smaller scene region at the same origin. Identity when not upscaling.
 
