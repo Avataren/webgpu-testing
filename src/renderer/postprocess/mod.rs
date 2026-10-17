@@ -1824,7 +1824,12 @@ impl PostProcess {
             },
         );
         if let Some(stage) = self.rt_ao_stage.as_mut() {
-            stage.ensure_bind_groups(device, &self.normal_source.view, &self.position_source.view);
+            stage.ensure_bind_groups(
+                device,
+                &self.normal_source.view,
+                &self.position_source.view,
+                ssao_depth,
+            );
         }
         if let Some(stage) = self.rt_reflection_stage.as_mut() {
             // Without traced particles one texture stands in for both, so nothing differs

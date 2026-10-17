@@ -4,8 +4,9 @@ use crate::renderer::{PipelineBuilder, ShaderBuilder};
 use super::{begin_color_pass, fullscreen_vertex, ColorAttachment};
 
 /// Ray-traced ambient occlusion: traces short hemisphere rays from every G-buffer pixel
-/// into the occlusion texture SSAO uses, so [`super::ssao::SsaoStage::blur`] and the
-/// composite finish it the same way.
+/// (placed by the depth buffer, which is more precise than the half-float G-buffer
+/// position) into the occlusion texture SSAO uses, so [`super::ssao::SsaoStage::blur`]
+/// and the composite finish it the same way.
 pub struct RtAoStage {
     inputs_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
@@ -55,7 +56,20 @@ impl RtAoStage {
         };
         let inputs_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("RtAoInputsLayout"),
-            entries: &[unfilterable(180), unfilterable(181)],
+            entries: &[
+                unfilterable(180),
+                unfilterable(181),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 182,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("RtAoShader"),
@@ -100,11 +114,13 @@ impl RtAoStage {
         self.inputs_bind_group = None;
     }
 
+    /// `depth` is single-sample (the resolved copy under MSAA).
     pub fn ensure_bind_groups(
         &mut self,
         device: &wgpu::Device,
         normal: &wgpu::TextureView,
         position: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
     ) {
         self.inputs_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("RtAoInputsBindGroup"),
@@ -117,6 +133,10 @@ impl RtAoStage {
                 wgpu::BindGroupEntry {
                     binding: 181,
                     resource: wgpu::BindingResource::TextureView(position),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 182,
+                    resource: wgpu::BindingResource::TextureView(depth),
                 },
             ],
         }));
