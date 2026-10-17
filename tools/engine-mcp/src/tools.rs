@@ -774,7 +774,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "graphics_get",
-            description: "The player's graphics settings (what the engine's settings page shows: display mode, window size, vsync, anti-aliasing, render scale and upscaler, ray-traced shadows/reflections/AO/refraction, FPS readout), whether the page is open, and what the GPU supports. Saved per game and user; they replace the scene volumes' anti_aliasing, upscaling and ray-tracing choices.",
+            description: "The player's graphics settings (what the engine's settings page shows: display mode, window size, vsync, anti-aliasing, render scale and upscaler, the ray tracing master switch, ray-traced shadows/reflections/AO/refraction, FPS readout), whether the page is open, and what the GPU supports. Saved per game and user; they replace the scene volumes' anti_aliasing, upscaling and ray-tracing choices.",
             schema: empty(),
             action: Action::Engine("graphics.get"),
         },
@@ -789,6 +789,7 @@ pub fn tools() -> Vec<Tool> {
                 "render_scale": { "type": "number", "description": "0.25-1: 1 native, 0.67 FSR quality, 0.5 performance" },
                 "upscaler": { "type": "string", "enum": ["fsr", "taau"] },
                 "sharpness": { "type": "number", "description": "FSR sharpening 0-1" },
+                "ray_tracing": { "type": "boolean", "description": "Hardware ray tracing at all (default true). false: every effect takes its raster version (shadow maps, screen-space reflections and AO, see-through glass, no traced GI or path tracing) and light probes show their bakes, as on a GPU without ray tracing (or the web); the individual choices are kept for when it is switched back on" },
                 "ray_traced_shadows": { "type": "boolean" },
                 "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
                 "ambient_occlusion": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },

@@ -308,6 +308,8 @@ struct Volume {
     has_data: bool,
     /// The baked file the region was loaded from.
     baked_source: Option<String>,
+    /// Live updates replaced (some of) the loaded bake's light since.
+    traced_since_load: bool,
 }
 
 impl Volume {
@@ -321,7 +323,18 @@ impl Volume {
             probes_untouched: grid.probe_count(),
             has_data: false,
             baked_source: None,
+            traced_since_load: false,
         }
+    }
+
+    /// Use `grid` from now on (placed as before). A volume that stops tracing live after
+    /// tracing over its bake forgets the bake, so the file is loaded again and shown.
+    fn set_grid(&mut self, grid: LightProbeGrid) {
+        if self.grid.live && !grid.live && self.traced_since_load {
+            self.baked_source = None;
+            self.traced_since_load = false;
+        }
+        self.grid = grid;
     }
 
     /// Start over: the probes moved, or the region is new.
@@ -331,6 +344,7 @@ impl Volume {
         self.probes_untouched = self.grid.probe_count();
         self.has_data = false;
         self.baked_source = None;
+        self.traced_since_load = false;
     }
 
     fn irradiance_region(&self) -> [u32; 4] {
@@ -875,6 +889,7 @@ impl LightProbes {
         volume.reset = false;
         volume.probes_untouched = 0;
         volume.baked_source = Some(source.to_owned());
+        volume.traced_since_load = false;
         self.write_uniform(queue);
         Ok(())
     }
@@ -896,7 +911,7 @@ impl LightProbes {
         if same_layout {
             for (index, grid) in grids.iter().enumerate() {
                 let moved = !self.volumes[index].grid.same_placement(grid);
-                self.volumes[index].grid = *grid;
+                self.volumes[index].set_grid(*grid);
                 if moved {
                     // Moved probes see something else: start over.
                     self.volumes[index].start_over();
@@ -924,7 +939,7 @@ impl LightProbes {
                 Some(old) if old.has_data => {
                     kept.push(Some((old.irradiance_region(), old.distance_region())));
                     let mut volume = old.clone();
-                    volume.grid = *grid;
+                    volume.set_grid(*grid);
                     volumes.push(volume);
                 }
                 _ => {
@@ -1135,6 +1150,7 @@ impl LightProbes {
             }
             volume.next_probe = (first + probes) % total;
             volume.has_data = true;
+            volume.traced_since_load = true;
             slices.push(Slice {
                 volume: index,
                 first,
@@ -1572,6 +1588,25 @@ mod tests {
                 .collect(),
             integer: false,
         }
+    }
+
+    #[test]
+    fn a_volume_that_stops_tracing_shows_its_bake_again() {
+        let mut volume = Volume::new(grid([2, 2, 2]));
+        volume.baked_source = Some("content/lighting/hall.probes".into());
+        // Live without tracing yet: the loaded bake is still what it holds.
+        volume.set_grid(LightProbeGrid {
+            live: false,
+            ..grid([2, 2, 2])
+        });
+        assert!(volume.baked_source.is_some());
+        volume.set_grid(grid([2, 2, 2]));
+        volume.traced_since_load = true;
+        volume.set_grid(LightProbeGrid {
+            live: false,
+            ..grid([2, 2, 2])
+        });
+        assert_eq!(volume.baked_source, None, "the file is loaded again");
     }
 
     #[test]

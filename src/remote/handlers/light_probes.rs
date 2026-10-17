@@ -73,6 +73,10 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "finished": progress.finished,
         })
     });
+    // Off in the graphics settings, every volume shows its bake.
+    let ray_tracing = crate::graphics_settings::graphics_settings()
+        .settings
+        .ray_tracing;
     let volumes: Vec<Value> = volumes
         .iter()
         .map(|volume| {
@@ -87,7 +91,7 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "spacing": volume.grid.spacing,
                 "origin": volume.grid.origin.to_array(),
                 "rotation": volume.grid.rotation.to_array(),
-                "live": volume.grid.live,
+                "live": volume.grid.live && ray_tracing,
                 "relocate": volume.grid.relocate,
                 "baked": volume.baked,
                 "showing_bake": renderer.light_probe_baked_source(id),
@@ -100,6 +104,7 @@ pub(super) fn status(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "volumes": volumes,
         "note": "volumes in blending order: where they overlap the first one's light wins",
         "can_trace": renderer.light_probes_can_trace(),
+        "ray_tracing_setting": ray_tracing,
         "bake": progress,
         "last_bake": renderer.light_probe_bake_outcome().map(|outcome| match &outcome.result {
             Ok(path) => json!({ "volume": outcome.volume, "saved": path }),

@@ -69,6 +69,11 @@ pub struct GraphicsSettings {
     pub upscaler: Upscaler,
     /// FSR's sharpening, 0 (off) to 1.
     pub sharpness: f32,
+    /// Hardware ray tracing at all. Off, every effect takes its raster version (shadow
+    /// maps, screen-space reflections and ambient occlusion, see-through glass, no traced
+    /// global illumination or path tracing) and light probes show their bakes, as on a
+    /// GPU without ray tracing; the choices below are kept for when it comes back on.
+    pub ray_tracing: bool,
     pub ray_traced_shadows: bool,
     pub reflections: EffectQuality,
     pub ambient_occlusion: EffectQuality,
@@ -103,6 +108,7 @@ impl Default for GraphicsSettings {
             render_scale: 1.0,
             upscaler: Upscaler::Fsr,
             sharpness: 0.5,
+            ray_tracing: true,
             ray_traced_shadows: true,
             reflections: EffectQuality::RayTraced,
             ambient_occlusion: EffectQuality::RayTraced,
@@ -184,15 +190,16 @@ impl GraphicsSettings {
         post.upscaling.render_scale = self.render_scale;
         post.upscaling.method = self.upscaler;
         post.upscaling.sharpness = self.sharpness;
-        post.rt_shadows.enabled = self.ray_traced_shadows;
+        let rt = self.ray_tracing;
+        post.rt_shadows.enabled = rt && self.ray_traced_shadows;
         post.ssr.enabled = self.reflections != EffectQuality::Off;
-        post.ssr.ray_traced = self.reflections == EffectQuality::RayTraced;
+        post.ssr.ray_traced = rt && self.reflections == EffectQuality::RayTraced;
         post.ssao.enabled = self.ambient_occlusion != EffectQuality::Off;
-        post.ssao.ray_traced = self.ambient_occlusion == EffectQuality::RayTraced;
-        post.refraction.ray_traced = self.ray_traced_refraction;
+        post.ssao.ray_traced = rt && self.ambient_occlusion == EffectQuality::RayTraced;
+        post.refraction.ray_traced = rt && self.ray_traced_refraction;
         post.global_illumination.enabled =
-            self.global_illumination == GlobalIllumination::RayTraced;
-        post.path_tracing.enabled = self.path_tracing;
+            rt && self.global_illumination == GlobalIllumination::RayTraced;
+        post.path_tracing.enabled = rt && self.path_tracing;
         post.path_tracing.bounces = self.path_tracing_bounces;
         post.path_tracing.samples = self.path_tracing_samples;
         post.path_tracing.denoiser = self.path_tracing_denoiser;
@@ -387,6 +394,29 @@ mod tests {
         .apply(PostProcessSettings::default());
         assert!(path_traced.path_tracing.enabled && !path_traced.path_tracing.denoiser);
         assert_eq!(path_traced.path_tracing.bounces, 3);
+    }
+
+    #[test]
+    fn ray_tracing_off_takes_the_raster_effects() {
+        let settings = GraphicsSettings {
+            ray_tracing: false,
+            global_illumination: GlobalIllumination::RayTraced,
+            path_tracing: true,
+            ..GraphicsSettings::default()
+        };
+        let applied = settings.apply(PostProcessSettings::default());
+        assert!(!applied.rt_shadows.enabled);
+        assert!(applied.ssr.enabled && !applied.ssr.ray_traced);
+        assert!(applied.ssao.enabled && !applied.ssao.ray_traced);
+        assert!(!applied.refraction.ray_traced);
+        assert!(!applied.global_illumination.enabled && !applied.path_tracing.enabled);
+        // The choices stay for when it is switched back on.
+        let back = GraphicsSettings {
+            ray_tracing: true,
+            ..settings
+        }
+        .apply(PostProcessSettings::default());
+        assert!(back.rt_shadows.enabled && back.ssr.ray_traced && back.path_tracing.enabled);
     }
 
     #[test]

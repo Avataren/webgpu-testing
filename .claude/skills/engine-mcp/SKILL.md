@@ -110,6 +110,9 @@ engine you launched; save first).
   them back after testing), and `postprocess_get`'s `rendered` shows the result. To
   compare those effects without changing the player's choice, use `visual_capture`
   variants, which apply last. `show_fps` draws the yellow FPS readout (on by default).
+  `ray_tracing: false` is the master switch: every effect takes its raster version and
+  light probes show their bakes, which is how a GPU without ray tracing (or the web) sees
+  the scene; the individual choices come back with `ray_tracing: true`.
 - Ray-traced global illumination (`graphics_set {global_illumination: "ray_traced"}`, or a
   volume's `global_illumination` group with `half_resolution`, `bounces`, `max_history`) sits
   between raster and path tracing: the main pass keeps its direct light and ray-traced

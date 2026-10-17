@@ -20,7 +20,17 @@ pub(super) fn sync(
     failed_loads: &mut HashMap<String, LightProbeGrid>,
 ) {
     let volumes = crate::scene::light_probe_volumes(scene.main_world());
-    let grids: Vec<_> = volumes.iter().map(|volume| volume.grid).collect();
+    // With ray tracing off in the graphics settings the probes show their bakes.
+    let trace = crate::graphics_settings::graphics_settings()
+        .settings
+        .ray_tracing;
+    let grids: Vec<_> = volumes
+        .iter()
+        .map(|volume| LightProbeGrid {
+            live: volume.grid.live && trace,
+            ..volume.grid
+        })
+        .collect();
     renderer.set_light_probe_grids(&grids);
 
     for volume in &volumes {

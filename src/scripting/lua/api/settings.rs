@@ -8,14 +8,15 @@
 //! - `set_settings_hotkey(enabled)` turns Escape's toggle off for games that use Escape
 //!   themselves (and back on); the page stays available through `open_settings()`
 //! - `settings_hotkey()` is whether Escape toggles it (to restore it in `on_destroyed`)
-//! - `path_traced()` is true while the player has path tracing on and the GPU can run it,
-//!   so a game can swap lighting it fakes for the raster renderer (glow planes, fill
-//!   lights) for emissive surfaces the path tracer lights the scene with
+//! - `path_traced()` is true while the player has path tracing (and ray tracing) on and the
+//!   GPU can run it, so a game can swap lighting it fakes for the raster renderer (glow
+//!   planes, fill lights) for emissive surfaces the path tracer lights the scene with
 //! - `ray_traced_gi()` is true while ray-traced global illumination lights the scene: the
 //!   player has it on, the GPU can run it and path tracing (which wins) is off. Bounce
 //!   and sky light then arrive traced, so fill lights faked for the raster lighting can go
 //! - `graphics_settings()` returns the settings as the page shows them (`anti_aliasing`,
-//!   `render_scale`, `upscaler`, `ray_traced_shadows`, `reflections`, `ambient_occlusion`,
+//!   `render_scale`, `upscaler`, `ray_tracing` (off: every effect raster, light probes
+//!   baked), `ray_traced_shadows`, `reflections`, `ambient_occlusion`,
 //!   `global_illumination`, `path_tracing`, `vsync`, ...) plus `capabilities`
 //!   (`ray_tracing`, `path_tracing`, `upscaling`), e.g. for a benchmark's report
 //! - `set_graphics_settings(fields[, { save = false }])` changes the named settings like
@@ -55,15 +56,18 @@ pub(crate) fn register_settings_api(lua: &Lua) -> LuaResult<()> {
         "path_traced",
         lua.create_function(|_, ()| {
             let state = graphics_settings();
-            Ok(state.settings.path_tracing && state.capabilities.path_tracing)
+            Ok(state.settings.ray_tracing
+                && state.settings.path_tracing
+                && state.capabilities.path_tracing)
         })?,
     )?;
     globals.set(
         "ray_traced_gi",
         lua.create_function(|_, ()| {
             let state = graphics_settings();
-            Ok(state.settings.global_illumination
-                == crate::graphics_settings::GlobalIllumination::RayTraced
+            Ok(state.settings.ray_tracing
+                && state.settings.global_illumination
+                    == crate::graphics_settings::GlobalIllumination::RayTraced
                 && !state.settings.path_tracing
                 && state.capabilities.path_tracing)
         })?,

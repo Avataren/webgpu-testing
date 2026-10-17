@@ -339,7 +339,20 @@ fn ray_tracing_rows(
     settings: &mut GraphicsSettings,
     capabilities: &GraphicsCapabilities,
 ) {
-    let rt = capabilities.ray_tracing;
+    ui.label("Ray tracing");
+    ui.add_enabled(
+        capabilities.ray_tracing,
+        egui::Checkbox::without_text(&mut settings.ray_tracing),
+    )
+    .on_hover_text(
+        "Off: every effect uses its raster version (shadow maps, screen-space reflections \
+         and ambient occlusion, see-through glass) and light probes show their bakes. The \
+         choices below come back when it is switched on.",
+    )
+    .on_disabled_hover_text("Needs hardware ray tracing");
+    ui.end_row();
+
+    let rt = capabilities.ray_tracing && settings.ray_tracing;
     ui.label("Ray-traced shadows");
     ui.add_enabled(
         rt,
@@ -349,8 +362,9 @@ fn ray_tracing_rows(
 
     // Path tracing traces its own reflections and occlusion; traced global illumination
     // is occluded already.
-    let path_traced = capabilities.path_tracing && settings.path_tracing;
-    let gi_traced = capabilities.path_tracing
+    let can_path_trace = capabilities.path_tracing && settings.ray_tracing;
+    let path_traced = can_path_trace && settings.path_tracing;
+    let gi_traced = can_path_trace
         && !settings.path_tracing
         && settings.global_illumination == GlobalIllumination::RayTraced;
     effect_row(
@@ -384,7 +398,7 @@ fn ray_tracing_rows(
     // wins), so the choice is ready for when path tracing is switched off.
     ui.label("Global illumination");
     let response = ui
-        .add_enabled_ui(capabilities.path_tracing, |ui| {
+        .add_enabled_ui(can_path_trace, |ui| {
             egui::ComboBox::from_id_salt("engine_settings_global_illumination")
                 .selected_text(name(settings.global_illumination))
                 .show_ui(ui, |ui| {
@@ -406,10 +420,12 @@ fn ray_tracing_rows(
              cost.",
         )
     };
-    response.on_disabled_hover_text(if capabilities.ray_tracing {
-        "Ray-traced global illumination needs MSAA off"
-    } else {
+    response.on_disabled_hover_text(if !capabilities.ray_tracing {
         "Ray-traced global illumination needs hardware ray tracing"
+    } else if !settings.ray_tracing {
+        "Ray tracing is off"
+    } else {
+        "Ray-traced global illumination needs MSAA off"
     });
     ui.end_row();
 
@@ -435,10 +451,17 @@ fn effect_row(
         EffectQuality::ScreenSpace => "Screen space",
         EffectQuality::RayTraced => "Ray traced",
     };
+    // Without ray tracing a traced choice runs (and shows) as screen space; it comes back
+    // with ray tracing.
+    let shown = if !rt && *value == EffectQuality::RayTraced {
+        EffectQuality::ScreenSpace
+    } else {
+        *value
+    };
     ui.label(label);
     ui.add_enabled_ui(enabled.is_ok(), |ui| {
         egui::ComboBox::from_id_salt(id)
-            .selected_text(name(*value))
+            .selected_text(name(shown))
             .show_ui(ui, |ui| {
                 for quality in [
                     EffectQuality::Off,
@@ -461,7 +484,7 @@ fn path_tracing_rows(
     settings: &mut GraphicsSettings,
     capabilities: &GraphicsCapabilities,
 ) {
-    let available = capabilities.path_tracing;
+    let available = capabilities.path_tracing && settings.ray_tracing;
     ui.label("Path tracing");
     ui.add_enabled(
         available,
@@ -471,10 +494,12 @@ fn path_tracing_rows(
         "Light traced per pixel and denoised: soft shadows, bounced light, glowing surfaces \
          lighting their surroundings. Demanding; reflections and ambient occlusion are part of it.",
     )
-    .on_disabled_hover_text(if capabilities.ray_tracing {
-        "Path tracing needs MSAA off"
-    } else {
+    .on_disabled_hover_text(if !capabilities.ray_tracing {
         "Path tracing needs hardware ray tracing"
+    } else if !settings.ray_tracing {
+        "Ray tracing is off"
+    } else {
+        "Path tracing needs MSAA off"
     });
     ui.end_row();
 

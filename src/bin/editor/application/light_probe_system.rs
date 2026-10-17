@@ -81,6 +81,9 @@ impl EditorSystem for LightProbeSystem {
                     })
                     .collect(),
                 can_trace: renderer.light_probes_can_trace(),
+                ray_tracing_on: wgpu_cube::graphics_settings::graphics_settings()
+                    .settings
+                    .ray_tracing,
                 bake: renderer.light_probe_bake_progress(),
                 debug: renderer.light_probe_debug(),
                 project_open: wgpu_cube::project::active_project_root().is_some(),

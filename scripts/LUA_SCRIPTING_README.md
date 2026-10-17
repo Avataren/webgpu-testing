@@ -767,7 +767,9 @@ Escape opens and closes it.
   lights faked for the raster lighting can go, as for `path_traced()`
 
 - `graphics_settings()` → `table` - the settings as the page shows them: `anti_aliasing`,
-  `render_scale`, `upscaler`, `sharpness`, `ray_traced_shadows`, `reflections` and
+  `render_scale`, `upscaler`, `sharpness`, `ray_tracing` (the master switch: off, every
+  effect takes its raster version and light probes show their bakes), `ray_traced_shadows`,
+  `reflections` and
   `ambient_occlusion` (`"off"`, `"screen_space"`, `"ray_traced"`), `ray_traced_refraction`,
   `global_illumination`, `path_tracing` (and its `path_tracing_*` options), `vsync`,
   `display_mode`, `show_fps`, plus `capabilities` (`ray_tracing`, `path_tracing`,

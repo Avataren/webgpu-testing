@@ -275,6 +275,8 @@ pub struct LightProbePanelStatus {
     pub volumes: Vec<ActiveProbeGrid>,
     /// Whether the probes can trace here (hardware ray tracing).
     pub can_trace: bool,
+    /// Whether ray tracing is on in the graphics settings (off, volumes show their bakes).
+    pub ray_tracing_on: bool,
     pub bake: Option<LightProbeBakeProgress>,
     pub debug: Option<LightProbeDebugView>,
     /// Whether a project is open (bakes are saved into it).
@@ -2240,7 +2242,12 @@ fn light_probe_bake_controls(
         None => "Disabled".into(),
         Some(_) if baking.is_some() => "Baking".into(),
         Some(_) if status.bake.is_some() => "Waiting while another volume bakes".into(),
-        Some(_) if status.can_trace && !volume.use_baked => "Live: ray traced every frame".into(),
+        Some(_) if status.can_trace && status.ray_tracing_on && !volume.use_baked => {
+            "Live: ray traced every frame".into()
+        }
+        Some(grid) if grid.showing_bake.is_some() && !status.ray_tracing_on => {
+            "Lit by the bake (ray tracing is off in the graphics settings)".into()
+        }
         Some(grid) if grid.showing_bake.is_some() => "Lit by the bake".into(),
         Some(_) if status.can_trace => "No bake to show".into(),
         Some(_) => "No light: this GPU cannot trace the probes, and there is no bake".into(),
