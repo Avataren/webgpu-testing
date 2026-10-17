@@ -172,7 +172,31 @@ end
 - `find_entity_by_name(name)` - Find entity by name
 - `attach_inline_script(entity, name, source)` - Attach inline Lua script
 - `attach_script(entity, path)` - Attach script from file
-- `import_gltf(entity, path, scale)` - Import GLTF model
+- `import_gltf(entity, path, scale)` - Import GLTF model below `entity` (which must exist
+  already, i.e. not be spawned in the same hook). The model is there from the next frame:
+  `get_children(entity)` lists it then. Works in the editor and the player.
+- `clone_entity(entity[, name])` → `entity` - Copy an entity and everything below it: a
+  character with its skeleton, meshes and animator (the copy's meshes deform with the
+  copy's bones and its animator starts playback afresh), a light rig, a prop. Meshes and
+  materials are shared with the original until `set_material` changes one. The copy is a
+  sibling of the original until `set_parent` moves it (`set_parent(copy, nil)` makes it a
+  root); its name, transform, components and animations (`animator_play`,
+  `animator_add_clips`, ...) can be set in the same hook, like a spawned entity's. Import a
+  character once, hide it (`set_component(e, "Visible", false)`), and clone it for crowds:
+  cloning is cheap, importing reads the file again.
+
+```lua
+-- A crowd from one imported character (the template is hidden; its copies are shown).
+local copy = clone_entity(template, "Dancer " .. i)
+set_translation(copy, x, 0, z)
+set_component(copy, "Visible", true)
+animator_add_clips(copy, "content/animations/samba.glb")
+animator_play(copy, "samba", { fade = 0, start = i * 0.37 })
+```
+
+Handles returned by `spawn_entity`, `clone_entity` and the other spawning functions name
+their entity in every later hook too: `get_children`, `get_world_translation`,
+`get_component`, `animator_state` and the other reading functions take them like ids.
 
 ### Meshes and Materials
 - `spawn_primitive(kind[, name[, {material_of = entity}]])` → `entity` - Spawn a visible
@@ -669,12 +693,48 @@ Escape opens and closes it.
   scene traced and occluded, while the raster renderer keeps the direct light; fill
   lights faked for the raster lighting can go, as for `path_traced()`
 
+- `graphics_settings()` → `table` - the settings as the page shows them: `anti_aliasing`,
+  `render_scale`, `upscaler`, `sharpness`, `ray_traced_shadows`, `reflections` and
+  `ambient_occlusion` (`"off"`, `"screen_space"`, `"ray_traced"`), `ray_traced_refraction`,
+  `global_illumination`, `path_tracing` (and its `path_tracing_*` options), `vsync`,
+  `display_mode`, `show_fps`, plus `capabilities` (`ray_tracing`, `path_tracing`,
+  `upscaling`): what the GPU can run
+- `set_graphics_settings(fields[, { save = false }])` - change the named settings as the
+  page would (an unknown name or value is an error). They are saved as the player's choice
+  unless `save = false`, which keeps the change to this run: a benchmark trying
+  configurations, or a show that wants raster lighting, sets the player's own settings back
+  when it is done
+
 ```lua
 function update(self, dt)
     if settings_open() then
         return -- the game waits while the player is in the settings
     end
     -- ...
+end
+
+-- A benchmark pass at half resolution, then the player's own settings again.
+local before = graphics_settings()
+before.capabilities = nil
+set_graphics_settings({ render_scale = 0.5, upscaler = "fsr", vsync = false }, { save = false })
+-- ... measure ...
+set_graphics_settings(before, { save = false })
+```
+
+### Frame statistics
+- `frame_stats()` → `table` - what the last complete frame cost, for a performance overlay
+  or a benchmark: `frame_ms` and `fps` (wall time, including waiting for the display),
+  `cpu` (milliseconds per stage of the frame loop: `scripts`, `animations`, `transforms`,
+  `render_collect`, `render_gpu`, `gpu_wait`, `present`, ...), `gpu_ms` and `gpu` (GPU
+  milliseconds per render stage from timestamp queries, a frame or two old; `nil` without
+  them, as in browsers), `draw_calls`, `instances`, `culled_instances`,
+  `skinned_instances`, `skinned_vertices` and `entities`
+
+```lua
+function on_ui(self, ui)
+    local s = frame_stats()
+    ui:screen_label("top_left", 16, 12, string.format("%.0f fps  GPU %.1f ms",
+        s.fps, s.gpu_ms or 0), { backdrop = true })
 end
 ```
 

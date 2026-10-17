@@ -14,8 +14,16 @@
 //! - `ray_traced_gi()` is true while ray-traced global illumination lights the scene: the
 //!   player has it on, the GPU can run it and path tracing (which wins) is off. Bounce
 //!   and sky light then arrive traced, so fill lights faked for the raster lighting can go
+//! - `graphics_settings()` returns the settings as the page shows them (`anti_aliasing`,
+//!   `render_scale`, `upscaler`, `ray_traced_shadows`, `reflections`, `ambient_occlusion`,
+//!   `global_illumination`, `path_tracing`, `vsync`, ...) plus `capabilities`
+//!   (`ray_tracing`, `path_tracing`, `upscaling`), e.g. for a benchmark's report
+//! - `set_graphics_settings(fields[, { save = false }])` changes the named settings like
+//!   the page does (unknown names and values are errors). They are saved as the player's
+//!   choice unless `save = false`, which keeps the change to this run: a benchmark trying
+//!   configurations sets the player's own settings back when it is done
 
-use mlua::{Lua, Result as LuaResult};
+use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Table, Value};
 
 use crate::graphics_settings::graphics_settings;
 
@@ -58,6 +66,49 @@ pub(crate) fn register_settings_api(lua: &Lua) -> LuaResult<()> {
                 == crate::graphics_settings::GlobalIllumination::RayTraced
                 && !state.settings.path_tracing
                 && state.capabilities.path_tracing)
+        })?,
+    )?;
+    globals.set(
+        "graphics_settings",
+        lua.create_function(|lua, ()| {
+            let state = graphics_settings();
+            let Value::Table(table) = lua.to_value(&state.settings)? else {
+                return Err(mlua::Error::RuntimeError(
+                    "graphics settings are not a table".into(),
+                ));
+            };
+            let capabilities = lua.create_table()?;
+            capabilities.set("ray_tracing", state.capabilities.ray_tracing)?;
+            capabilities.set("path_tracing", state.capabilities.path_tracing)?;
+            capabilities.set("upscaling", state.capabilities.upscaling)?;
+            table.set("capabilities", capabilities)?;
+            Ok(table)
+        })?,
+    )?;
+    globals.set(
+        "set_graphics_settings",
+        lua.create_function(|lua, (fields, options): (Value, Option<Table>)| {
+            let patch: serde_json::Value = lua.from_value(fields)?;
+            let Some(patch) = patch.as_object() else {
+                return Err(mlua::Error::RuntimeError(
+                    "set_graphics_settings expects a table of settings".into(),
+                ));
+            };
+            let save = match &options {
+                Some(options) => options.get::<Option<bool>>("save")?.unwrap_or(true),
+                None => true,
+            };
+            let mut state = graphics_settings();
+            let settings = state
+                .settings
+                .patched(patch)
+                .map_err(mlua::Error::RuntimeError)?;
+            if save {
+                state.set(settings);
+            } else {
+                state.set_unsaved(settings);
+            }
+            Ok(())
         })?,
     )?;
     globals.set(

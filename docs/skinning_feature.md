@@ -127,9 +127,19 @@ merge; a Lua regression test covers the script functions.
 - **Animated bounds.** Picking (GPU picking is exact), `scene_query`, `scene_raycast`,
   placement and editor selection boxes use the bind-pose `MeshBounds`. Compute bounds from
   joint positions plus a per-joint radius if culling or precise queries need it.
-- **Instancing of crowds.** Each skinned instance is one draw per pass. Profile a crowd
-  (`profile_capture`, e.g. 100 Foxes) before optimising; options are batching instances
-  that share a mesh into one larger output buffer, or skipping unchanged palettes.
+- **Instancing of crowds.** Each skinned instance is still one compute dispatch and one
+  draw per pass. Profiled with `games/marionette` (2026-10-17, its stadium: 1,040 Mixamo
+  and Quaternius characters, 2,933 skinned meshes, 14.5M skinned vertices, 80k entities,
+  raster, Navi 31): the frame is CPU-bound (GPU about 10 ms). Done since: animators pose
+  on the thread pool (10.8 to about 4 ms), transform propagation walks one hecs view
+  (13.1 to about 6.5 ms for its two passes a frame), the meshes of one character share one
+  palette per frame, computed and uploaded once (collect 11.5 to about 6 ms, submission
+  18 to about 13 ms), and passes borrow meshes instead of cloning them; the stadium went
+  from 15 to 29 fps, both measured with a game running alongside (35 fps with nothing else
+  running; numbers in `games/marionette/README.md`). What is left is mostly wgpu's per-draw and per-dispatch cost:
+  next would be skinning all instances of a mesh in one dispatch into one shared buffer and
+  drawing them with fewer calls (vertex pulling or multi-draw), and propagating
+  transforms once per frame instead of twice.
 - **Ray tracing.** Skinned buffers are ready for BLAS refits (add `BLAS_INPUT` usage) once
   the work in `docs/rendering_features_future.md` starts.
 - **Morph targets** (blend shapes) are not supported; `web/assets/morph/` still renders

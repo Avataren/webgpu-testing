@@ -26,6 +26,7 @@ mod save_data;
 mod script_access;
 mod settings;
 mod state;
+mod stats;
 mod text_editor_bridge;
 mod transform;
 pub mod ui;
@@ -74,6 +75,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     particles::register_particles_api(lua)?;
     physics::register_physics_api(lua)?;
     view::register_view_api(lua)?;
+    stats::register_stats_api(lua)?;
     query::register_query_api(lua)?;
     script_access::register_script_access_api(lua)?;
     events::register_events_api(lua)?;

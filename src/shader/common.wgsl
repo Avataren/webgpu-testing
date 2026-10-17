@@ -202,7 +202,9 @@ fn alpha_tested(alpha: f32, material_flags: u32) -> f32 {
     return 1.0;
 }
 
-fn shade_fragment(in: VsOut) -> ShadedFragment {
+// `front_facing` is false only on the back faces of double-sided materials (the others
+// are culled); they are lit from the side the camera sees.
+fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     // ALWAYS sample all textures (uniform control flow)
     let material_flags = in.material_flags;
     let base_color_sample = sample_base_color_texture(
@@ -250,6 +252,9 @@ fn shade_fragment(in: VsOut) -> ShadedFragment {
         N = normalize(TBN * tangent_normal);
     } else {
         N = normalize(in.normal);
+    }
+    if (!front_facing) {
+        N = -N;
     }
 
     var occlusion = 1.0;
@@ -347,13 +352,13 @@ fn encode_surface_w(smoothness: f32, specular_color: vec3<f32>) -> f32 {
 }
 
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return shade_fragment(in).color;
+fn fs_main(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return shade_fragment(in, front_facing).color;
 }
 
 @fragment
-fn fs_main_gbuffer(in: VsOut) -> GBufferOut {
-    let shaded = shade_fragment(in);
+fn fs_main_gbuffer(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
+    let shaded = shade_fragment(in, front_facing);
     return GBufferOut(
         gbuffer_color(shaded),
         pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),

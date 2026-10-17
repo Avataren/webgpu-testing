@@ -12,7 +12,7 @@ use crate::renderer::{
 };
 use crate::scene::Scene;
 
-use super::super::batch::InstanceData;
+use super::super::batch::{CullMode, InstanceData};
 use super::{RenderFrame, Renderer};
 
 #[derive(Clone, Copy)]
@@ -78,7 +78,9 @@ impl<'a> BatchRecorder<'a> {
             } else {
                 &[]
             };
-            let Some(mesh) = mesh_for_batch(self.assets, &self.renderer.skinning, batch) else {
+            // Owned: recording below needs the renderer mutably (pipelines, bind groups).
+            let Some(mesh) = mesh_for_batch(self.assets, &self.renderer.skinning, batch).cloned()
+            else {
                 continue;
             };
 
@@ -390,8 +392,12 @@ pub(crate) fn depth_prepass(
     let mut frame_graph = FrameGraph::new(encoder);
     let plan =
         PassPlan::new("DepthPrepass").set_depth(FrameGraphDepthAttachment::clear(depth_view, 1.0));
-    let pipeline = renderer.pipeline.depth_prepass();
-    let masked_pipeline = renderer.pipeline.depth_prepass_masked();
+    let pipelines = [false, true].map(|double_sided| {
+        [
+            renderer.pipeline.depth_prepass(double_sided),
+            renderer.pipeline.depth_prepass_masked(double_sided),
+        ]
+    });
     let camera_bind_group = &renderer.camera_buffer.bind_group;
     let object_bind_group = &renderer.objects_buffer.bind_group;
     let lights_bind_group = &renderer.lights_buffer.bind_group;
@@ -404,10 +410,12 @@ pub(crate) fn depth_prepass(
         pass.set_bind_group(1, object_bind_group, &[]);
         pass.set_bind_group(2, lights_bind_group, &[]);
 
-        for masked in [false, true] {
-            pass.set_pipeline(if masked { masked_pipeline } else { pipeline });
+        // Back-face culled batches, then double-sided ones; plain, then cut-outs.
+        for (double_sided, masked) in [(false, false), (false, true), (true, false), (true, true)] {
+            pass.set_pipeline(pipelines[usize::from(double_sided)][usize::from(masked)]);
             for batch in batches.iter_mut() {
                 if batch.alpha_masked != masked
+                    || (batch.cull_mode == CullMode::None) != double_sided
                     || batch.alpha_blend
                     || !batch.depth_state.depth_write
                     || !batch.depth_state.depth_test
@@ -426,7 +434,7 @@ pub(crate) fn depth_prepass(
                 };
                 let visible = &batch.camera_visible;
                 if !masked {
-                    renderer.set_geometry_buffers(pass, &mesh);
+                    renderer.set_geometry_buffers(pass, mesh);
                     let mut start = 0usize;
                     while start < batch.instances.len() {
                         if !instance_visible(visible, start) {
@@ -446,7 +454,7 @@ pub(crate) fn depth_prepass(
                 let Some(textures) = cutouts.as_ref() else {
                     continue;
                 };
-                renderer.set_geometry_buffers(pass, &mesh);
+                renderer.set_geometry_buffers(pass, mesh);
                 let mut drawn = true;
                 let mut start = 0usize;
                 while start < batch.instances.len() {
@@ -897,27 +905,27 @@ pub(crate) struct BatchGeometry<'a> {
     pub(crate) skinning: &'a crate::renderer::skinning::SkinningStage,
 }
 
-impl BatchGeometry<'_> {
-    pub(crate) fn mesh(&self, batch: &OrderedBatch) -> Option<Mesh> {
+impl<'a> BatchGeometry<'a> {
+    pub(crate) fn mesh(&self, batch: &OrderedBatch) -> Option<&'a Mesh> {
         mesh_for_batch(self.assets, self.skinning, batch)
     }
 }
 
 /// The geometry a batch draws: a skinned instance's deformed copy, or the mesh itself
 /// (also the fallback when skinning was skipped, which draws the bind pose).
-pub(crate) fn mesh_for_batch(
-    assets: &Assets,
-    skinning: &crate::renderer::skinning::SkinningStage,
+pub(crate) fn mesh_for_batch<'a>(
+    assets: &'a Assets,
+    skinning: &'a crate::renderer::skinning::SkinningStage,
     batch: &OrderedBatch,
-) -> Option<Mesh> {
+) -> Option<&'a Mesh> {
     if let Some(skinned) = batch.skin.and_then(|key| skinning.mesh(key)) {
-        return Some(skinned.clone());
+        return Some(skinned);
     }
     let mesh = assets.meshes.get(batch.mesh);
     if mesh.is_none() {
         log::warn!("Skipping batch with invalid mesh handle");
     }
-    mesh.cloned()
+    mesh
 }
 
 /// Consecutive instances from `start` that share its material and are visible (`visible`

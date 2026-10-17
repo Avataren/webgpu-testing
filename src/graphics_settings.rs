@@ -119,6 +119,27 @@ impl Default for GraphicsSettings {
 }
 
 impl GraphicsSettings {
+    /// These settings with the fields `patch` names replaced (field names and values as
+    /// they serialize, e.g. `{"reflections": "screen_space", "render_scale": 0.5}`).
+    /// Unknown names and invalid values are errors.
+    pub fn patched(
+        &self,
+        patch: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<GraphicsSettings, String> {
+        let mut merged = serde_json::to_value(self).map_err(|err| err.to_string())?;
+        let mut unknown = Vec::new();
+        for (key, value) in patch {
+            match merged.get_mut(key) {
+                Some(slot) => *slot = value.clone(),
+                None => unknown.push(key.clone()),
+            }
+        }
+        if !unknown.is_empty() {
+            return Err(format!("unknown graphics settings: {}", unknown.join(", ")));
+        }
+        serde_json::from_value(merged).map_err(|err| format!("invalid graphics settings: {err}"))
+    }
+
     /// Render scales offered as presets (FSR's quality modes).
     pub const RENDER_SCALE_PRESETS: [(&'static str, f32); 5] = [
         ("Native", 1.0),
@@ -241,12 +262,21 @@ pub struct GraphicsSettingsState {
 impl GraphicsSettingsState {
     /// A changed value: save it, and let the window and surface pick it up.
     pub fn set(&mut self, settings: GraphicsSettings) {
-        let settings = settings.sanitized();
-        if settings != self.settings {
-            self.settings = settings;
-            self.revision += 1;
+        if self.set_unsaved(settings) {
             self.save();
         }
+    }
+
+    /// Apply a changed value for this run only, without saving it (a benchmark trying
+    /// configurations). Returns whether anything changed.
+    pub fn set_unsaved(&mut self, settings: GraphicsSettings) -> bool {
+        let settings = settings.sanitized();
+        if settings == self.settings {
+            return false;
+        }
+        self.settings = settings;
+        self.revision += 1;
+        true
     }
 
     pub fn revision(&self) -> u64 {
@@ -298,9 +328,11 @@ fn load() -> Option<GraphicsSettings> {
 
 static STATE: OnceLock<Mutex<GraphicsSettingsState>> = OnceLock::new();
 
-/// The process's graphics settings (one app per process).
+/// The process's graphics settings (one app per process), those of the open project:
+/// a script changing them on its first frame changes the project's settings, not ones
+/// the first render would then load over its change.
 pub fn graphics_settings() -> MutexGuard<'static, GraphicsSettingsState> {
-    STATE
+    let mut state = STATE
         .get_or_init(|| {
             Mutex::new(GraphicsSettingsState {
                 hotkey_enabled: true,
@@ -310,7 +342,9 @@ pub fn graphics_settings() -> MutexGuard<'static, GraphicsSettingsState> {
             })
         })
         .lock()
-        .unwrap_or_else(PoisonError::into_inner)
+        .unwrap_or_else(PoisonError::into_inner);
+    state.sync_namespace();
+    state
 }
 
 #[cfg(test)]
@@ -353,6 +387,25 @@ mod tests {
         .apply(PostProcessSettings::default());
         assert!(path_traced.path_tracing.enabled && !path_traced.path_tracing.denoiser);
         assert_eq!(path_traced.path_tracing.bounces, 3);
+    }
+
+    #[test]
+    fn patches_change_only_the_named_settings() {
+        let base = GraphicsSettings::default();
+        let patch = serde_json::json!({ "reflections": "screen_space", "render_scale": 0.5 });
+        let patched = base.patched(patch.as_object().unwrap()).unwrap();
+        assert_eq!(patched.reflections, EffectQuality::ScreenSpace);
+        assert_eq!(patched.render_scale, 0.5);
+        assert_eq!(patched.ambient_occlusion, base.ambient_occlusion);
+
+        let unknown = serde_json::json!({ "reflection": "off" });
+        let err = base.patched(unknown.as_object().unwrap()).unwrap_err();
+        assert!(
+            err.contains("unknown graphics settings: reflection"),
+            "{err}"
+        );
+        let invalid = serde_json::json!({ "reflections": "mirror" });
+        assert!(base.patched(invalid.as_object().unwrap()).is_err());
     }
 
     #[test]

@@ -16,7 +16,9 @@ use crate::scene::{
 };
 
 use super::component::LuaScriptComponent;
-use super::entity_registry::{EntityHandleRegistry, ExistingCommand, PendingEntity};
+use super::entity_registry::{
+    EntityHandleRegistry, ExistingCommand, PendingAnimation, PendingEntity,
+};
 use super::error::LuaScriptingError;
 use super::types::LuaScriptSource;
 
@@ -352,6 +354,7 @@ impl ScriptCommands {
         // If the child is a pending entity, store the parent handle to be resolved later
         if let Some(entry) = self.pending.get_mut(&handle) {
             entry.parent = parent_handle;
+            entry.parent_set = true;
             return Ok(());
         }
 
@@ -370,14 +373,33 @@ impl ScriptCommands {
         Ok(())
     }
 
-    /// Queue the removal of an entity and its descendants. An entity spawned earlier in
-    /// the same chunk is simply never created.
+    /// Queue a copy of `source` and everything below it (`clone_entity`). The copy is a
+    /// sibling of the source until `set_parent` moves it; its name, transform, components
+    /// and animations can be set in the same chunk, like a spawned entity's.
+    pub fn clone_entity(&mut self, source: i64, name: Option<String>) -> Result<i64, mlua::Error> {
+        let source_bits = self.resolve_entity_bits(source)?;
+        let id = self.registry.borrow_mut().allocate();
+        self.pending.insert(
+            id,
+            PendingEntity {
+                name,
+                clone_of: Some(source_bits),
+                ..PendingEntity::default()
+            },
+        );
+        Ok(id)
+    }
+
     /// Queue an animator change (`animator_play` and friends).
     pub fn animator(
         &mut self,
         handle: i64,
         command: crate::scene::skeletal::AnimatorCommand,
     ) -> Result<(), mlua::Error> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.animation.push(PendingAnimation::Animator(command));
+            return Ok(());
+        }
         let entity_bits = self.resolve_entity_bits(handle)?;
         self.existing.push(ExistingCommand::Animator {
             entity_bits,
@@ -392,6 +414,10 @@ impl ScriptCommands {
         handle: i64,
         command: crate::scene::skeletal::TreeCommand,
     ) -> Result<(), mlua::Error> {
+        if let Some(entry) = self.pending.get_mut(&handle) {
+            entry.animation.push(PendingAnimation::Tree(command));
+            return Ok(());
+        }
         let entity_bits = self.resolve_entity_bits(handle)?;
         self.existing.push(ExistingCommand::AnimationTree {
             entity_bits,
@@ -400,6 +426,8 @@ impl ScriptCommands {
         Ok(())
     }
 
+    /// Queue the removal of an entity and its descendants. An entity spawned earlier in
+    /// the same chunk is simply never created.
     pub fn despawn(&mut self, handle: i64) -> Result<(), mlua::Error> {
         if self.pending.remove(&handle).is_some() {
             self.assets.retain(|(target, _)| *target != handle);
@@ -465,7 +493,25 @@ impl ScriptCommands {
 
         // First pass: spawn all entities and collect parent relationships
         for (handle, mut pending) in self.pending.drain() {
-            let entity = world.spawn(());
+            let source = pending
+                .clone_of
+                .and_then(Entity::from_bits)
+                .filter(|source| world.contains(*source));
+            if pending.clone_of.is_some() && source.is_none() {
+                warn!(target: "script", "clone_entity: the entity to copy no longer exists; spawned an empty one");
+            }
+            let entity = match source {
+                Some(source) => {
+                    let pairs = crate::scene::duplicate::duplicate_subtree(world, source, |m| m);
+                    for &(_, copy) in &pairs {
+                        if world.get::<&LuaScriptComponent>(copy).is_ok() {
+                            result.scripts_added.push(copy);
+                        }
+                    }
+                    pairs[0].1
+                }
+                None => world.spawn(()),
+            };
             self.registry.borrow_mut().resolve(handle, entity);
 
             if let Some(name) = pending.name {
@@ -475,7 +521,11 @@ impl ScriptCommands {
             // Every spawned entity gets a transform, even one the script never moves: an
             // entity without one is skipped by transform propagation, and so is everything
             // parented below it (a bare `spawn_entity` group node would strand its children).
-            let mut transform = Transform::default();
+            // A clone starts from its source's.
+            let mut transform = world
+                .get::<&TransformComponent>(entity)
+                .map(|t| t.0)
+                .unwrap_or_default();
             if let Some(translation) = pending.translation.take() {
                 transform.translation = translation;
             }
@@ -505,6 +555,24 @@ impl ScriptCommands {
                 }
             }
 
+            let bits = entity.to_bits().get();
+            for command in pending.animation {
+                self.existing.push(match command {
+                    PendingAnimation::Animator(command) => ExistingCommand::Animator {
+                        entity_bits: bits,
+                        command,
+                    },
+                    PendingAnimation::Tree(command) => ExistingCommand::AnimationTree {
+                        entity_bits: bits,
+                        command,
+                    },
+                });
+            }
+
+            // A clone moved elsewhere leaves its source's parent first.
+            if pending.parent_set {
+                detach_from_parent(world, entity);
+            }
             // Defer parent setting until all entities are spawned
             if let Some(parent_handle) = pending.parent {
                 deferred_parents.push((entity, parent_handle));
@@ -550,8 +618,12 @@ impl ScriptCommands {
             }
         }
 
+        // Built by the first despawn and shared by the rest: a script clearing a crowd
+        // despawns hundreds of characters in one hook.
+        let mut children_index = None;
         for command in self.existing.drain(..) {
-            if let Err(err) = Self::apply_existing(world, command, &mut result) {
+            if let Err(err) = Self::apply_existing(world, command, &mut result, &mut children_index)
+            {
                 warn!(target: "script", "Skipping script command: {err}");
             }
         }
@@ -614,6 +686,7 @@ impl ScriptCommands {
         world: &mut World,
         command: ExistingCommand,
         result: &mut ScriptApplyResult,
+        children_index: &mut Option<HashMap<Entity, Vec<Entity>>>,
     ) -> Result<(), LuaScriptingError> {
         match command {
             ExistingCommand::Animator {
@@ -924,9 +997,11 @@ impl ScriptCommands {
                 // Despawning twice (or an entity something else already removed) is not
                 // an error: the entity is gone either way.
                 if world.contains(entity) {
+                    let index =
+                        children_index.get_or_insert_with(|| Self::children_by_parent(world));
                     result
                         .despawned
-                        .extend(Self::despawn_subtree(world, entity));
+                        .extend(Self::despawn_subtree(world, entity, index));
                 }
             }
             ExistingCommand::SubscribeEvent {
@@ -970,7 +1045,23 @@ impl ScriptCommands {
 
     /// Despawn `root` and all its descendants (children first), detaching `root` from its
     /// parent. Returns the entities removed.
-    fn despawn_subtree(world: &mut World, root: Entity) -> Vec<Entity> {
+    /// Every entity's children by its `Parent` link (whatever the child lists say).
+    fn children_by_parent(world: &World) -> HashMap<Entity, Vec<Entity>> {
+        let mut children_of: HashMap<Entity, Vec<Entity>> = HashMap::new();
+        for (child, parent) in world.query::<&Parent>().iter() {
+            children_of.entry(parent.0).or_default().push(child);
+        }
+        children_of
+    }
+
+    /// Remove `root` and everything below it. `children_of` (from
+    /// [`Self::children_by_parent`], possibly built before earlier despawns in the same
+    /// batch) adds the children the child lists miss; entities already gone are skipped.
+    fn despawn_subtree(
+        world: &mut World,
+        root: Entity,
+        children_of: &HashMap<Entity, Vec<Entity>>,
+    ) -> Vec<Entity> {
         use crate::scene::components::Children;
 
         if let Ok(parent) = world.get::<&Parent>(root).map(|parent| parent.0) {
@@ -986,14 +1077,11 @@ impl ScriptCommands {
 
         // Descendants come from the Parent links as well as the child lists, so a
         // hierarchy whose lists are out of step still goes away completely.
-        let mut children_of: HashMap<Entity, Vec<Entity>> = HashMap::new();
-        for (child, parent) in world.query::<&Parent>().iter() {
-            children_of.entry(parent.0).or_default().push(child);
-        }
         let mut order = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let mut stack = vec![root];
         while let Some(entity) = stack.pop() {
-            if !world.contains(entity) || order.contains(&entity) {
+            if !world.contains(entity) || !seen.insert(entity) {
                 continue;
             }
             order.push(entity);
@@ -1770,6 +1858,19 @@ pub(crate) struct ScriptApplyResult {
     pub environment: Vec<serde_json::Value>,
     pub event_subscriptions: Vec<PendingEventSubscription>,
     pub event_unsubscriptions: Vec<PendingEventUnsubscription>,
+}
+
+/// Take `entity` out of its parent's child list and drop its `Parent`.
+fn detach_from_parent(world: &mut World, entity: Entity) {
+    use crate::scene::components::Children;
+
+    let Ok(parent) = world.get::<&Parent>(entity).map(|p| p.0) else {
+        return;
+    };
+    if let Ok(mut children) = world.get::<&mut Children>(parent) {
+        children.0.retain(|&child| child != entity);
+    }
+    let _ = world.remove_one::<Parent>(entity);
 }
 
 pub(crate) fn entity_bits(entity: Entity) -> i64 {

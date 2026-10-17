@@ -203,6 +203,20 @@ impl RenderContext {
             rt_limits.max_bind_groups = rt_limits
                 .max_bind_groups
                 .max(adapter.limits().max_bind_groups.min(5));
+            // The ray-traced scene keeps every surface's vertices in one storage buffer
+            // (skinned characters each a copy of their own): let it grow past the default
+            // 128 MiB where the GPU allows, up to 1 GiB.
+            const RT_POOL_BYTES: u64 = 1 << 30;
+            rt_limits.max_storage_buffer_binding_size =
+                rt_limits.max_storage_buffer_binding_size.max(
+                    adapter
+                        .limits()
+                        .max_storage_buffer_binding_size
+                        .min(RT_POOL_BYTES),
+                );
+            rt_limits.max_buffer_size = rt_limits
+                .max_buffer_size
+                .max(adapter.limits().max_buffer_size.min(RT_POOL_BYTES));
             // The path tracer's denoiser writes several targets per pass.
             rt_limits.max_storage_textures_per_shader_stage =
                 rt_limits.max_storage_textures_per_shader_stage.max(

@@ -1,17 +1,21 @@
 //! Entity inspection and editing.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use glam::{Mat4, Quat, Vec3};
 use hecs::{Entity, World};
 use serde_json::{json, Value};
 
-use crate::asset::{MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot};
+use crate::asset::{
+    Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
+};
 use crate::procgen::GeneratedMesh;
 use crate::renderer::material::MaterialFlags;
 use crate::renderer::primitives::PrimitiveMeshDescriptor;
 use crate::renderer::{Material, Renderer};
 use crate::scene::components::{Billboard, BillboardOrientation, DepthState};
+use crate::scene::duplicate::{duplicate_subtree, subtree};
 use crate::scene::skeletal::{AnimationTree, Animator, SkinnedMesh};
 use crate::scene::{
     CameraComponent, CameraProjection, CanCastShadow, Children, DirectionalLight,
@@ -1848,22 +1852,6 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
     Ok(entity_summary(ctx.gpu.scene.main_world(), entity))
 }
 
-/// `root` and all its descendants, parents before children.
-fn subtree(world: &World, root: Entity) -> Vec<Entity> {
-    let mut order = Vec::new();
-    let mut stack = vec![root];
-    while let Some(entity) = stack.pop() {
-        if !world.contains(entity) || order.contains(&entity) {
-            continue;
-        }
-        order.push(entity);
-        if let Ok(children) = world.get::<&Children>(entity) {
-            stack.extend(children.0.iter().rev().copied());
-        }
-    }
-    order
-}
-
 pub(super) fn delete(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
     let world = ctx.gpu.scene.main_world_mut();
     let targets = match bulk_targets(world, params)? {
@@ -1895,62 +1883,6 @@ pub(super) fn delete(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteR
     ctx.mark_modified();
     ctx.gpu.scene.collect_unused_materials();
     Ok(json!({ "deleted": removed.into_iter().map(entity_id).collect::<Vec<_>>() }))
-}
-
-/// Copy the components the engine knows about from `source` into a builder.
-fn clone_components(scene: &mut Scene, source: Entity) -> hecs::EntityBuilder {
-    fn copy<T: hecs::Component + Clone>(
-        world: &World,
-        entity: Entity,
-        builder: &mut hecs::EntityBuilder,
-    ) {
-        if let Ok(component) = world.get::<&T>(entity) {
-            builder.add((*component).clone());
-        }
-    }
-
-    let mut builder = hecs::EntityBuilder::new();
-    let world = scene.main_world();
-    copy::<Name>(world, source, &mut builder);
-    copy::<TransformComponent>(world, source, &mut builder);
-    copy::<Visible>(world, source, &mut builder);
-    copy::<MeshComponent>(world, source, &mut builder);
-    copy::<PrimitiveMeshComponent>(world, source, &mut builder);
-    copy::<MeshBounds>(world, source, &mut builder);
-    copy::<PointLight>(world, source, &mut builder);
-    copy::<DirectionalLight>(world, source, &mut builder);
-    copy::<SpotLight>(world, source, &mut builder);
-    copy::<CanCastShadow>(world, source, &mut builder);
-    copy::<CameraComponent>(world, source, &mut builder);
-    copy::<LuaScriptComponent>(world, source, &mut builder);
-    copy::<ParticleSystemComponent>(world, source, &mut builder);
-    copy::<ParticleEmitterComponent>(world, source, &mut builder);
-    copy::<EnvironmentComponent>(world, source, &mut builder);
-    copy::<PostProcessVolume>(world, source, &mut builder);
-    copy::<LightProbeVolume>(world, source, &mut builder);
-    crate::physics::edit::clone_components(world, source, &mut builder);
-    copy::<AnimationTree>(world, source, &mut builder);
-    copy::<Billboard>(world, source, &mut builder);
-    copy::<DepthState>(world, source, &mut builder);
-    copy::<RotateAnimation>(world, source, &mut builder);
-    copy::<OrbitAnimation>(world, source, &mut builder);
-    copy::<GltfSource>(world, source, &mut builder);
-    copy::<SkinnedMesh>(world, source, &mut builder);
-    copy::<Animator>(world, source, &mut builder);
-
-    let material = world.get::<&MaterialComponent>(source).ok().map(|m| m.0);
-    if let Some(handle) = material {
-        // Materials with a file path are shared assets; inline ones get their own copy.
-        let copied = scene.assets.materials.get(handle).cloned();
-        let handle = match copied {
-            Some(asset) if asset.canonical_path().as_os_str().is_empty() => {
-                scene.assets.materials.insert(asset)
-            }
-            _ => handle,
-        };
-        builder.add(MaterialComponent(handle));
-    }
-    builder
 }
 
 pub(super) fn duplicate(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
@@ -2067,45 +1999,35 @@ fn duplicate_once(
     source: Entity,
     patch: &Value,
 ) -> Result<(Entity, usize), String> {
-    let originals = subtree(ctx.gpu.scene.main_world(), source);
-    let mut copies: Vec<(Entity, Entity)> = Vec::with_capacity(originals.len());
-
-    for original in &originals {
-        let mut builder = clone_components(&mut ctx.gpu.scene, *original);
-        let copy = ctx.gpu.scene.main_world_mut().spawn(builder.build());
-        copies.push((*original, copy));
-    }
-
-    let world = ctx.gpu.scene.main_world_mut();
-    let mapped = |entity: Entity| {
-        copies
-            .iter()
-            .find(|(original, _)| *original == entity)
-            .map(|(_, copy)| *copy)
-    };
-    let source_parent = world.get::<&Parent>(source).ok().map(|p| p.0);
-    for (original, copy) in &copies {
-        let parent = if *original == source {
-            source_parent
-        } else {
-            world
-                .get::<&Parent>(*original)
-                .ok()
-                .and_then(|p| mapped(p.0))
-        };
-        set_parent(world, *copy, parent)?;
-    }
-
-    // A copied character deforms with its copied skeleton, not the original's.
-    for (_, copy) in &copies {
-        if let Ok(mut skin) = world.get::<&mut SkinnedMesh>(*copy) {
-            skin.remap(mapped);
+    let scene = &mut ctx.gpu.scene;
+    // Materials with a file path are shared assets; inline ones get a copy of their own
+    // (one per material, so parts that shared one still share the copy).
+    let world = scene.main_world();
+    let mut materials: HashMap<Handle<MaterialAsset>, Handle<MaterialAsset>> =
+        subtree(world, source)
+            .into_iter()
+            .filter_map(|entity| {
+                world
+                    .get::<&MaterialComponent>(entity)
+                    .ok()
+                    .map(|m| (m.0, m.0))
+            })
+            .collect();
+    for (handle, copy) in &mut materials {
+        if let Some(asset) = scene.assets.materials.get(*handle).cloned() {
+            if asset.canonical_path().as_os_str().is_empty() {
+                *copy = scene.assets.materials.insert(asset);
+            }
         }
     }
-
-    let root = copies[0].1;
+    let pairs = duplicate_subtree(scene.main_world_mut(), source, |handle| {
+        materials.get(&handle).copied().unwrap_or(handle)
+    });
+    let Some(&(_, root)) = pairs.first() else {
+        return Err("the entity to copy no longer exists".into());
+    };
     apply_patch(ctx, root, patch)?;
-    Ok((root, copies.len()))
+    Ok((root, pairs.len()))
 }
 
 /// World matrix → local transform under `parent_world` (if any).

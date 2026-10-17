@@ -61,8 +61,22 @@ pub(crate) struct PendingEntity {
     pub look_at_target: Option<Vec3>,
     pub scale: Option<Vec3>,
     pub parent: Option<i64>,
+    /// `set_parent` was called: a clone leaves the source's parent even for `nil`.
+    pub parent_set: bool,
     pub scripts: Vec<LuaScriptSource>,
     pub components: HashMap<String, serde_json::Value>,
+    /// `clone_entity`: copy this entity and everything below it instead of spawning an
+    /// empty one.
+    pub clone_of: Option<u64>,
+    /// Animator and animation tree changes queued before the entity exists (a clone
+    /// played in the hook that made it).
+    pub animation: Vec<PendingAnimation>,
+}
+
+/// An animation change for an entity spawned or cloned in the same hook.
+pub(crate) enum PendingAnimation {
+    Animator(crate::scene::skeletal::AnimatorCommand),
+    Tree(crate::scene::skeletal::TreeCommand),
 }
 
 pub(crate) enum ExistingCommand {

@@ -9,10 +9,9 @@
 //! - **Source inspection** - Read inline source or file-backed script contents
 //! - **Reload helpers** - Re-read script source data for change detection
 
-use hecs::Entity;
 use mlua::{Lua, Result as LuaResult, Table as LuaTable};
 
-use crate::scripting::lua::guards::with_active_world;
+use crate::scripting::lua::guards::{resolve_entity, with_active_world};
 use crate::scripting::{LuaScriptComponent, LuaScriptSource};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,7 +40,7 @@ fn read_script_source(source: &LuaScriptSource) -> Result<String, mlua::Error> {
 }
 
 fn script_source_for_entity(world: &hecs::World, entity_bits: i64) -> Option<LuaScriptSource> {
-    let entity = Entity::from_bits(entity_bits as u64)?;
+    let entity = resolve_entity(entity_bits)?;
     let script = world.get::<&LuaScriptComponent>(entity).ok()?;
     Some(script.source().clone())
 }

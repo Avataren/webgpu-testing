@@ -1,64 +1,47 @@
 use crate::scene::components::{Children, Parent, TransformComponent, WorldTransform};
 use crate::scene::transform::Transform;
-use hecs::World;
+use hecs::{Entity, World};
 
+/// Compute every entity's `WorldTransform` from its `TransformComponent` and its
+/// parents', walking down from the entities without a `Parent`. An entity without a
+/// transform stops the walk: neither it nor anything below it is updated.
 pub(crate) fn propagate_transforms(world: &mut World) {
-    let roots: Vec<hecs::Entity> = world
+    let roots: Vec<Entity> = world
         .query::<&TransformComponent>()
         .without::<&Parent>()
         .iter()
         .map(|(entity, _)| entity)
         .collect();
-
     log::trace!("Propagating transforms from {} root entities", roots.len());
 
-    let mut stack: Vec<(hecs::Entity, Transform)> = Vec::new();
-
+    // One view for the whole walk rather than a lookup per component access: characters
+    // bring thousands of bones.
+    let mut missing: Vec<(Entity, Transform)> = Vec::new();
+    let mut view = world.view_mut::<(
+        &TransformComponent,
+        Option<&mut WorldTransform>,
+        Option<&Children>,
+    )>();
+    let mut stack: Vec<(Entity, Transform)> = Vec::new();
     for root in roots {
         stack.push((root, Transform::IDENTITY));
-
         while let Some((entity, parent_world)) = stack.pop() {
-            let local = match world.get::<&TransformComponent>(entity) {
-                Ok(t) => t.0,
-                Err(_) => {
-                    log::trace!("Entity {:?} has no TransformComponent, skipping", entity);
-                    continue;
-                }
+            let Some((local, world_transform, children)) = view.get_mut(entity) else {
+                continue;
             };
-
-            let world_transform = parent_world.mul_transform(&local);
-
-            log::trace!(
-                "Entity {:?}: local T:{:?}, world T:{:?}",
-                entity,
-                local.translation,
-                world_transform.translation
-            );
-
-            let mut has_world_transform = false;
-            if let Ok(mut wt) = world.get::<&mut WorldTransform>(entity) {
-                wt.0 = world_transform;
-                has_world_transform = true;
+            let transform = parent_world.mul_transform(&local.0);
+            match world_transform {
+                Some(world_transform) => world_transform.0 = transform,
+                None => missing.push((entity, transform)),
             }
-
-            if !has_world_transform {
-                if let Err(e) = world.insert_one(entity, WorldTransform(world_transform)) {
-                    log::error!(
-                        "Failed to insert WorldTransform for entity {:?}: {:?}",
-                        entity,
-                        e
-                    );
-                    continue;
-                } else {
-                    log::trace!("Inserted WorldTransform for entity {:?}", entity);
-                }
+            if let Some(children) = children {
+                stack.extend(children.0.iter().rev().map(|&child| (child, transform)));
             }
-
-            if let Ok(children) = world.get::<&Children>(entity) {
-                for &child in children.0.iter().rev() {
-                    stack.push((child, world_transform));
-                }
-            }
+        }
+    }
+    for (entity, transform) in missing {
+        if let Err(e) = world.insert_one(entity, WorldTransform(transform)) {
+            log::error!("Failed to insert WorldTransform for entity {entity:?}: {e:?}");
         }
     }
 }

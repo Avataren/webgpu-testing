@@ -791,7 +791,15 @@ impl BoundTrack {
 
 impl Binding {
     fn is_valid(&self, animator: &Animator, world: &World) -> bool {
-        self.libraries == animator.libraries && self.bones.iter().all(|&bone| world.contains(bone))
+        // Checked every frame for every animator: compare the paths' bytes before
+        // `PathBuf`'s component-wise equality.
+        let same_libraries = self.libraries.len() == animator.libraries.len()
+            && self
+                .libraries
+                .iter()
+                .zip(&animator.libraries)
+                .all(|(bound, wanted)| bound.as_os_str() == wanted.as_os_str() || bound == wanted);
+        same_libraries && self.bones.iter().all(|&bone| world.contains(bone))
     }
 
     fn build(
@@ -1311,15 +1319,30 @@ fn blend(a: Transform, b: Transform, t: f32) -> Transform {
     }
 }
 
-/// Advance every animator in `world` by `dt` seconds and pose its bones.
+/// Animators posed on the thread pool rather than one after another: below this the
+/// hand-off costs more than it saves.
+const PARALLEL_ANIMATORS: usize = 32;
+
+/// An animator's blended pose for its bones, and the root motion it asks for.
+struct Posed {
+    binding: Arc<Binding>,
+    pose: Vec<Transform>,
+    root_delta: Option<Vec3>,
+}
+
+/// Advance every animator in `world` by `dt` seconds and pose its bones. Clips advance
+/// and blend on the thread pool (each animator only touches its own state); the bones
+/// are written afterwards.
 pub(crate) fn update_animators(world: &mut World, assets: &mut Assets, dt: f32) {
     let entities: Vec<Entity> = world
         .query::<&Animator>()
         .iter()
         .map(|(entity, _)| entity)
         .collect();
+    // Take the components out so the world can be read while they are updated, and bind
+    // them (which reads the skeleton and the clip files).
+    let mut jobs: Vec<(Entity, Animator, Vec3)> = Vec::with_capacity(entities.len());
     for entity in entities {
-        // Take the component out so the world can be read while it is updated.
         let Ok(mut animator) = world
             .get::<&mut Animator>(entity)
             .map(|mut a| std::mem::take(&mut *a))
@@ -1327,11 +1350,36 @@ pub(crate) fn update_animators(world: &mut World, assets: &mut Assets, dt: f32) 
             continue;
         };
         animator.bind(world, entity, assets);
-        let root_delta = advance_and_pose(&mut animator, world, entity, dt);
-        if let Some(delta) = root_delta {
-            if let Ok(mut transform) = world.get::<&mut TransformComponent>(entity) {
-                let t = &mut transform.0;
-                t.translation += t.rotation * (t.scale * delta);
+        // Animator-space up vector, for separating vertical from horizontal root motion.
+        let up_local = world
+            .get::<&WorldTransform>(entity)
+            .map(|w| w.0.rotation.inverse() * Vec3::Y)
+            .unwrap_or(Vec3::Y);
+        jobs.push((entity, animator, up_local));
+    }
+
+    let pose = |(_, animator, up_local): &mut (Entity, Animator, Vec3)| {
+        advance_and_pose(animator, *up_local, dt)
+    };
+    let posed: Vec<Option<Posed>> = if jobs.len() < PARALLEL_ANIMATORS {
+        jobs.iter_mut().map(pose).collect()
+    } else {
+        use rayon::prelude::*;
+        jobs.par_iter_mut().map(pose).collect()
+    };
+
+    for ((entity, animator, _), posed) in jobs.into_iter().zip(posed) {
+        if let Some(posed) = posed {
+            for (slot, &bone) in posed.binding.bones.iter().enumerate() {
+                if let Ok(mut transform) = world.get::<&mut TransformComponent>(bone) {
+                    transform.0 = posed.pose[slot];
+                }
+            }
+            if let Some(delta) = posed.root_delta {
+                if let Ok(mut transform) = world.get::<&mut TransformComponent>(entity) {
+                    let t = &mut transform.0;
+                    t.translation += t.rotation * (t.scale * delta);
+                }
             }
         }
         if let Ok(mut slot) = world.get::<&mut Animator>(entity) {
@@ -1340,15 +1388,11 @@ pub(crate) fn update_animators(world: &mut World, assets: &mut Assets, dt: f32) 
     }
 }
 
-/// Advance clip times and fades, then write the blended pose to the bones. Returns the
-/// root motion to apply to the animator entity (in its local space) for
-/// [`RootMotion::Apply`].
-fn advance_and_pose(
-    animator: &mut Animator,
-    world: &mut World,
-    entity: Entity,
-    dt: f32,
-) -> Option<Vec3> {
+/// Advance clip times and fades, and blend the pose of every bone (to be written to the
+/// bones by the caller), with the root motion to apply to the animator entity (in its
+/// local space) for [`RootMotion::Apply`]. `up_local` is the world's up in the animator
+/// entity's space.
+fn advance_and_pose(animator: &mut Animator, up_local: Vec3, dt: f32) -> Option<Posed> {
     let binding = Arc::clone(animator.state.binding.as_ref()?);
 
     if !animator.state.started {
@@ -1409,12 +1453,6 @@ fn advance_and_pose(
     if binding.bones.is_empty() {
         return None;
     }
-
-    // Animator-space up vector, for separating vertical from horizontal root motion.
-    let up_local = world
-        .get::<&WorldTransform>(entity)
-        .map(|w| w.0.rotation.inverse() * Vec3::Y)
-        .unwrap_or(Vec3::Y);
 
     let bone_count = binding.bones.len();
     let mut pose: Vec<Transform> = binding.rest.clone();
@@ -1504,13 +1542,12 @@ fn advance_and_pose(
         }
     }
 
-    for (slot, &bone) in binding.bones.iter().enumerate() {
-        if let Ok(mut transform) = world.get::<&mut TransformComponent>(bone) {
-            transform.0 = pose[slot];
-        }
-    }
-
-    (has_root_delta && animator.root_motion == RootMotion::Apply).then_some(root_delta)
+    Some(Posed {
+        binding,
+        pose,
+        root_delta: (has_root_delta && animator.root_motion == RootMotion::Apply)
+            .then_some(root_delta),
+    })
 }
 
 /// Advance a clip by `dt` seconds of real time (fades) scaled by the animator's and the

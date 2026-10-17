@@ -1,5 +1,5 @@
 //! Where each frame's time goes, by stage (scripts, transforms, render, UI, ...), for
-//! `engine_stats`. Always on: one clock read per stage per frame.
+//! `engine_stats` and Lua's `frame_stats`. Always on: one clock read per stage per frame.
 
 use std::cell::RefCell;
 
@@ -16,8 +16,35 @@ struct Timings {
     average: Vec<(&'static str, f64)>,
 }
 
+/// What the last complete frame drew and how long it took, for scripts measuring
+/// themselves (Lua's `frame_stats`).
+#[derive(Debug, Clone, Default)]
+pub struct RenderedFrame {
+    /// Wall time of the frame in milliseconds.
+    pub dt_ms: f64,
+    pub draw_calls: u32,
+    pub instances: u32,
+    pub culled_instances: u32,
+    pub skinned_instances: u32,
+    pub skinned_vertices: u32,
+    /// GPU time per stage from timestamp queries (a frame or two old), when the device
+    /// has them.
+    pub gpu: Option<crate::renderer::GpuTimings>,
+}
+
 thread_local! {
     static TIMINGS: RefCell<Timings> = RefCell::default();
+    static RENDERED: RefCell<RenderedFrame> = RefCell::default();
+}
+
+/// Record what the renderer did this frame; read back with [`rendered`].
+pub fn record_rendered(frame: RenderedFrame) {
+    RENDERED.with(|rendered| *rendered.borrow_mut() = frame);
+}
+
+/// The last frame [`record_rendered`] recorded.
+pub fn rendered() -> RenderedFrame {
+    RENDERED.with(|rendered| rendered.borrow().clone())
 }
 
 fn add(list: &mut Vec<(&'static str, f64)>, stage: &'static str, ms: f64) {

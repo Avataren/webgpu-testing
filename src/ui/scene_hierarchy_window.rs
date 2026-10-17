@@ -419,7 +419,9 @@ impl SceneHierarchySnapshot {
 #[cfg(feature = "egui")]
 #[derive(Default)]
 pub struct SceneHierarchyState {
-    snapshot: SceneHierarchySnapshot,
+    /// Shared with the panel, which reads it every frame: a scene of thousands of
+    /// entities (a crowd's bones) must not be copied each time.
+    snapshot: Arc<SceneHierarchySnapshot>,
     revision: u64,
     workspace: SceneHierarchyWorkspaceInfo,
 }
@@ -435,13 +437,13 @@ impl SceneHierarchyState {
     }
 
     pub fn refresh_from_scene(&mut self, scene: &Scene, workspace: SceneHierarchyWorkspaceInfo) {
-        self.snapshot = SceneHierarchySnapshot::from_scene(scene);
+        self.snapshot = Arc::new(SceneHierarchySnapshot::from_scene(scene));
         self.workspace = workspace;
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub fn snapshot_with_revision(&self) -> (u64, SceneHierarchySnapshot) {
-        (self.revision, self.snapshot.clone())
+    pub fn snapshot_with_revision(&self) -> (u64, Arc<SceneHierarchySnapshot>) {
+        (self.revision, Arc::clone(&self.snapshot))
     }
 
     pub fn workspace_info(&self) -> SceneHierarchyWorkspaceInfo {
@@ -943,7 +945,7 @@ impl SceneHierarchyWindow {
         CollapsingState::load_with_default_open(ctx, id, true)
     }
 
-    fn snapshot(&self) -> Option<(u64, SceneHierarchySnapshot)> {
+    fn snapshot(&self) -> Option<(u64, Arc<SceneHierarchySnapshot>)> {
         let handle = self.handle.as_ref()?;
         let Ok(state) = handle.lock() else {
             return None;

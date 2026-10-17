@@ -2,6 +2,7 @@ use super::lights::safe_normalize;
 use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::renderer::{
     batch::{CullMode, InstanceSource, SkinBinding},
+    material::MaterialFlags,
     Material, PickId, RenderObject, Renderer,
 };
 use crate::scene::components::{
@@ -14,7 +15,8 @@ use crate::scene::transform::Transform;
 use glam::{Mat3, Quat, Vec3};
 use hecs::{Entity, World};
 use rayon::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Clone, Copy)]
 pub(crate) struct CameraVectors {
@@ -133,9 +135,63 @@ fn has_hidden_ancestor(world: &World, hidden: &HashSet<Entity>, entity: Entity) 
     false
 }
 
+/// Joint palettes computed while collecting one frame's entities. The meshes of one
+/// character share its skeleton, inverse bind matrices and placement, so they share one
+/// palette rather than each reading every joint again.
+#[derive(Default)]
+struct PaletteCache {
+    palettes: HashMap<PaletteKey, Vec<CachedPalette>>,
+}
+
+/// First joint, joint count and the mesh's world matrix; entries under a key are told
+/// apart by their joints and inverse bind matrices.
+type PaletteKey = (Entity, usize, [u32; 16]);
+
+struct CachedPalette {
+    joints: Vec<Entity>,
+    inverse_bind: Arc<[glam::Mat4]>,
+    palette: Arc<[glam::Mat4]>,
+}
+
+impl PaletteCache {
+    fn palette(
+        &mut self,
+        world: &World,
+        skin: &SkinnedMesh,
+        mesh_world: glam::Mat4,
+    ) -> Arc<[glam::Mat4]> {
+        let Some(&first) = skin.joints.first() else {
+            return Arc::from(Vec::new());
+        };
+        let key = (
+            first,
+            skin.joints.len(),
+            mesh_world.to_cols_array().map(f32::to_bits),
+        );
+        let entries = self.palettes.entry(key).or_default();
+        // Loaded copies of one skin carry equal inverse binds in separate allocations.
+        let same = |cached: &&CachedPalette| {
+            cached.joints == skin.joints
+                && (Arc::ptr_eq(&cached.inverse_bind, &skin.inverse_bind)
+                    || cached.inverse_bind == skin.inverse_bind)
+        };
+        if let Some(cached) = entries.iter().find(same) {
+            return Arc::clone(&cached.palette);
+        }
+        let palette: Arc<[glam::Mat4]> = skin.palette(world, mesh_world).into();
+        entries.push(CachedPalette {
+            joints: skin.joints.clone(),
+            inverse_bind: Arc::clone(&skin.inverse_bind),
+            palette: Arc::clone(&palette),
+        });
+        palette
+    }
+}
+
 fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Vec<RenderEntity> {
     let default_material = assets.default_material_handle();
     let hidden = hidden_entities(world);
+    let mut palettes = PaletteCache::default();
 
     world
         .query::<(
@@ -192,7 +248,11 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
                     visible: visible.0,
                     world_transform: world_transform.map(|t| t.0),
                     local_transform: local_transform.map(|t| t.0),
-                    name: name.map(|n| n.0.clone()),
+                    // Only the (rare) warning about a missing world transform uses it.
+                    name: world_transform
+                        .is_none()
+                        .then(|| name.map(|n| n.0.clone()))
+                        .flatten(),
                     billboard: billboard.copied(),
                     depth_state: depth_state.copied(),
                     selected: selected_marker.is_some(),
@@ -208,7 +268,7 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
                                 .map_or(glam::Mat4::IDENTITY, |t| t.matrix());
                             SkinBinding {
                                 key: skin_key(scene_key, entity),
-                                palette: skinned.palette(world, mesh_world).into(),
+                                palette: palettes.palette(world, skinned, mesh_world),
                             }
                         }),
                 }
@@ -253,6 +313,13 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
     let force_overlay = billboard.is_some() && !depth_state.depth_test && !depth_state.depth_write;
 
     let mut objects = Vec::with_capacity(if entity.selected { 2 } else { 1 });
+    // Double-sided materials (most glTF exports from Blender, hair cards, capes) are drawn
+    // from both sides; the shaders light the back faces from their own side.
+    let cull_mode = if material.flags.contains(MaterialFlags::DOUBLE_SIDED) {
+        CullMode::None
+    } else {
+        CullMode::Back
+    };
 
     objects.push(RenderObject {
         mesh: entity.mesh,
@@ -264,7 +331,7 @@ fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<Re
         render_pass: None,
         instance_source: InstanceSource::Cpu,
         gpu_index: None,
-        cull_mode: CullMode::Back,
+        cull_mode,
         pick_id: entity.pick_id,
         skin: entity.skin.clone(),
     });
@@ -446,6 +513,30 @@ fn basis_from_up_forward(up_hint: Vec3, forward: Vec3) -> (Vec3, Vec3) {
 mod tests {
     use super::*;
     use crate::scene::transform::Transform;
+
+    #[test]
+    fn meshes_of_one_skeleton_share_a_palette() {
+        let mut world = World::new();
+        let hips = world.spawn((WorldTransform(Transform::from_translation(Vec3::Y)),));
+        let binds = || -> Arc<[glam::Mat4]> { Arc::from(vec![glam::Mat4::IDENTITY]) };
+        let body = SkinnedMesh::new(vec![hips], binds());
+        let hair = SkinnedMesh::new(vec![hips], binds());
+        let other = SkinnedMesh::new(
+            vec![hips],
+            Arc::from(vec![glam::Mat4::from_translation(Vec3::X)]),
+        );
+
+        let mut cache = PaletteCache::default();
+        let a = cache.palette(&world, &body, glam::Mat4::IDENTITY);
+        let b = cache.palette(&world, &hair, glam::Mat4::IDENTITY);
+        assert!(Arc::ptr_eq(&a, &b), "equal skins share one palette");
+        assert_eq!(a[0], glam::Mat4::from_translation(Vec3::Y));
+
+        let c = cache.palette(&world, &other, glam::Mat4::IDENTITY);
+        assert!(!Arc::ptr_eq(&a, &c), "other inverse binds get their own");
+        let moved = cache.palette(&world, &body, glam::Mat4::from_translation(Vec3::Z));
+        assert!(!Arc::ptr_eq(&a, &moved), "so does a mesh placed elsewhere");
+    }
 
     #[test]
     fn hidden_parent_hides_its_descendants() {

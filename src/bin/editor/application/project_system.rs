@@ -655,10 +655,6 @@ impl EditorSystem for ProjectSystem {
         if let Some(request) = self.controller_mut().take_pending_build() {
             self.handle_project_build(ctx, request);
         }
-
-        let _ = ctx.with_gpu_app(|_, gpu_ctx| {
-            gpu_ctx.scene.process_pending_gltf_imports(gpu_ctx.renderer);
-        });
     }
 
     fn ui<'app, 'ctx>(&mut self, ctx: &mut EditorContext<'app, 'ctx, 'ctx>) {

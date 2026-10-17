@@ -16,6 +16,7 @@ use crate::renderer::shader_source::wgsl;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::num::NonZeroU64;
+use std::sync::Arc;
 
 use glam::{Mat3, Mat4, Vec3, Vec4};
 
@@ -280,6 +281,9 @@ impl SkinningStage {
         compute.palette_scratch.clear();
         compute.params_scratch.clear();
         let mut dispatches: Vec<(SkinKey, u32)> = Vec::with_capacity(ready.len());
+        // The meshes of one character share its palette (the same allocation): upload it
+        // once and point them all at it.
+        let mut uploaded: HashMap<*const Mat4, u32> = HashMap::with_capacity(ready.len());
         for (key, job) in ready {
             let Some(source) = assets.meshes.get(job.mesh) else {
                 continue;
@@ -291,15 +295,21 @@ impl SkinningStage {
             {
                 continue;
             }
+            let palette_offset = *uploaded
+                .entry(Arc::as_ptr(&job.palette) as *const Mat4)
+                .or_insert_with(|| {
+                    let offset = compute.palette_scratch.len() as u32;
+                    compute
+                        .palette_scratch
+                        .extend(job.palette.iter().map(Mat4::to_cols_array_2d));
+                    offset
+                });
             let params = SkinParams {
                 vertex_count: source.vertex_count(),
-                palette_offset: compute.palette_scratch.len() as u32,
+                palette_offset,
                 joint_count: job.palette.len() as u32,
                 _padding: 0,
             };
-            compute
-                .palette_scratch
-                .extend(job.palette.iter().map(Mat4::to_cols_array_2d));
             // Each block sits at a multiple of the uniform offset alignment.
             let start = dispatches.len() * compute.params_stride as usize;
             compute

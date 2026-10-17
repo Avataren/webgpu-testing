@@ -13,11 +13,10 @@
 //! Component values are passed as Lua tables that match the component's structure.
 //! The system automatically serializes Lua values to JSON for component storage.
 //!
-use hecs::Entity;
 use mlua::{Lua, LuaSerdeExt, Result as LuaResult, Value as LuaValue};
 
 use crate::scripting::lua::commands::ScriptCommands;
-use crate::scripting::lua::guards::{with_active_commands, with_active_world};
+use crate::scripting::lua::guards::{resolve_entity, with_active_commands, with_active_world};
 
 /// Registers component API functions with the Lua runtime.
 ///
@@ -76,7 +75,7 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
         "has_component",
         lua.create_function(|_, (entity_bits, component_name): (i64, String)| {
             with_active_world(|world| {
-                let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                let Some(entity) = resolve_entity(entity_bits) else {
                     return Ok(false);
                 };
 
@@ -95,7 +94,7 @@ pub(crate) fn register_component_api(lua: &Lua) -> LuaResult<()> {
         "get_component",
         lua.create_function(|lua, (entity_bits, component_name): (i64, String)| {
             with_active_world(|world| {
-                let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                let Some(entity) = resolve_entity(entity_bits) else {
                     return Ok(LuaValue::Nil);
                 };
 

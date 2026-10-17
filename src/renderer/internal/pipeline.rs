@@ -21,17 +21,20 @@ pub(crate) struct RenderPipeline {
     pipeline_layout: wgpu::PipelineLayout,
     uses_bindless: bool,
     depth_format: wgpu::TextureFormat,
-    depth_prepass: wgpu::RenderPipeline,
-    /// The prepass for cut-out surfaces, with the alpha test (main pipeline layout).
-    depth_prepass_masked: wgpu::RenderPipeline,
+    /// The depth prepass, culling back faces ([0]) or drawing both sides of
+    /// double-sided materials ([1]).
+    depth_prepass: [wgpu::RenderPipeline; 2],
+    /// The prepass for cut-out surfaces, with the alpha test (main pipeline layout), by
+    /// sidedness like `depth_prepass`.
+    depth_prepass_masked: [wgpu::RenderPipeline; 2],
     background: wgpu::RenderPipeline,
 }
 
 /// What [`RenderPipeline::rebuild_shaders`] builds.
 pub(crate) struct RebuiltShaders {
     shader_modules: HashMap<(MaterialPipelineKey, SamplerFilterMode), wgpu::ShaderModule>,
-    depth_prepass: wgpu::RenderPipeline,
-    depth_prepass_masked: wgpu::RenderPipeline,
+    depth_prepass: [wgpu::RenderPipeline; 2],
+    depth_prepass_masked: [wgpu::RenderPipeline; 2],
     background: wgpu::RenderPipeline,
 }
 
@@ -322,15 +325,21 @@ impl RenderPipeline {
                 label: Some("DepthMaskedShader"),
                 source: wgpu::ShaderSource::Wgsl(masked_source.into()),
             });
-        let depth_prepass_masked =
+        let depth_prepass_masked = [false, true].map(|double_sided| {
             PipelineBuilder::new(&context.device, main_layout, &masked_shader)
-                .with_label("DepthPrepassMaskedPipeline")
+                .with_label(if double_sided {
+                    "DepthPrepassMaskedDoubleSidedPipeline"
+                } else {
+                    "DepthPrepassMaskedPipeline"
+                })
                 .with_vertex_entry("vs_masked")
                 .with_fragment_entry("fs_masked")
                 .with_vertex_buffer(Vertex::layout())
                 .with_depth_stencil(context.depth.format, true, wgpu::CompareFunction::LessEqual)
+                .with_cull_mode((!double_sided).then_some(wgpu::Face::Back))
                 .with_multisample(sample_count)
-                .build();
+                .build()
+        });
 
         let depth_pipeline_layout =
             context
@@ -423,12 +432,15 @@ impl RenderPipeline {
             shader_modules.insert((MaterialPipelineKey::Error, filtering), error_module);
         }
 
-        let depth_prepass = Self::create_depth_prepass_pipeline(
-            context,
-            &depth_pipeline_layout,
-            &depth_shader,
-            sample_count,
-        );
+        let depth_prepass = [false, true].map(|double_sided| {
+            Self::create_depth_prepass_pipeline(
+                context,
+                &depth_pipeline_layout,
+                &depth_shader,
+                sample_count,
+                double_sided,
+            )
+        });
 
         Ok(RebuiltShaders {
             shader_modules,
@@ -782,24 +794,31 @@ impl RenderPipeline {
         pipeline_layout: &wgpu::PipelineLayout,
         shader: &wgpu::ShaderModule,
         sample_count: u32,
+        double_sided: bool,
     ) -> wgpu::RenderPipeline {
         PipelineBuilder::new(&context.device, pipeline_layout, shader)
-            .with_label("DepthPrepassPipeline")
+            .with_label(if double_sided {
+                "DepthPrepassDoubleSidedPipeline"
+            } else {
+                "DepthPrepassPipeline"
+            })
             .depth_only()
             .with_vertex_buffer(Vertex::layout())
             .with_depth_stencil(context.depth.format, true, wgpu::CompareFunction::LessEqual)
+            .with_cull_mode((!double_sided).then_some(wgpu::Face::Back))
             .with_multisample(sample_count)
             .build()
     }
 
-    pub(crate) fn depth_prepass(&self) -> &wgpu::RenderPipeline {
-        &self.depth_prepass
+    /// The depth prepass; `double_sided` draws both sides (no culling).
+    pub(crate) fn depth_prepass(&self, double_sided: bool) -> &wgpu::RenderPipeline {
+        &self.depth_prepass[usize::from(double_sided)]
     }
 
     /// The prepass for cut-out surfaces: the main pipeline layout (lights and textures
     /// as groups 2 and 3), with the alpha test.
-    pub(crate) fn depth_prepass_masked(&self) -> &wgpu::RenderPipeline {
-        &self.depth_prepass_masked
+    pub(crate) fn depth_prepass_masked(&self, double_sided: bool) -> &wgpu::RenderPipeline {
+        &self.depth_prepass_masked[usize::from(double_sided)]
     }
 
     pub(crate) fn background(&self) -> &wgpu::RenderPipeline {

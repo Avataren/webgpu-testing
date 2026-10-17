@@ -6,6 +6,7 @@ pub mod builder;
 pub mod camera;
 mod camera_control;
 pub mod components;
+pub mod duplicate;
 mod environment_control;
 pub(crate) mod gltf_material_registry;
 pub mod gltf_package;

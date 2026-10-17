@@ -38,11 +38,10 @@
 //!   relative to the parent
 
 use glam::{EulerRot, Quat, Vec3};
-use hecs::Entity;
 use mlua::{Lua, Result as LuaResult};
 
 use crate::scene::{TransformComponent, WorldTransform};
-use crate::scripting::lua::guards::{with_active_commands, with_active_world};
+use crate::scripting::lua::guards::{resolve_entity, with_active_commands, with_active_world};
 
 /// Registers transform API functions with the Lua runtime.
 ///
@@ -178,7 +177,7 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
         "get_world_translation",
         lua.create_function(|lua, entity_bits: i64| {
             with_active_world(|world| {
-                let entity = match Entity::from_bits(entity_bits as u64) {
+                let entity = match resolve_entity(entity_bits) {
                     Some(e) => e,
                     None => return Ok(None),
                 };
@@ -207,7 +206,7 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
         "get_world_rotation",
         lua.create_function(|lua, entity_bits: i64| {
             with_active_world(|world| {
-                let entity = match Entity::from_bits(entity_bits as u64) {
+                let entity = match resolve_entity(entity_bits) {
                     Some(e) => e,
                     None => return Ok(None),
                 };
@@ -241,7 +240,7 @@ pub(crate) fn register_transform_api(lua: &Lua) -> LuaResult<()> {
             name,
             lua.create_function(move |lua, entity_bits: i64| {
                 with_active_world(|world| {
-                    let Some(entity) = Entity::from_bits(entity_bits as u64) else {
+                    let Some(entity) = resolve_entity(entity_bits) else {
                         return Ok(None);
                     };
                     let rotation = if let Ok(world_transform) = world.get::<&WorldTransform>(entity)

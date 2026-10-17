@@ -866,6 +866,17 @@ where
                     #[cfg(feature = "egui")]
                     self.editor.record_frame_stats(&frame, &renderer);
 
+                    let stats = renderer.last_frame_stats();
+                    frame_timings::record_rendered(frame_timings::RenderedFrame {
+                        dt_ms: frame.dt() * 1000.0,
+                        draw_calls: stats.total_draw_calls(),
+                        instances: stats.instance_count,
+                        culled_instances: stats.culled_instances,
+                        skinned_instances: stats.skinned_instances,
+                        skinned_vertices: stats.skinned_vertices,
+                        gpu: renderer.gpu_timings().cloned(),
+                    });
+
                     self.platform.put_renderer(renderer);
 
                     self.update_input_state(|input| input.update());

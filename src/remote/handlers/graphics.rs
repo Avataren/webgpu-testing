@@ -28,8 +28,8 @@ pub(super) fn get() -> RemoteResult {
     }))
 }
 
-/// Change the given settings (`reset: true` first restores the defaults), and open or
-/// close the page (`open`).
+/// Change the given settings (`reset: true` first restores the defaults; `save: false`
+/// keeps the change to this run), and open or close the page (`open`).
 pub(super) fn set(params: &Value) -> RemoteResult {
     let Some(object) = params.as_object() else {
         return Err("graphics.set expects an object of settings".into());
@@ -40,26 +40,18 @@ pub(super) fn set(params: &Value) -> RemoteResult {
     } else {
         graphics.settings.clone()
     };
-    let mut merged = serde_json::to_value(&base).map_err(|err| err.to_string())?;
-    let mut unknown = Vec::new();
-    for (key, value) in object {
-        if matches!(key.as_str(), "reset" | "open") {
-            continue;
-        }
-        match merged.get_mut(key) {
-            Some(slot) => *slot = value.clone(),
-            None => unknown.push(key.clone()),
-        }
+    let mut patch = object.clone();
+    patch.remove("reset");
+    patch.remove("open");
+    patch.remove("save");
+    let settings = base
+        .patched(&patch)
+        .map_err(|err| format!("{err} (see graphics.get)"))?;
+    if object.get("save").and_then(Value::as_bool) == Some(false) {
+        graphics.set_unsaved(settings);
+    } else {
+        graphics.set(settings);
     }
-    if !unknown.is_empty() {
-        return Err(format!(
-            "unknown graphics settings: {} (see graphics.get)",
-            unknown.join(", ")
-        ));
-    }
-    let settings: GraphicsSettings = serde_json::from_value(merged)
-        .map_err(|err| format!("invalid graphics settings: {err}"))?;
-    graphics.set(settings);
     if let Some(open) = object.get("open").and_then(Value::as_bool) {
         graphics.open = open;
     }

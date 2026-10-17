@@ -232,26 +232,41 @@ struct MeshEntry {
     bounds: [f32; 4],
 }
 
-/// Growable storage buffer that keeps its contents when it grows.
+/// Growable storage buffer that keeps its contents when it grows, up to what the device
+/// can bind as one storage buffer.
 struct PoolBuffer {
     buffer: wgpu::Buffer,
     /// Capacity in elements.
     capacity: u64,
     /// Elements in use.
     len: u64,
+    /// Most elements the device can bind (and allocate) in one buffer.
+    max_elements: u64,
     element_size: u64,
     label: &'static str,
 }
 
 impl PoolBuffer {
     fn new(device: &wgpu::Device, label: &'static str, element_size: u64, capacity: u64) -> Self {
+        let limits = device.limits();
+        let max_bytes = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size);
+        let max_elements = max_bytes / element_size;
+        let capacity = capacity.min(max_elements);
         Self {
             buffer: Self::create(device, label, element_size * capacity),
             capacity,
             len: 0,
+            max_elements,
             element_size,
             label,
         }
+    }
+
+    /// Whether `count` more elements fit without passing the device's limit.
+    fn fits(&self, count: u64) -> bool {
+        self.len + count <= self.max_elements
     }
 
     fn create(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu::Buffer {
@@ -268,6 +283,7 @@ impl PoolBuffer {
 
     /// Append `data`, growing (and copying the old contents over in `encoder`) when it
     /// does not fit. Returns the first element's index and whether the buffer changed.
+    /// Callers check [`Self::fits`] first: the buffer never grows past the device's limit.
     fn append(
         &mut self,
         device: &wgpu::Device,
@@ -279,7 +295,10 @@ impl PoolBuffer {
         let start = self.len;
         let mut grew = false;
         if start + count > self.capacity {
-            let capacity = (start + count).next_power_of_two().max(self.capacity * 2);
+            let capacity = (start + count)
+                .next_power_of_two()
+                .max(self.capacity * 2)
+                .min(self.max_elements);
             let buffer = Self::create(device, self.label, capacity * self.element_size);
             if start > 0 {
                 encoder.copy_buffer_to_buffer(
@@ -339,6 +358,8 @@ pub(crate) struct RayTracingScene {
     /// The materials buffer `bind_group` was made with (it is replaced when it grows).
     bound_materials: Option<wgpu::Buffer>,
     max_primitives: u32,
+    /// Geometry was left out because the pool is full (warned once).
+    warned_pool_full: bool,
     frame: u64,
     stats: RayTracingStats,
 }
@@ -398,6 +419,7 @@ impl RayTracingScene {
             bind_group: None,
             bound_materials: None,
             max_primitives: device.limits().max_blas_primitive_count,
+            warned_pool_full: false,
             frame: 0,
             stats: RayTracingStats::default(),
         }
@@ -839,6 +861,14 @@ impl RayTracingScene {
             return false;
         }
 
+        let index_count = mesh_indices.len() as u64 * capacity;
+        if !self.vertices.fits(template_vertices * (1 + capacity))
+            || !self.indices.fits(index_count)
+        {
+            self.warn_pool_full();
+            return false;
+        }
+
         let (template_base, template_grew) =
             self.vertices
                 .append(device, queue, encoder, bytemuck::cast_slice(&data.vertices));
@@ -1050,6 +1080,11 @@ impl RayTracingScene {
             return false;
         }
 
+        if !self.vertices.fits(vertex_count as u64) || !self.indices.fits(indices.len() as u64) {
+            self.warn_pool_full();
+            return false;
+        }
+
         // A skinned instance starts from its rest pose; the deformed copy replaces it.
         let (vertex_base, vertices_grew) =
             self.vertices
@@ -1107,6 +1142,19 @@ impl RayTracingScene {
             },
         );
         vertices_grew || indices_grew
+    }
+
+    /// Geometry past the pool's limit is left out of ray-traced effects (it still draws);
+    /// say so once.
+    fn warn_pool_full(&mut self) {
+        if !self.warned_pool_full {
+            self.warned_pool_full = true;
+            log::warn!(
+                "Ray tracing leaves out geometry: its pool reached the GPU's limit of {} MiB per buffer ({} vertices); the rest still draws, without ray-traced shadows or reflections",
+                self.vertices.max_elements * self.vertices.element_size / (1024 * 1024),
+                self.vertices.len,
+            );
+        }
     }
 
     fn evict_unused(&mut self) {

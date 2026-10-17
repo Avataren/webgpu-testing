@@ -16,12 +16,11 @@
 //! - Setting parent to `nil` unparents the entity
 //! - World transforms are automatically updated when hierarchy changes
 
-use hecs::Entity;
 use mlua::{Lua, Result as LuaResult};
 
 use crate::scene::components::{Children, Parent};
 use crate::scripting::lua::commands::entity_bits;
-use crate::scripting::lua::guards::{with_active_commands, with_active_world};
+use crate::scripting::lua::guards::{resolve_entity, with_active_commands, with_active_world};
 
 /// Registers hierarchy API functions with the Lua runtime.
 ///
@@ -83,7 +82,7 @@ pub(crate) fn register_hierarchy_api(lua: &Lua) -> LuaResult<()> {
         "get_parent",
         lua.create_function(|_, entity_handle: i64| {
             with_active_world(|world| {
-                let entity = match Entity::from_bits(entity_handle as u64) {
+                let entity = match resolve_entity(entity_handle) {
                     Some(e) => e,
                     None => return Ok(None),
                 };
@@ -102,7 +101,7 @@ pub(crate) fn register_hierarchy_api(lua: &Lua) -> LuaResult<()> {
         "get_children",
         lua.create_function(|lua, entity_handle: i64| {
             with_active_world(|world| {
-                let entity = match Entity::from_bits(entity_handle as u64) {
+                let entity = match resolve_entity(entity_handle) {
                     Some(e) => e,
                     None => return Ok(None),
                 };

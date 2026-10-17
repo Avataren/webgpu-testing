@@ -52,7 +52,6 @@
 
 use std::path::PathBuf;
 
-use hecs::Entity;
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
 use crate::scene::skeletal::{
@@ -60,7 +59,7 @@ use crate::scene::skeletal::{
     RootMotion, TreeCommand,
 };
 use crate::scripting::lua::commands::entity_bits;
-use crate::scripting::lua::guards::{with_active_commands, with_active_world};
+use crate::scripting::lua::guards::{resolve_entity, with_active_commands, with_active_world};
 
 fn error(message: impl Into<String>) -> mlua::Error {
     mlua::Error::RuntimeError(message.into())
@@ -104,7 +103,7 @@ fn queue_tree(entity: i64, command: TreeCommand) -> LuaResult<()> {
 /// Read the animation tree that drives `entity`, if any.
 fn with_tree<R>(entity: i64, f: impl FnOnce(&AnimationTree) -> R) -> LuaResult<Option<R>> {
     with_active_world(|world| {
-        let Some(entity) = Entity::from_bits(entity as u64) else {
+        let Some(entity) = resolve_entity(entity) else {
             return Ok(None);
         };
         let Some(owner) = tree_entity(world, entity) else {
@@ -117,7 +116,7 @@ fn with_tree<R>(entity: i64, f: impl FnOnce(&AnimationTree) -> R) -> LuaResult<O
 /// Read the animator that drives `entity`, if any.
 fn with_animator<R>(entity: i64, f: impl FnOnce(&Animator) -> R) -> LuaResult<Option<R>> {
     with_active_world(|world| {
-        let Some(entity) = Entity::from_bits(entity as u64) else {
+        let Some(entity) = resolve_entity(entity) else {
             return Ok(None);
         };
         let Some(owner) = animator_entity(world, entity) else {
@@ -312,7 +311,7 @@ pub(crate) fn register_animation_api(lua: &Lua) -> LuaResult<()> {
         "find_bone",
         lua.create_function(|_, (entity, name): (i64, String)| {
             with_active_world(|world| {
-                let Some(root) = Entity::from_bits(entity as u64) else {
+                let Some(root) = resolve_entity(entity) else {
                     return Ok(None);
                 };
                 Ok(find_bone(world, root, &name).map(entity_bits))

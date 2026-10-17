@@ -125,6 +125,12 @@ its TAA jitter and texture LOD bias depend on both.
   discard below the cutoff: in the depth prepass, the main pass, the pick pass, shadow
   maps (an alpha-tested shadow pipeline) and ray queries (non-opaque BLAS; every query loop confirms candidates
   through `rt_candidate_blocks` in `postprocess/rt_alpha.wgsl`).
+- **Double-sided materials** (`MaterialFlags::DOUBLE_SIDED`, glTF `doubleSided`, which
+  Blender exports by default) are drawn without back-face culling in every pass: the
+  render object's `cull_mode` comes from the material, and the depth prepass and shadow
+  maps have a no-culling pipeline of each kind (`depth_prepass(double_sided)`,
+  `ShadowResources::pipeline[1]`). `shade_fragment` flips the normal on back faces
+  (`@builtin(front_facing)`), so they are lit from the side the camera sees.
 - **Transparent sorting** is per instance across all transparent batches; consecutive
   instances of one batch share a draw.
 

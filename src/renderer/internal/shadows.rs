@@ -5,7 +5,7 @@ use std::num::NonZeroU64;
 use bytemuck::{Pod, Zeroable};
 use glam::Mat4;
 
-use crate::renderer::batch::InstanceSource;
+use crate::renderer::batch::{CullMode, InstanceSource};
 use crate::renderer::internal::culling::{instance_visible, Frustum, Visibility};
 use crate::renderer::internal::{
     DynamicObjectsBuffer, OrderedBatch, PreparedBatches, RenderContext,
@@ -161,10 +161,11 @@ pub(crate) struct ShadowResources {
     view_scratch: Vec<u8>,
     uniform_bind_group: wgpu::BindGroup,
     uniform_layout: wgpu::BindGroupLayout,
-    pipeline: wgpu::RenderPipeline,
-    /// Cut-out surfaces' pipeline (with the alpha test); `None` until
-    /// [`Self::enable_alpha_masking`], and they then cast solid shadows.
-    masked_pipeline: Option<wgpu::RenderPipeline>,
+    /// Culling back faces ([0]), or both sides for double-sided materials ([1]).
+    pipeline: [wgpu::RenderPipeline; 2],
+    /// Cut-out surfaces' pipelines (with the alpha test), by sidedness like `pipeline`;
+    /// `None` until [`Self::enable_alpha_masking`], and they then cast solid shadows.
+    masked_pipeline: Option<[wgpu::RenderPipeline; 2]>,
     cache: ShadowCache,
     /// Scratch for culling each view.
     visibility: Visibility,
@@ -284,19 +285,26 @@ impl ShadowResources {
             immediate_size: 0,
         });
 
-        let pipeline = PipelineBuilder::new(device, &pipeline_layout, &shader)
-            .with_label("ShadowPipeline")
-            .with_vertex_entry("vs_main")
-            .depth_only() // No fragment shader for shadow pass
-            .with_vertex_buffer(Vertex::layout())
-            .with_depth_stencil_biased(
-                wgpu::TextureFormat::Depth32Float,
-                true,
-                wgpu::CompareFunction::LessEqual,
-                2,   // constant bias
-                2.0, // slope bias
-            )
-            .build();
+        let pipeline = [false, true].map(|double_sided| {
+            PipelineBuilder::new(device, &pipeline_layout, &shader)
+                .with_label(if double_sided {
+                    "ShadowDoubleSidedPipeline"
+                } else {
+                    "ShadowPipeline"
+                })
+                .with_vertex_entry("vs_main")
+                .depth_only() // No fragment shader for shadow pass
+                .with_vertex_buffer(Vertex::layout())
+                .with_depth_stencil_biased(
+                    wgpu::TextureFormat::Depth32Float,
+                    true,
+                    wgpu::CompareFunction::LessEqual,
+                    2,   // constant bias
+                    2.0, // slope bias
+                )
+                .with_cull_mode((!double_sided).then_some(wgpu::Face::Back))
+                .build()
+        });
 
         Self {
             directional,
@@ -339,9 +347,13 @@ impl ShadowResources {
             ],
             immediate_size: 0,
         });
-        self.masked_pipeline = Some(
+        self.masked_pipeline = Some([false, true].map(|double_sided| {
             PipelineBuilder::new(device, &layout, &shader)
-                .with_label("ShadowMaskedPipeline")
+                .with_label(if double_sided {
+                    "ShadowMaskedDoubleSidedPipeline"
+                } else {
+                    "ShadowMaskedPipeline"
+                })
                 .with_vertex_entry("vs_masked")
                 .with_fragment_entry("fs_masked")
                 .with_vertex_buffer(Vertex::layout())
@@ -352,8 +364,9 @@ impl ShadowResources {
                     2,
                     2.0,
                 )
-                .build(),
-        );
+                .with_cull_mode((!double_sided).then_some(wgpu::Face::Back))
+                .build()
+        }));
         // The maps were drawn without the alpha test.
         self.cache = ShadowCache::default();
     }
@@ -649,14 +662,16 @@ impl ShadowResources {
                 continue;
             };
             let visible = visibility.instances(batch_index);
-            // Cut-out surfaces alpha-test with their own pipeline, one draw per material.
+            // Cut-out surfaces alpha-test with their own pipeline, one draw per material;
+            // double-sided ones cast shadows from both sides.
+            let sides = usize::from(batch.cull_mode == CullMode::None);
             let masked = match (&self.masked_pipeline, mask_textures) {
-                (Some(pipeline), Some(textures)) if batch.alpha_masked => {
-                    Some((pipeline, textures))
+                (Some(pipelines), Some(textures)) if batch.alpha_masked => {
+                    Some((&pipelines[sides], textures))
                 }
                 _ => None,
             };
-            pass.set_pipeline(masked.map_or(&self.pipeline, |(pipeline, _)| pipeline));
+            pass.set_pipeline(masked.map_or(&self.pipeline[sides], |(pipeline, _)| pipeline));
 
             let instance_count = batch.instances.len() as u32;
             pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));

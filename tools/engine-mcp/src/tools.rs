@@ -796,7 +796,8 @@ pub fn tools() -> Vec<Tool> {
                 "path_tracing_caustics": { "type": "boolean", "description": "Caustics: light focused through glass (transmission > 0) and off smooth metals onto other surfaces, traced as photons from the lights (default true); glass then casts a shadow with the focused light in it" },
                 "show_fps": { "type": "boolean", "description": "Yellow frame rate in the corner of the view" },
                 "open": { "type": "boolean", "description": "Show or hide the settings page" },
-                "reset": { "type": "boolean", "description": "Restore the defaults first" }
+                "reset": { "type": "boolean", "description": "Restore the defaults first" },
+                "save": { "type": "boolean", "description": "Save the change as the player's choice (default true). false applies it to this run only, for tests and A/B comparisons: the saved settings come back with the next launch, or set them back yourself" }
             }), &[]),
             action: Action::Engine("graphics.set"),
         },

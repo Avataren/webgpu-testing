@@ -4,18 +4,51 @@
 //! live scene graph. Isolating the logic here keeps `scene` focused on graph
 //! management and exposes a narrow entry point for `Scene` to trigger imports.
 
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
 use super::scene::Scene;
 use crate::renderer::Renderer;
+use crate::scene::assets::SceneAssetBundle;
 use crate::scene::loader::{SceneImportDevice, SceneLoader};
 use crate::scripting::PendingGltfImport;
 use log::{error, warn};
 
 #[derive(Default)]
-pub struct ImportQueue;
+pub struct ImportQueue {
+    /// Models already loaded and registered with the renderer, by file and scale.
+    /// Importing one again (a script building a crowd, or reloading and importing in
+    /// `on_created` again) instantiates it without reading the file or uploading its
+    /// meshes and textures a second time, which would otherwise stay on the GPU.
+    loaded: HashMap<(PathBuf, u32), LoadedModel>,
+}
+
+struct LoadedModel {
+    bundle: SceneAssetBundle,
+    /// The file's modification time when it was loaded: a newer file is loaded again.
+    modified: Option<std::time::SystemTime>,
+}
+
+/// When `path` (project-relative or absolute) last changed; `None` where that cannot be
+/// read (the web).
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let resolved = crate::project::resolve_project_path(path);
+        std::fs::metadata(resolved)
+            .and_then(|meta| meta.modified())
+            .ok()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        None
+    }
+}
 
 impl ImportQueue {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
     pub fn process_pending_gltf_imports(&mut self, scene: &mut Scene, renderer: &mut Renderer) {
@@ -40,26 +73,40 @@ impl ImportQueue {
                 continue;
             }
 
-            match SceneLoader::load_gltf_asset(&path, renderer, scale) {
-                Ok(mut bundle) => {
-                    let registration = bundle.register_resources(renderer, &mut scene.assets);
-                    if registration.textures_changed() {
-                        textures_updated = true;
+            let key = (path.clone(), scale.to_bits());
+            let modified = modified(&path);
+            let fresh = self
+                .loaded
+                .get(&key)
+                .is_some_and(|loaded| loaded.modified == modified);
+            if !fresh {
+                match SceneLoader::load_gltf_asset(&path, renderer, scale) {
+                    Ok(mut bundle) => {
+                        let registration = bundle.register_resources(renderer, &mut scene.assets);
+                        if registration.textures_changed() {
+                            textures_updated = true;
+                        }
+                        self.loaded
+                            .insert(key.clone(), LoadedModel { bundle, modified });
                     }
-
-                    let mut instance = bundle.asset.instantiate(
-                        Some(renderer as &mut dyn SceneImportDevice),
-                        &mut scene.assets,
-                    );
-                    let (animations, animation_states) = instance.take_animation_data();
-                    let entity_map = scene.merge_world_as_child(parent, instance.into_world());
-
-                    scene.attach_imported_animations(animations, animation_states, &entity_map);
-                }
-                Err(err) => {
-                    error!("Failed to import glTF {:?}: {err}", path);
+                    Err(err) => {
+                        error!("Failed to import glTF {:?}: {err}", path);
+                        continue;
+                    }
                 }
             }
+            let Some(loaded) = self.loaded.get(&key) else {
+                continue;
+            };
+
+            let mut instance = loaded.bundle.asset.instantiate(
+                Some(renderer as &mut dyn SceneImportDevice),
+                &mut scene.assets,
+            );
+            let (animations, animation_states) = instance.take_animation_data();
+            let entity_map = scene.merge_world_as_child(parent, instance.into_world());
+
+            scene.attach_imported_animations(animations, animation_states, &entity_map);
         }
 
         if textures_updated {

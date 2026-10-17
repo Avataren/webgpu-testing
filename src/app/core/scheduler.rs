@@ -454,11 +454,13 @@ impl Scheduler {
         let mut textures_changed = false;
         let mut workspace_swapped = false;
 
-        // Scripts queue mesh and material changes during the update stage; they need
-        // the renderer, so they land here, before anything is drawn.
+        // Scripts queue mesh and material changes and glTF imports (`import_gltf`) during
+        // the update stage; they need the renderer, so they land here, before anything is
+        // drawn, in every app (the player as well as the editor).
         if let Some(mut scene) = workspace.scene_mut_by_handle(active_handle) {
             super::frame_timings::time("script_assets", || {
-                scene.apply_script_asset_commands(renderer)
+                scene.apply_script_asset_commands(renderer);
+                scene.process_pending_gltf_imports(renderer);
             });
         }
 

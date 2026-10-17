@@ -64,7 +64,8 @@ use mlua::{Lua, Result as LuaResult, Table, Value};
 use crate::physics::{PhysicsCommand, QueryOptions, RayHit};
 use crate::scripting::lua::commands::entity_bits;
 use crate::scripting::lua::guards::{
-    with_active_commands, with_active_input_state, with_active_physics, with_active_world,
+    resolve_entity, with_active_commands, with_active_input_state, with_active_physics,
+    with_active_world,
 };
 
 fn error(message: impl Into<String>) -> mlua::Error {
@@ -72,7 +73,7 @@ fn error(message: impl Into<String>) -> mlua::Error {
 }
 
 fn entity_of(handle: i64) -> Option<Entity> {
-    Entity::from_bits(handle as u64)
+    resolve_entity(handle)
 }
 
 fn vec3_table(lua: &Lua, v: Vec3) -> LuaResult<Table> {

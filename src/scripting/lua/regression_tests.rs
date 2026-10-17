@@ -1068,3 +1068,186 @@ fn animator_functions_queue_playback_and_find_bones() {
         None | Some(mlua::Value::Nil)
     ));
 }
+
+#[test]
+fn clone_entity_copies_a_character_that_plays_in_the_same_chunk() {
+    use crate::scene::skeletal::{Animator, SkinnedMesh};
+    use crate::scene::{Children, Name, Visible};
+    use std::sync::Arc;
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let stage = world.spawn((Name::new("Stage"),));
+    let dancer = world.spawn((
+        Name::new("Dancer"),
+        Parent(stage),
+        TransformComponent(Transform::from_translation(Vec3::Y)),
+        Visible(false),
+        Animator::with_library("dance.glb"),
+    ));
+    let hips = world.spawn((Name::new("Hips"), Parent(dancer)));
+    let body = world.spawn((
+        Name::new("Body"),
+        Parent(dancer),
+        SkinnedMesh {
+            joints: vec![hips],
+            inverse_bind: Arc::from(vec![glam::Mat4::IDENTITY]),
+        },
+    ));
+    world.insert_one(stage, Children(vec![dancer])).unwrap();
+    world
+        .insert_one(dancer, Children(vec![hips, body]))
+        .unwrap();
+
+    state
+        .eval(
+            &mut world,
+            &format!(
+                r#"
+                    local a = clone_entity({dancer}, "Copy A")
+                    set_translation(a, 5, 0, 0)
+                    set_component(a, "Visible", true)
+                    animator_play(a, "Dance", {{ fade = 0 }})
+                    local b = clone_entity({dancer}, "Copy B")
+                    set_parent(b, nil)
+                "#,
+                dancer = dancer.to_bits().get() as i64
+            ),
+            None,
+        )
+        .unwrap();
+
+    let named = |name: &str| {
+        world
+            .query::<&Name>()
+            .iter()
+            .find(|(_, n)| n.0 == name)
+            .map(|(entity, _)| entity)
+            .unwrap_or_else(|| panic!("no entity named {name}"))
+    };
+    let (a, b) = (named("Copy A"), named("Copy B"));
+    assert_eq!(
+        world.get::<&Parent>(a).unwrap().0,
+        stage,
+        "a sibling of the source"
+    );
+    assert!(
+        world.get::<&Parent>(b).is_err(),
+        "set_parent(nil) unparents a clone"
+    );
+    assert_eq!(world.get::<&Children>(stage).unwrap().0, vec![dancer, a]);
+    assert_eq!(
+        world.get::<&TransformComponent>(a).unwrap().0.translation,
+        Vec3::new(5.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        world.get::<&TransformComponent>(b).unwrap().0.translation,
+        Vec3::Y,
+        "a clone starts from its source's transform"
+    );
+    assert!(world.get::<&Visible>(a).unwrap().0);
+    assert!(!world.get::<&Visible>(b).unwrap().0);
+
+    let a_children = world.get::<&Children>(a).unwrap().0.clone();
+    assert_eq!(a_children.len(), 2);
+    let a_body = a_children
+        .iter()
+        .copied()
+        .find(|&child| world.get::<&SkinnedMesh>(child).is_ok())
+        .unwrap();
+    let joint = world.get::<&SkinnedMesh>(a_body).unwrap().joints[0];
+    assert!(
+        a_children.contains(&joint),
+        "the copy deforms with its own bones"
+    );
+    assert_eq!(
+        world.get::<&Animator>(a).unwrap().status(0).clip.as_deref(),
+        Some("Dance"),
+        "animator_play reached the clone made in the same chunk"
+    );
+    assert!(world
+        .get::<&Animator>(dancer)
+        .unwrap()
+        .state
+        .layers
+        .is_empty());
+}
+
+#[test]
+fn reading_functions_accept_spawned_handles_in_later_hooks() {
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let script = spawn_script(&mut world, "spawner", "function noop() end");
+    state.process_scripts(&mut world, DT, false).unwrap();
+    state
+        .eval(
+            &mut world,
+            r#"
+                PARENT = spawn_entity("Parent")
+                CHILD = spawn_entity("Child")
+                set_parent(CHILD, PARENT)
+                set_translation(PARENT, 1, 2, 3)
+                READ_NOW = entity_exists(PARENT)
+            "#,
+            Some(script),
+        )
+        .unwrap();
+    let output = state
+        .eval(
+            &mut world,
+            "return READ_NOW, entity_exists(PARENT), #get_children(PARENT), get_component(PARENT, 'Transform').translation[2], get_parent(CHILD) ~= nil",
+            Some(script),
+        )
+        .unwrap();
+    assert_eq!(
+        output.values,
+        vec![
+            serde_json::json!(false),
+            serde_json::json!(true),
+            serde_json::json!(1),
+            serde_json::json!(2.0),
+            serde_json::json!(true)
+        ],
+        "a handle reads like the entity id from the next hook on"
+    );
+}
+
+#[test]
+fn despawning_many_subtrees_in_one_hook_removes_every_descendant() {
+    use crate::scene::{Children, Name};
+
+    let mut state = ScriptingState::new().unwrap();
+    let mut world = World::new();
+    let mut roots = Vec::new();
+    let mut everything = Vec::new();
+    for i in 0..20 {
+        let root = world.spawn((Name::new(format!("Actor {i}")),));
+        let listed = world.spawn((Parent(root),));
+        // Linked only by its Parent: the root's child list misses it.
+        let unlisted = world.spawn((Parent(root),));
+        let grandchild = world.spawn((Parent(listed),));
+        world.insert_one(root, Children(vec![listed])).unwrap();
+        world
+            .insert_one(listed, Children(vec![grandchild]))
+            .unwrap();
+        roots.push(root.to_bits().get() as i64);
+        everything.extend([root, listed, unlisted, grandchild]);
+    }
+    let bystander = world.spawn((Name::new("Bystander"),));
+
+    let list = roots
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    state
+        .eval(
+            &mut world,
+            &format!("for _, e in ipairs({{ {list} }}) do despawn_entity(e) end"),
+            None,
+        )
+        .unwrap();
+
+    assert!(everything.iter().all(|&entity| !world.contains(entity)));
+    assert!(world.contains(bystander));
+}

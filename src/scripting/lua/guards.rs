@@ -115,6 +115,20 @@ impl Drop for StateGuard {
     }
 }
 
+/// The entity a script's handle names: an entity id, or a handle `spawn_entity` (or
+/// another spawning function) returned, once its entity exists (from the hook after the
+/// one that spawned it). Reading functions take either; an entity still pending, or an
+/// id that never existed, names no live entity.
+pub(crate) fn resolve_entity(handle: i64) -> Option<hecs::Entity> {
+    let resolved = ACTIVE_COMMANDS.with(|cell| {
+        let active = cell.try_borrow().ok()?;
+        let commands = active.0.as_ref()?.try_borrow().ok()?;
+        let bits = commands.registry.try_borrow().ok()?.resolved_bits(handle);
+        bits
+    });
+    hecs::Entity::from_bits(resolved.unwrap_or(handle as u64))
+}
+
 pub(crate) fn with_active_commands<R>(
     f: impl FnOnce(&mut ScriptCommands) -> Result<R, mlua::Error>,
 ) -> Result<R, mlua::Error> {

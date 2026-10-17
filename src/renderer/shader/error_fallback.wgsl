@@ -92,11 +92,11 @@ fn checkerboard_color(uv: vec2<f32>, world_pos: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(secondary, 1.0);
 }
 
-fn shade_fragment(in: VsOut) -> ShadedFragment {
+fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     let color = checkerboard_color(in.uv, in.world_pos);
     return ShadedFragment(
         color,
-        vec4<f32>(normalize(in.normal), 1.0),
+        vec4<f32>(normalize(in.normal) * select(-1.0, 1.0, front_facing), 1.0),
         vec4<f32>(in.world_pos, 1.0),
     );
 }
@@ -141,13 +141,13 @@ fn vs_main(in: VsIn) -> VsOut {
 }
 
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    return shade_fragment(in).color;
+fn fs_main(in: VsOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
+    return shade_fragment(in, front_facing).color;
 }
 
 @fragment
-fn fs_main_gbuffer(in: VsOut) -> GBufferOut {
-    let shaded = shade_fragment(in);
+fn fs_main_gbuffer(in: VsOut, @builtin(front_facing) front_facing: bool) -> GBufferOut {
+    let shaded = shade_fragment(in, front_facing);
     return GBufferOut(
         shaded.color,
         pack_normal_velocity(shaded.normal.xyz, motion_vector(in.curr_clip, in.prev_clip)),
