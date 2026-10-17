@@ -35,6 +35,14 @@ fn sample_emissive_texture(index: u32, uv: vec2<f32>) -> vec3<f32> {
     return texture_sample(index, uv, vec4<f32>(0.0)).rgb;
 }
 
+// With explicit gradients, for uvs that jump (interior mapping's room images, from wall
+// to wall): no uniform control flow needed.
+fn sample_emissive_texture_grad(index: u32, uv: vec2<f32>, ddx: vec2<f32>, ddy: vec2<f32>) -> vec3<f32> {
+    let bias = exp2(material_mip_bias());
+    let value = textureSampleGrad(textures[texture_slot(index)], tex_sampler_linear, uv, ddx * bias, ddy * bias);
+    return select(vec4<f32>(0.0), value, index < 256u).rgb;
+}
+
 fn sample_occlusion_texture(index: u32, uv: vec2<f32>) -> f32 {
     return texture_sample(index, uv, vec4<f32>(1.0)).r;
 }

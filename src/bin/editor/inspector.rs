@@ -18,6 +18,7 @@ use wgpu_cube::asset::{
     Handle, MaterialAsset, MaterialKind, MaterialTextureReference, MaterialTextureSlot,
     ShaderMaterialMetadata,
 };
+use wgpu_cube::renderer::material::MaterialFlags;
 use wgpu_cube::renderer::postprocess::{
     setting_overridden, AntiAliasing, ExposureMode, FocusMode, PostProcessSettings, Tonemapper,
     Upscaler, UpscalingSettings, TRACKBALL_NEUTRAL,
@@ -950,6 +951,7 @@ fn show_material_section(
                 );
                 changed |= material_ior_editor(ui, &mut material.ior);
                 changed |= material_dispersion_editor(ui, &mut material.dispersion);
+                changed |= material_interior_editor(ui, &mut material);
 
                 let slots = [
                     (
@@ -968,7 +970,11 @@ fn show_material_section(
                         material.normal_texture,
                     ),
                     (
-                        "Emissive map",
+                        if material.is_interior() {
+                            "Room images"
+                        } else {
+                            "Emissive map"
+                        },
                         MaterialTextureSlot::Emissive,
                         material.emissive_texture,
                     ),
@@ -2885,6 +2891,78 @@ fn material_float_editor(
     } else {
         false
     }
+}
+
+/// Interior mapping: a window onto rooms traced behind the surface, their images in the
+/// emissive map.
+fn material_interior_editor(ui: &mut egui::Ui, material: &mut Material) -> bool {
+    let mut enabled = material.is_interior();
+    ui.label("Interior mapping");
+    let mut changed = ui
+        .checkbox(&mut enabled, "Rooms behind windows")
+        .on_hover_text(
+            "Each unit of the mesh's uvs is a room traced behind the surface. The emissive \
+             map holds the rooms' images and the emissive strength lights them; base colour \
+             map alpha marks the frame.",
+        )
+        .changed();
+    ui.end_row();
+    if changed {
+        if enabled {
+            material.flags.insert(MaterialFlags::INTERIOR);
+        } else {
+            material.flags.remove(MaterialFlags::INTERIOR);
+        }
+    }
+    if !enabled {
+        return changed;
+    }
+
+    let (mut columns, mut rows) = material.interior_atlas_size();
+    ui.label("Room images");
+    ui.horizontal(|ui| {
+        let max = Material::MAX_INTERIOR_ATLAS;
+        let columns_changed = ui
+            .add(
+                DragValue::new(&mut columns)
+                    .range(1..=max)
+                    .suffix(" across"),
+            )
+            .changed();
+        let rows_changed = ui
+            .add(DragValue::new(&mut rows).range(1..=max).suffix(" down"))
+            .changed();
+        if columns_changed || rows_changed {
+            material.interior_atlas = Material::encode_interior_atlas(columns, rows);
+            changed = true;
+        }
+    });
+    ui.end_row();
+
+    let mut depth = material.interior_depth_f32();
+    ui.label("Room depth");
+    if ui
+        .add(
+            DragValue::new(&mut depth)
+                .speed(0.01)
+                .range(0.02..=3.98)
+                .fixed_decimals(2)
+                .suffix(" widths"),
+        )
+        .changed()
+    {
+        material.interior_depth = Material::encode_interior_depth(depth);
+        changed = true;
+    }
+    ui.end_row();
+
+    changed |= material_float_editor(ui, "Lit rooms", material.interior_lights, |value| {
+        material.interior_lights = value
+    });
+    changed |= material_float_editor(ui, "Curtained rooms", material.interior_curtains, |value| {
+        material.interior_curtains = value
+    });
+    changed
 }
 
 /// Dispersion of transmissive materials (20 / Abbe number: 0.36 diamond).

@@ -248,6 +248,7 @@ impl ShaderBuilder {
 
     fn ensure_with_material_system(&mut self) {
         self.ensure_module(wgsl!("material_common.wgsl"));
+        self.ensure_module(wgsl!("interior.wgsl"));
     }
 
     fn ensure_with_lighting(&mut self) {

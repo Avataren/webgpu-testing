@@ -20,6 +20,11 @@ struct MaterialData {
     ior: f32,
     // 20 / Abbe number (glTF KHR_materials_dispersion): how much ior varies with wavelength.
     dispersion: f32,
+    // Interior mapping's parameters, unpacked by interior.wgsl (Material::interior_bits).
+    interior: u32,
+    _padding0: u32,
+    _padding1: u32,
+    _padding2: u32,
 };
 
 const FLAG_USE_BASE_COLOR_TEXTURE: u32 = 1u;
@@ -32,6 +37,7 @@ const FLAG_DOUBLE_SIDED: u32 = 64u;
 const FLAG_UNLIT: u32 = 128u;
 const FLAG_USE_NEAREST_FILTERING: u32 = 256u;
 const FLAG_BILLBOARDED: u32 = 512u;
+const FLAG_INTERIOR: u32 = 2048u;
 
 // Alpha below which the surface is cut away (glTF MASK), from the flags' top byte; 0 for
 // no cutoff.

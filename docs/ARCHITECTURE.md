@@ -241,6 +241,20 @@ its TAA jitter and texture LOD bias depend on both.
   (`@builtin(front_facing)`), so they are lit from the side the camera sees.
 - **Transparent sorting** is per instance across all transparent batches; consecutive
   instances of one batch share a draw.
+- **Interior mapping** (`MaterialFlags::INTERIOR`, `src/shader/interior.wgsl`) turns a
+  surface into windows onto rooms traced in the shader: each uv unit is a room (the
+  integer part picks it by hash with the object's position: image, mirroring, lamp on or
+  off and its colour, curtains or a blind), the fraction is where the view ray enters a
+  box behind the glass `interior_depth` room widths deep. The emissive texture holds the
+  room images (one-point perspective views with the back wall filling the middle half, in
+  an `interior_atlas` grid), lit by the emissive strength; base colour texture alpha marks
+  the frame. The room box's axes come from the surface's uv frame (world change per uv
+  unit), from screen derivatives in `shade_fragment` and from the hit triangle's edges in
+  `rt_material`, so rooms keep their proportions whatever the mesh's tangents and every
+  ray-traced pass (reflections, probes, GI, path tracing) sees the rooms the main pass
+  draws. The four settings ride in `MaterialData.interior` (`Material::interior_bits`);
+  the room images are sampled with explicit gradients (`sample_emissive_texture_grad`),
+  since their uvs jump at the room's corners.
 
 The scene renders in HDR (`Rgba16Float`, `postprocess::HDR_FORMAT`), transparent
 surfaces included, so light above 1.0 survives to bloom and tonemapping; scene shaders

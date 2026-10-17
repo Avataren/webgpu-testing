@@ -110,6 +110,7 @@ struct VsOut {
     // The material colour times the vertex colour, so it varies across a face.
     @location(6) material_color: vec4<f32>,
     @location(7) @interpolate(flat) material_texture_indices0: vec4<u32>,
+    // The occlusion texture, and interior mapping's parameters (MaterialData.interior).
     @location(8) @interpolate(flat) material_texture_indices1: vec2<u32>,
     @location(9) @interpolate(flat) material_flags: u32,
     // metallic, roughness, emissive strength, transmission
@@ -174,7 +175,7 @@ fn vs_main(in: VsIn) -> VsOut {
         material.normal_texture,
         material.emissive_texture,
     );
-    out.material_texture_indices1 = vec2<u32>(material.occlusion_texture, 0u);
+    out.material_texture_indices1 = vec2<u32>(material.occlusion_texture, material.interior);
     out.material_flags = material.material_flags;
     out.material_factors = vec4<f32>(
         material.metallic_factor,
@@ -222,6 +223,12 @@ fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     let occlusion_sample = sample_occlusion_texture(
         in.material_texture_indices1.x, in.uv
     );
+    // Interior mapping's uv frame and texture footprint, also only in uniform control
+    // flow, so every fragment takes them.
+    let dpos_dx = dpdx(in.world_pos);
+    let dpos_dy = dpdy(in.world_pos);
+    let duv_dx = dpdx(in.uv);
+    let duv_dy = dpdy(in.uv);
 
     // Then conditionally USE the samples
     var base_color: vec4<f32>;
@@ -253,8 +260,10 @@ fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     } else {
         N = normalize(in.normal);
     }
+    var N_geometric = normalize(in.normal);
     if (!front_facing) {
         N = -N;
+        N_geometric = -N_geometric;
     }
 
     var occlusion = 1.0;
@@ -274,13 +283,28 @@ fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     // Calculate lighting using imported functions
     let V = normalize(globals.camera_pos - in.world_pos);
     
-    // This function is from lighting_with_shadows.wgsl. Opaque surfaces are the ones the
-    // ray-traced shadow mask was traced for (from the depth prepass).
-    let opaque = (material_flags & FLAG_ALPHA_BLEND) == 0u;
     // Light a transmissive surface lets through is not scattered back diffusely: its
     // diffuse share goes (the refraction pass adds what shows through instead).
     let transmission = clamp(in.material_factors.w, 0.0, 1.0);
-    let lit_color = base_color.rgb * (1.0 - transmission);
+    var diffuse_share = 1.0 - transmission;
+    let interior = (material_flags & FLAG_INTERIOR) != 0u;
+    if (interior) {
+        // An interior-mapped window: the frame (base colour texture alpha) is lit as
+        // usual; the glass reflects, and lets the room's light through, tinted by the
+        // base colour (interior.wgsl).
+        let frame = select(0.0, base_color_sample.a, (material_flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u);
+        let room = interior_window(
+            in, N, N_geometric, V, interior_uv_frame(dpos_dx, dpos_dy, duv_dx, duv_dy), duv_dx, duv_dy
+        );
+        let glass = (1.0 - frame) * (1.0 - fresnel_schlick(max(dot(N, V), 0.0), vec3<f32>(0.04)));
+        emissive = room * in.material_color.rgb * glass;
+        diffuse_share = frame;
+    }
+
+    // This function is from lighting_with_shadows.wgsl. Opaque surfaces are the ones the
+    // ray-traced shadow mask was traced for (from the depth prepass).
+    let opaque = (material_flags & FLAG_ALPHA_BLEND) == 0u;
+    let lit_color = base_color.rgb * diffuse_share;
     let Lo = calculate_scene_lighting_at(
         in.world_pos, N, V, lit_color, metallic, roughness,
         select(vec2<f32>(-1.0), in.pos.xy, opaque)
@@ -324,7 +348,8 @@ fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
     let smoothness = select(0.0, clamp(1.0 - roughness, 0.0, 1.0), lit);
     let specular_color = mix(vec3<f32>(0.04), base_color.rgb, metallic);
     // Cut-out surfaces end here, after every texture is sampled (uniform control flow).
-    let alpha = alpha_tested(base_color.a, material_flags);
+    // Interior-mapped windows are opaque: their alpha marks the frame.
+    let alpha = alpha_tested(select(base_color.a, 1.0, interior), material_flags);
     // Drawn see-through (the transparent pass, without ray-traced refraction), a
     // transmissive surface shows what is behind it in proportion, keeping a little opacity
     // so its highlights and edges still show.
@@ -334,6 +359,48 @@ fn shade_fragment(in: VsOut, front_facing: bool) -> ShadedFragment {
         vec4<f32>(in.world_pos, encode_surface_w(smoothness, specular_color)),
         transmission,
     );
+}
+
+// What an interior-mapped window shows of its room (interior.wgsl), before the glass's
+// tint and reflection. `n` is the shading normal (a normal map ripples old glass and
+// bends the view through it), `n_geometric` the surface's.
+fn interior_window(
+    in: VsOut,
+    n: vec3<f32>,
+    n_geometric: vec3<f32>,
+    v: vec3<f32>,
+    frame: InteriorFrame,
+    duv_dx: vec2<f32>,
+    duv_dy: vec2<f32>,
+) -> vec3<f32> {
+    let params = in.material_texture_indices1.y;
+    let seed = interior_object_seed(objects[in.instance_id].model[3].xyz);
+    let ray = -v - (n - n_geometric) * 0.3;
+    let hit = interior_trace(in.uv, ray, frame, n_geometric, params, seed);
+    var room = interior_plain_room(hit);
+    if ((in.material_flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u) {
+        room = sample_emissive_texture_grad(
+            in.material_texture_indices0.w,
+            hit.atlas_uv,
+            duv_dx * hit.atlas_scale,
+            duv_dy * hit.atlas_scale,
+        );
+    }
+    return interior_radiance(hit, room, interior_daylight(in.world_pos, n_geometric, v), in.material_factors.z);
+}
+
+// The daylight on an interior-mapped window that lights its room: the sky's and the flat
+// ambient's (the light probes' inside a volume), a share of it.
+fn interior_daylight(world_pos: vec3<f32>, n: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+    let hdr = environment_hdr_enabled();
+    var light = select(vec3<f32>(1.0), environment_settings.ambient_color.rgb, hdr)
+        * environment_ambient_intensity();
+    if (hdr) {
+        light += sample_environment_hdr(n, environment_settings.flags_intensity.w)
+            * environment_hdr_intensity();
+    }
+    let probed = light_probe_irradiance_at(world_pos, n, v);
+    return mix(light, probed.rgb, probed.w) * INTERIOR_DAYLIGHT;
 }
 
 // The G-buffer position's w (a half float): below 0.5 there is no surface. A surface

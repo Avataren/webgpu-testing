@@ -72,6 +72,10 @@ mod tests {
             ior: crate::renderer::Material::DEFAULT_IOR,
             dispersion: 0,
             alpha_cutoff: 0,
+            interior_atlas: 0,
+            interior_depth: crate::renderer::Material::DEFAULT_INTERIOR_DEPTH,
+            interior_lights: crate::renderer::Material::DEFAULT_INTERIOR_LIGHTS,
+            interior_curtains: crate::renderer::Material::DEFAULT_INTERIOR_CURTAINS,
             kind: SerializedMaterialKind::default(),
         }
     }

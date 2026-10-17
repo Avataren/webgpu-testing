@@ -143,6 +143,18 @@ fn entity_fields() -> serde_json::Map<String, Value> {
             "transparent": { "type": "boolean", "description": "Alpha blending; set the color's alpha below 1" },
             "alpha_cutoff": { "type": "number", "minimum": 0, "maximum": 1, "description": "Cut-out (glTF MASK): the surface is cut away where its alpha (color alpha times the base color texture's) is below this, and is otherwise opaque, with depth and shadows (foliage, fences). 0 turns it off" },
             "double_sided": { "type": "boolean" },
+            "interior": {
+                "anyOf": [
+                    { "type": "boolean" },
+                    { "type": "object", "properties": {
+                        "atlas": { "type": "array", "items": { "type": "integer", "minimum": 1, "maximum": 16 }, "minItems": 2, "maxItems": 2, "description": "Room images in emissive_texture as [columns, rows] (default [1, 1])" },
+                        "depth": { "type": "number", "minimum": 0.02, "maximum": 3.98, "description": "Room depth in room widths (default 1)" },
+                        "lights": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of rooms with their lights on (default 0.75)" },
+                        "curtains": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of rooms with curtains or a blind (default 0.5)" }
+                    } }
+                ],
+                "description": "Interior mapping: the surface is a window onto rooms traced behind it (parallax rooms, no geometry), as in games' city windows. Each unit of the mesh's uvs is one room (the integer part of the uv picks which, so give each window its own uv cell). Room images come from emissive_texture: one-point perspective views through the window with the back wall filling the middle half, in a grid of atlas columns x rows; without one the rooms are plain plaster. emissive is the lamps' brightness (try 2-4). The base color tints the glass, base_color_texture alpha marks an opaque frame, low roughness makes the glass reflect. true/an object turns it on (only the given fields change), false off"
+            },
             "nearest_filtering": { "type": "boolean", "description": "Pixel-art style texture sampling" },
             "base_color_texture": { "type": ["string", "null"], "description": "Image path (png/jpg), or null to remove" },
             "normal_texture": { "type": ["string", "null"] },

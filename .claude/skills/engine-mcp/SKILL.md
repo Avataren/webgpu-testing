@@ -299,6 +299,16 @@ engine you launched; save first).
   `project_save`.
 - Material `emissive` makes a surface glow in its own color; above 1 it is HDR, which is
   what lets bloom pick up a lit surface (try 2 to 5 with bloom on).
+- Windows with rooms behind them (interior mapping, as in games' city facades): material
+  `interior: {atlas: [columns, rows], depth, lights, curtains}` traces a room behind every
+  uv unit of the surface, so give each window its own uv cell (window k at u k..k+1, v 0..1
+  from the top). Room images come from `emissive_texture` (one-point perspective views
+  through the window with the back wall filling the middle half; without one the rooms are
+  plain plaster) and `emissive` lights them (strengths of 5-10 suit dark candlelit images).
+  `base_color_texture` alpha marks an opaque frame or leading and the color tints the glass.
+  Reflections, probes and path tracing see the same rooms. Lantern Market's windows
+  (`games/lantern-market/tools/build_interiors.py` renders its rooms and glazing in Blender)
+  are the example.
 - Glass, gems and water: material `transmission` (1 = clear) with `ior` (1.5 glass, 2.42
   diamond), roughness near 0 and metallic 0; the color tints what shows through. With
   hardware ray tracing (`engine_info` `surface.ray_tracing`) light refracts through the

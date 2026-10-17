@@ -180,7 +180,7 @@ pub(super) fn material_json(asset: &MaterialAsset) -> Value {
         MaterialKind::Pbr => "pbr",
         MaterialKind::Shader(_) => "shader",
     };
-    json!({
+    let mut fields = json!({
         "kind": kind,
         "color": color_json(material.color_f32()),
         "metallic": round(material.metallic_f32()),
@@ -196,7 +196,53 @@ pub(super) fn material_json(asset: &MaterialAsset) -> Value {
         "nearest_filtering": flags.contains(MaterialFlags::USE_NEAREST_FILTERING),
         "billboarded": flags.contains(MaterialFlags::BILLBOARDED),
         "textures": textures,
-    })
+    });
+    if material.is_interior() {
+        let (columns, rows) = material.interior_atlas_size();
+        fields["interior"] = json!({
+            "atlas": [columns, rows],
+            "depth": round(material.interior_depth_f32()),
+            "lights": round(material.interior_lights_f32()),
+            "curtains": round(material.interior_curtains_f32()),
+        });
+    }
+    fields
+}
+
+/// Interior mapping from a material patch's `interior`: false turns it off; true or an
+/// object (`atlas` [columns, rows], `depth`, `lights`, `curtains`; only the given ones
+/// change) turns it on.
+fn apply_interior_patch(material: &mut Material, value: &Value) -> Result<(), String> {
+    match value {
+        Value::Bool(false) | Value::Null => {
+            material.flags.remove(MaterialFlags::INTERIOR);
+            return Ok(());
+        }
+        Value::Bool(true) | Value::Object(_) => material.flags.insert(MaterialFlags::INTERIOR),
+        _ => return Err("interior must be true, false or an object".into()),
+    }
+    if let Some(atlas) = value.get("atlas") {
+        let size = atlas
+            .as_array()
+            .filter(|size| size.len() == 2)
+            .and_then(|size| Some((size[0].as_u64()?, size[1].as_u64()?)))
+            .ok_or("interior.atlas must be [columns, rows]")?;
+        let max = u64::from(Material::MAX_INTERIOR_ATLAS);
+        if !(1..=max).contains(&size.0) || !(1..=max).contains(&size.1) {
+            return Err(format!("interior.atlas columns and rows must be 1-{max}"));
+        }
+        material.interior_atlas = Material::encode_interior_atlas(size.0 as u32, size.1 as u32);
+    }
+    if let Some(depth) = opt_f64(value, "depth") {
+        material.interior_depth = Material::encode_interior_depth(depth as f32);
+    }
+    if let Some(lights) = opt_f64(value, "lights") {
+        material.interior_lights = unit_to_u8(lights);
+    }
+    if let Some(curtains) = opt_f64(value, "curtains") {
+        material.interior_curtains = unit_to_u8(curtains);
+    }
+    Ok(())
 }
 
 fn script_mode_name(mode: ScriptMode) -> &'static str {
@@ -1615,6 +1661,9 @@ pub(crate) fn patch_material(
     }
     if let Some(cutoff) = opt_f64(patch, "alpha_cutoff") {
         material.alpha_cutoff = Material::encode_alpha_cutoff(cutoff as f32);
+    }
+    if let Some(interior) = patch.get("interior") {
+        apply_interior_patch(&mut material, interior)?;
     }
     for (key, flag) in [
         ("unlit", MaterialFlags::UNLIT),

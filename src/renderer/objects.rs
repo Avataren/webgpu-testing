@@ -43,7 +43,14 @@ pub struct MaterialData {
     pub emissive_strength: f32,          // 4 bytes
     pub transmission: f32,               // 4 bytes
     pub ior: f32,                        // 4 bytes
-    pub dispersion: f32,                 // 4 bytes (64-byte stride)
+    pub dispersion: f32,                 // 4 bytes
+    /// Interior mapping's parameters ([`Material::interior_bits`]).
+    pub interior: u32, // 4 bytes
+    // Separate fields, not an array: particles bind one MaterialData as a uniform, where
+    // arrays need a 16-byte stride.
+    pub _padding0: u32,
+    pub _padding1: u32,
+    pub _padding2: u32, // (80-byte stride)
 }
 
 impl MaterialData {
@@ -65,6 +72,10 @@ impl MaterialData {
             transmission: material.transmission_f32(),
             ior: material.ior_f32(),
             dispersion: material.dispersion_f32(),
+            interior: material.interior_bits(),
+            _padding0: 0,
+            _padding1: 0,
+            _padding2: 0,
         }
     }
 }
@@ -154,7 +165,7 @@ mod tests {
 
     #[test]
     fn material_data_layout() {
-        assert_eq!(std::mem::size_of::<MaterialData>(), 64);
+        assert_eq!(std::mem::size_of::<MaterialData>(), 80);
         assert_eq!(std::mem::align_of::<MaterialData>(), 16);
     }
 }

@@ -210,6 +210,25 @@ pub struct SerializedMaterial {
     /// See [`Material::alpha_cutoff`]; 0 (none) is left out.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub alpha_cutoff: u8,
+    /// Interior mapping's settings ([`Material::interior_atlas`] and on); the defaults
+    /// are left out.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub interior_atlas: u8,
+    #[serde(
+        default = "default_interior_depth",
+        skip_serializing_if = "is_default_interior_depth"
+    )]
+    pub interior_depth: u8,
+    #[serde(
+        default = "default_interior_lights",
+        skip_serializing_if = "is_default_interior_lights"
+    )]
+    pub interior_lights: u8,
+    #[serde(
+        default = "default_interior_curtains",
+        skip_serializing_if = "is_default_interior_curtains"
+    )]
+    pub interior_curtains: u8,
     #[serde(default)]
     pub kind: SerializedMaterialKind,
 }
@@ -224,6 +243,30 @@ fn default_ior() -> u8 {
 
 fn is_default_ior(value: &u8) -> bool {
     *value == Material::DEFAULT_IOR
+}
+
+fn default_interior_depth() -> u8 {
+    Material::DEFAULT_INTERIOR_DEPTH
+}
+
+fn is_default_interior_depth(value: &u8) -> bool {
+    *value == Material::DEFAULT_INTERIOR_DEPTH
+}
+
+fn default_interior_lights() -> u8 {
+    Material::DEFAULT_INTERIOR_LIGHTS
+}
+
+fn is_default_interior_lights(value: &u8) -> bool {
+    *value == Material::DEFAULT_INTERIOR_LIGHTS
+}
+
+fn default_interior_curtains() -> u8 {
+    Material::DEFAULT_INTERIOR_CURTAINS
+}
+
+fn is_default_interior_curtains(value: &u8) -> bool {
+    *value == Material::DEFAULT_INTERIOR_CURTAINS
 }
 
 impl From<&MaterialAsset> for SerializedMaterial {
@@ -299,6 +342,10 @@ impl SerializedMaterial {
             ior: material.ior,
             dispersion: material.dispersion,
             alpha_cutoff: material.alpha_cutoff,
+            interior_atlas: material.interior_atlas,
+            interior_depth: material.interior_depth,
+            interior_lights: material.interior_lights,
+            interior_curtains: material.interior_curtains,
             kind: SerializedMaterialKind::default(),
         }
     }
@@ -481,6 +528,55 @@ impl From<SerializedMaterial> for Material {
             ior: serialized.ior,
             dispersion: serialized.dispersion,
             alpha_cutoff: serialized.alpha_cutoff,
+            interior_atlas: serialized.interior_atlas,
+            interior_depth: serialized.interior_depth,
+            interior_lights: serialized.interior_lights,
+            interior_curtains: serialized.interior_curtains,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interior_settings_round_trip_and_defaults_stay_out() {
+        let plain =
+            serde_json::to_value(SerializedMaterial::from_material(Material::pbr())).unwrap();
+        for key in [
+            "interior_atlas",
+            "interior_depth",
+            "interior_lights",
+            "interior_curtains",
+        ] {
+            assert!(plain.get(key).is_none(), "{key} written at its default");
+        }
+
+        let mut material = Material::pbr().with_interior(4, 2);
+        material.interior_depth = Material::encode_interior_depth(0.75);
+        material.interior_lights = 230;
+        material.interior_curtains = 0;
+        let json = serde_json::to_string(&SerializedMaterial::from_material(material)).unwrap();
+        let back = Material::from(serde_json::from_str::<SerializedMaterial>(&json).unwrap());
+        assert!(back.is_interior());
+        assert_eq!(back.interior_atlas_size(), (4, 2));
+        assert_eq!(back.interior_depth, material.interior_depth);
+        assert_eq!(back.interior_lights, 230);
+        assert_eq!(back.interior_curtains, 0);
+    }
+
+    #[test]
+    fn materials_written_before_interior_mapping_load_with_its_defaults() {
+        let json = r#"{"base_color":[255,255,255,255],"flags":0,"metallic_factor":0,
+            "roughness_factor":127,"emissive_strength":0,"kind":{"type":"pbr"}}"#;
+        let material = Material::from(serde_json::from_str::<SerializedMaterial>(json).unwrap());
+        assert!(!material.is_interior());
+        assert_eq!(material.interior_depth, Material::DEFAULT_INTERIOR_DEPTH);
+        assert_eq!(material.interior_lights, Material::DEFAULT_INTERIOR_LIGHTS);
+        assert_eq!(
+            material.interior_curtains,
+            Material::DEFAULT_INTERIOR_CURTAINS
+        );
     }
 }

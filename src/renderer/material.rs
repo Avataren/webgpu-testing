@@ -33,6 +33,17 @@ pub struct Material {
     /// Alpha below which the surface is cut away (glTF `MASK`: foliage, fences), 1-255
     /// for 0.0-1.0; 0 for none. A masked surface is otherwise opaque.
     pub alpha_cutoff: u8,
+    /// Interior mapping (with [`MaterialFlags::INTERIOR`]): the room images in the
+    /// emissive texture, as columns minus one (high 4 bits) and rows minus one (low 4
+    /// bits). 0 is a single room; 0x31 is four columns by two rows.
+    pub interior_atlas: u8,
+    /// Interior mapping: how deep the rooms are, in room widths times 64 (64 is as deep
+    /// as wide; 1-255 for 1/64 to about 4).
+    pub interior_depth: u8,
+    /// Interior mapping: the share of rooms with their lights on, 0-255 for 0.0-1.0.
+    pub interior_lights: u8,
+    /// Interior mapping: the share of rooms with curtains or a blind, 0-255 for 0.0-1.0.
+    pub interior_curtains: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,6 +64,12 @@ impl MaterialFlags {
     /// Leave the object out of shadow maps. Set per object at render time from
     /// `CanCastShadow(false)`; not stored in material assets.
     pub const NO_SHADOW: Self = Self(1 << 10);
+    /// Interior mapping: the surface is a window onto rooms behind it, traced in the
+    /// shader (interior.wgsl). The emissive texture holds the rooms' images
+    /// (`Material::interior_atlas`), lit by the emissive strength; base colour texture
+    /// alpha marks the frame (opaque) apart from the glass, and the base colour tints
+    /// the glass.
+    pub const INTERIOR: Self = Self(1 << 11);
     // Bits 24-31 are taken on the GPU by the alpha cutoff (`MaterialData`).
 
     pub const fn bits(&self) -> u32 {
@@ -94,6 +111,14 @@ impl Material {
     pub const MAX_EMISSIVE: f32 = 64.0;
     /// Stored index of refraction for 1.5 (glass); see [`Material::ior`].
     pub const DEFAULT_IOR: u8 = 50;
+    /// Stored room depth for rooms as deep as wide; see [`Material::interior_depth`].
+    pub const DEFAULT_INTERIOR_DEPTH: u8 = 64;
+    /// Stored share of lit rooms (three in four); see [`Material::interior_lights`].
+    pub const DEFAULT_INTERIOR_LIGHTS: u8 = 191;
+    /// Stored share of curtained rooms (half); see [`Material::interior_curtains`].
+    pub const DEFAULT_INTERIOR_CURTAINS: u8 = 128;
+    /// Most room images an interior atlas holds across or down.
+    pub const MAX_INTERIOR_ATLAS: u32 = 16;
 
     pub fn new(color: [u8; 4]) -> Self {
         Self {
@@ -111,6 +136,10 @@ impl Material {
             ior: Self::DEFAULT_IOR,
             dispersion: 0,
             alpha_cutoff: 0,
+            interior_atlas: 0,
+            interior_depth: Self::DEFAULT_INTERIOR_DEPTH,
+            interior_lights: Self::DEFAULT_INTERIOR_LIGHTS,
+            interior_curtains: Self::DEFAULT_INTERIOR_CURTAINS,
         }
     }
 
@@ -226,6 +255,62 @@ impl Material {
     /// Whether parts of the surface are cut away by alpha (see `alpha_cutoff`).
     pub fn is_alpha_masked(&self) -> bool {
         self.alpha_cutoff > 0 && !self.requires_separate_pass()
+    }
+
+    /// Interior mapping onto `columns` x `rows` room images in the emissive texture (set
+    /// with [`Self::with_emissive_texture`]; without one the rooms are plain); see
+    /// [`MaterialFlags::INTERIOR`]. One room fills each unit of the surface's uvs.
+    pub fn with_interior(mut self, columns: u32, rows: u32) -> Self {
+        self.flags.insert(MaterialFlags::INTERIOR);
+        self.interior_atlas = Self::encode_interior_atlas(columns, rows);
+        self
+    }
+
+    pub fn is_interior(&self) -> bool {
+        self.flags.contains(MaterialFlags::INTERIOR)
+    }
+
+    /// `columns` x `rows` (each 1-16) as stored in [`Material::interior_atlas`].
+    pub fn encode_interior_atlas(columns: u32, rows: u32) -> u8 {
+        let max = Self::MAX_INTERIOR_ATLAS;
+        (((columns.clamp(1, max) - 1) << 4) | (rows.clamp(1, max) - 1)) as u8
+    }
+
+    /// The interior atlas's columns and rows of room images.
+    pub fn interior_atlas_size(&self) -> (u32, u32) {
+        (
+            u32::from(self.interior_atlas >> 4) + 1,
+            u32::from(self.interior_atlas & 15) + 1,
+        )
+    }
+
+    /// Room depth in room widths (1/64 to about 4) as stored in [`Material::interior_depth`].
+    pub fn encode_interior_depth(depth: f32) -> u8 {
+        if depth.is_nan() {
+            return Self::DEFAULT_INTERIOR_DEPTH;
+        }
+        (depth * 64.0).round().clamp(1.0, 255.0) as u8
+    }
+
+    pub fn interior_depth_f32(&self) -> f32 {
+        f32::from(self.interior_depth.max(1)) / 64.0
+    }
+
+    pub fn interior_lights_f32(&self) -> f32 {
+        f32::from(self.interior_lights) / 255.0
+    }
+
+    pub fn interior_curtains_f32(&self) -> f32 {
+        f32::from(self.interior_curtains) / 255.0
+    }
+
+    /// The interior parameters packed for the GPU, as interior.wgsl unpacks them: atlas
+    /// (bits 0-7), depth (8-15), lit share (16-23), curtained share (24-31).
+    pub fn interior_bits(&self) -> u32 {
+        u32::from(self.interior_atlas)
+            | (u32::from(self.interior_depth.max(1)) << 8)
+            | (u32::from(self.interior_lights) << 16)
+            | (u32::from(self.interior_curtains) << 24)
     }
 
     pub fn with_unlit(mut self) -> Self {
@@ -373,5 +458,47 @@ impl Material {
 impl Default for Material {
     fn default() -> Self {
         Self::white()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interior_settings_pack_as_interior_wgsl_reads_them() {
+        let mut material = Material::pbr().with_interior(4, 2);
+        material.interior_depth = Material::encode_interior_depth(1.5);
+        material.interior_lights = 200;
+        material.interior_curtains = 10;
+        assert!(material.is_interior());
+        assert_eq!(material.interior_atlas_size(), (4, 2));
+        assert_eq!(material.interior_depth_f32(), 1.5);
+
+        let bits = material.interior_bits();
+        // interior_columns / interior_rows / interior_back and the shares.
+        assert_eq!(((bits >> 4) & 15) + 1, 4);
+        assert_eq!((bits & 15) + 1, 2);
+        assert_eq!(((bits >> 8) & 255) as f32 / 32.0, 2.0 * 1.5);
+        assert_eq!((bits >> 16) & 255, 200);
+        assert_eq!(bits >> 24, 10);
+    }
+
+    #[test]
+    fn interior_encodings_clamp() {
+        assert_eq!(Material::encode_interior_atlas(0, 99), 0x0f);
+        assert_eq!(Material::encode_interior_atlas(16, 1), 0xf0);
+        assert_eq!(Material::encode_interior_depth(0.0), 1);
+        assert_eq!(Material::encode_interior_depth(10.0), 255);
+        assert_eq!(
+            Material::encode_interior_depth(f32::NAN),
+            Material::DEFAULT_INTERIOR_DEPTH
+        );
+        // A depth of 0 stored by hand still reads as the shallowest room, not none.
+        let material = Material {
+            interior_depth: 0,
+            ..Material::pbr()
+        };
+        assert_eq!((material.interior_bits() >> 8) & 255, 1);
     }
 }

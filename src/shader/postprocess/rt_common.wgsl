@@ -82,6 +82,8 @@ struct RtSurface {
     uv_density : f32,
     // Whether the ray hit the side the normal points away from (the normal is flipped).
     back_facing : bool,
+    // The triangle's uv frame, for interior mapping (interior.wgsl).
+    uv_frame : InteriorFrame,
 };
 
 // The hit triangle's interpolated attributes, with the normal in world space and facing
@@ -115,10 +117,9 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     let uv_edge_1 = uv_b - uv_a;
     let uv_edge_2 = uv_c - uv_a;
     let uv_area = abs(uv_edge_1.x * uv_edge_2.y - uv_edge_2.x * uv_edge_1.y);
-    let world_area = length(cross(
-        hit.object_to_world * vec4<f32>(rt_vertex_position(b) - rt_vertex_position(a), 0.0),
-        hit.object_to_world * vec4<f32>(rt_vertex_position(c) - rt_vertex_position(a), 0.0),
-    ));
+    let edge_1 = hit.object_to_world * vec4<f32>(rt_vertex_position(b) - rt_vertex_position(a), 0.0);
+    let edge_2 = hit.object_to_world * vec4<f32>(rt_vertex_position(c) - rt_vertex_position(a), 0.0);
+    let world_area = length(cross(edge_1, edge_2));
 
     var out : RtSurface;
     out.normal = normal;
@@ -128,6 +129,7 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
     out.instance_flags = instance.flags;
     out.uv_density = 0.5 * log2(max(uv_area, 1e-12) / max(world_area, 1e-12));
     out.back_facing = back_facing;
+    out.uv_frame = interior_uv_frame(edge_1, edge_2, uv_edge_1, uv_edge_2);
     return out;
 }
 
@@ -351,11 +353,41 @@ fn rt_material(hit : RayIntersection, direction : vec3<f32>, cone_width : f32) -
     if (flags & FLAG_USE_OCCLUSION_TEXTURE) != 0u {
         out.occlusion = rt_sample_texture(material.occlusion_texture, surface.uv, lod_base, nearest).r;
     }
+    if (flags & FLAG_INTERIOR) != 0u && !out.back_facing {
+        // An interior-mapped window: the same rooms as the main pass (common.wgsl's
+        // interior_window, without the normal map's ripple). Its daylight is the sky's
+        // toward the window.
+        let room = interior_trace(
+            surface.uv,
+            direction,
+            surface.uv_frame,
+            surface.normal,
+            material.interior,
+            interior_object_seed(hit.object_to_world[3]),
+        );
+        var room_colour = interior_plain_room(room);
+        if (flags & FLAG_USE_EMISSIVE_TEXTURE) != 0u {
+            let scale = max(room.atlas_scale.x, room.atlas_scale.y);
+            room_colour = rt_sample_texture(material.emissive_texture, room.atlas_uv, lod_base + log2(scale), nearest).rgb;
+        }
+        let daylight = rt_environment(surface.normal) * INTERIOR_DAYLIGHT;
+        let frame = select(0.0, out.alpha, (flags & FLAG_USE_BASE_COLOR_TEXTURE) != 0u);
+        let glass = (1.0 - frame) * (1.0 - rt_fresnel_glass(abs(dot(surface.normal, direction))));
+        out.emissive = interior_radiance(room, room_colour, daylight, material.emissive_strength)
+            * (material.color.rgb * surface.color.rgb) * glass;
+        out.base_color *= frame;
+        out.alpha = 1.0;
+    }
     if particle {
         // As particle_render.wgsl, which draws no emission (nor transmission, above).
         out.emissive = vec3<f32>(0.0);
     }
     return out;
+}
+
+// The share of light a glass surface reflects at `cos_theta` (Schlick, F0 0.04).
+fn rt_fresnel_glass(cos_theta : f32) -> f32 {
+    return 0.04 + 0.96 * pow(1.0 - clamp(cos_theta, 0.0, 1.0), 5.0);
 }
 
 // What a ray leaving the scene sees: the HDR environment, or the background colour.
