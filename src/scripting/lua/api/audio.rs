@@ -8,7 +8,7 @@
 
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::audio::{self, AudioSource, MusicOptions, PlayOptions, SpatialOptions};
+use crate::audio::{self, AudioSource, MusicOptions, NoteOptions, PlayOptions, SpatialOptions};
 use crate::scene::components::WorldTransform;
 use crate::scripting::lua::guards::{resolve_entity, with_active_world};
 
@@ -34,6 +34,14 @@ use crate::scripting::lua::guards::{resolve_entity, with_active_world};
 /// - `set_master_volume(volume)` - gain applied to every sound
 /// - `set_bus_volume(bus, db)` - a bus's fader in dB (0 = unchanged, -80 = silent)
 /// - `set_bus_muted(bus, muted)` - mute or unmute a bus
+/// - `play_synth(path[, {volume, bus, priority, entity, position, ...}])` - a synth
+///   patch (a patch file saved by the DAW) as an instrument; returns its id
+/// - `synth_note_on(id, note[, velocity])` / `synth_note_off(id, note)` /
+///   `synth_all_notes_off(id)` - play it; `note` is a MIDI number (60 = middle C)
+///   or a name ("C4", "F#3", "Bb2")
+/// - `play_note(path, note[, {velocity, duration, bus, volume}])` - one note of a
+///   patch, held `duration` seconds (0.25): a sound effect; notes of a patch share
+///   one instrument
 /// - `set_audio_snapshot(name[, fade])` - fade the mix to one of the project's
 ///   snapshots over `fade` seconds (default 0.5); `nil` fades back to none
 /// - `set_bus_effect(bus, index, {param = value, ..., bypass})` - change a bus effect's
@@ -196,6 +204,60 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     globals.set(
+        "play_synth",
+        lua.create_function(|_, (path, options): (String, Option<Table>)| {
+            let play = match options {
+                Some(options) => synth_options(&options)?,
+                None => PlayOptions::default(),
+            };
+            audio::play_synth(&path, play).map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    globals.set(
+        "synth_note_on",
+        lua.create_function(|_, (id, note, velocity): (u64, Value, Option<f32>)| {
+            Ok(audio::note_on(
+                id,
+                note_number(&note)?,
+                velocity.unwrap_or(0.8),
+            ))
+        })?,
+    )?;
+
+    globals.set(
+        "synth_note_off",
+        lua.create_function(|_, (id, note): (u64, Value)| {
+            Ok(audio::note_off(id, note_number(&note)?))
+        })?,
+    )?;
+
+    globals.set(
+        "synth_all_notes_off",
+        lua.create_function(|_, id: u64| Ok(audio::all_notes_off(id)))?,
+    )?;
+
+    globals.set(
+        "play_note",
+        lua.create_function(|_, (path, note, options): (String, Value, Option<Table>)| {
+            let mut play = NoteOptions::default();
+            if let Some(options) = options {
+                if let Some(v) = options.get::<Option<f32>>("velocity")? {
+                    play.velocity = v;
+                }
+                if let Some(v) = options.get::<Option<f32>>("duration")? {
+                    play.seconds = v.max(0.0);
+                }
+                play.bus = options.get::<Option<String>>("bus")?;
+                if let Some(v) = options.get::<Option<f32>>("volume")? {
+                    play.volume = v.max(0.0);
+                }
+            }
+            audio::play_note(&path, note_number(&note)?, play).map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    globals.set(
         "set_audio_snapshot",
         lua.create_function(|_, (name, fade): (Option<String>, Option<f32>)| {
             audio::set_snapshot(name.as_deref(), fade.unwrap_or(0.5))
@@ -267,6 +329,56 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     Ok(())
+}
+
+/// `play_synth`'s options: a sound's, without loop and pitch.
+fn synth_options(options: &Table) -> LuaResult<PlayOptions> {
+    let mut play = PlayOptions::default();
+    if let Some(volume) = options.get::<Option<f32>>("volume")? {
+        play.volume = volume.max(0.0);
+    }
+    play.bus = options.get::<Option<String>>("bus")?;
+    if let Some(priority) = options.get::<Option<u8>>("priority")? {
+        play.priority = priority;
+    }
+    let position = match (
+        options.get::<Option<i64>>("entity")?,
+        options.get::<Value>("position")?,
+    ) {
+        (Some(handle), _) => {
+            let entity = resolve_entity(handle)
+                .ok_or_else(|| mlua::Error::RuntimeError(format!("no entity {handle}")))?;
+            Some(entity_position(entity)?)
+        }
+        (None, Value::Table(table)) => Some(vec3(&table)?),
+        _ => None,
+    };
+    if let Some(position) = position {
+        let mut spatial = SpatialOptions::at(position);
+        if let Some(mode) = options.get::<Option<String>>("spatial")? {
+            spatial.mode = parse(&mode, "spatial", "auto, 2d, 3d or off")?;
+        }
+        play.spatial = Some(spatial);
+    }
+    Ok(play)
+}
+
+/// A note as a MIDI number (60 = middle C) or a name: a letter, then sharps
+/// (#) or flats (b), then the octave ("C4" = 60, "A4" = 69, "Bb2", "F#-1").
+fn note_number(value: &Value) -> LuaResult<u8> {
+    let bad = |what: &str| mlua::Error::RuntimeError(format!("not a note: {what}"));
+    match value {
+        Value::Integer(n) => u8::try_from(*n)
+            .ok()
+            .filter(|n| *n <= 127)
+            .ok_or_else(|| bad(&n.to_string())),
+        Value::Number(n) if n.fract() == 0.0 && (0.0..=127.0).contains(n) => Ok(*n as u8),
+        Value::String(name) => {
+            let text = name.to_str()?.to_string();
+            audio::note_from_name(&text).ok_or_else(|| bad(&text))
+        }
+        other => Err(bad(other.type_name())),
+    }
 }
 
 /// Sets a parameter of a bus effect by name (clamped to its range).

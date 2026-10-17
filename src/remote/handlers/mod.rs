@@ -262,6 +262,8 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "audio.snapshot",
         "Fade the mix to a named snapshot (or back to none), and define or remove snapshots",
     ),
+    ("audio.synth", "Play a synth patch (the DAW's patch JSON) as an instrument for audio.note"),
+    ("audio.note", "Play a note on a synth instrument (id), or one note of a patch (path) as a sound effect"),
     (
         "audio.capture",
         "Record the next N seconds of the mixed output to a WAV (for audio.inspect)",
@@ -470,6 +472,8 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "audio.music" => audio::music(params),
         "audio.fade" => audio::fade(params),
         "audio.snapshot" => audio::snapshot(params),
+        "audio.synth" => audio::synth(params),
+        "audio.note" => audio::note(params),
         "audio.capture" => audio_capture(params),
         "audio.status" => {
             let recent = crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0));

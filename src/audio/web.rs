@@ -20,7 +20,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use cubed_mixer::{
-    wire, BusMeter, ClipId, Command, Effect, Event, Play, PlaySource, SourceId, VoiceId,
+    wire, BusMeter, ClipId, Command, Effect, Event, Play, PlaySource, SourceEvent, SourceId,
+    VoiceId,
 };
 use js_sys::{Array, ArrayBuffer, Float32Array, Object, Reflect, Uint8Array};
 use serde_json::{json, Value};
@@ -57,13 +58,25 @@ enum SongState {
     Failed(String),
 }
 
-/// A song play waiting for its file.
+/// What the worklet builds from a fetched file.
+#[derive(Clone, Copy)]
+enum FileSource {
+    Song {
+        format: u32,
+        subsong: usize,
+        looped: bool,
+    },
+    /// A synth patch; `one_shot` ends it once its notes have died away.
+    Synth { one_shot: bool },
+}
+
+/// A song or synth play waiting for its file, with the notes sent to it
+/// meanwhile.
 struct WaitingSong {
     path: PathBuf,
-    format: u32,
-    subsong: usize,
-    looped: bool,
+    kind: FileSource,
     play: PlaySource,
+    events: Vec<SourceEvent>,
 }
 
 /// A message for the worklet, kept in order until its node exists.
@@ -466,6 +479,65 @@ impl Output {
         options: &PlayOptions,
         spatial: Option<cubed_mixer::Spatial>,
     ) -> Result<bool, String> {
+        let kind = FileSource::Song {
+            format,
+            subsong: options.subsong,
+            looped: options.looped,
+        };
+        self.play_file_source(id, path, kind, bus, options, spatial, None)
+    }
+
+    /// A synth patch as a voice that plays the notes it is sent; `first` is
+    /// sent with the play.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn play_synth(
+        &mut self,
+        id: u64,
+        path: &Path,
+        options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
+        one_shot: bool,
+        first: Option<SourceEvent>,
+    ) -> Result<bool, String> {
+        let bus = self.buses.for_sound(options.bus.as_deref())?;
+        let kind = FileSource::Synth { one_shot };
+        self.play_file_source(id, path, kind, bus, options, spatial, first)
+    }
+
+    /// Hands a note (or another event) to a playing source; one still
+    /// waiting for its file gets it when it starts.
+    pub(super) fn source_event(&mut self, id: u64, event: SourceEvent) -> bool {
+        if !self.voices.contains(&id) {
+            return false;
+        }
+        if let Some(song) = self.waiting_songs.iter_mut().find(|s| s.play.voice.0 == id) {
+            song.events.push(event);
+            return true;
+        }
+        self.send(Command::SourceEvent {
+            voice: VoiceId(id),
+            event,
+        });
+        self.flush();
+        true
+    }
+
+    /// Output frames in `seconds`.
+    pub(super) fn frames(&self, seconds: f32) -> u32 {
+        (seconds.max(0.0) * self.sample_rate()) as u32
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn play_file_source(
+        &mut self,
+        id: u64,
+        path: &Path,
+        kind: FileSource,
+        bus: cubed_mixer::BusId,
+        options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
+        first: Option<SourceEvent>,
+    ) -> Result<bool, String> {
         if let Some(SongState::Failed(err)) = self.songs.get(path) {
             return Err(err.clone());
         }
@@ -474,15 +546,14 @@ impl Output {
         }
         let waiting = WaitingSong {
             path: path.to_path_buf(),
-            format,
-            subsong: options.subsong,
-            looped: options.looped,
+            kind,
             play: PlaySource {
                 gain: options.volume.max(0.0),
                 priority: options.priority,
                 spatial,
                 ..PlaySource::new(VoiceId(id), SourceId(0), bus)
             },
+            events: first.into_iter().collect(),
         };
         self.voices.insert(id);
         match self.songs.get(path) {
@@ -511,22 +582,38 @@ impl Output {
         Ok(true)
     }
 
-    /// Sends the song's file (the worklet builds its player in source slot
-    /// 0) and the play that takes it.
+    /// Sends the file (the worklet builds the song's player or the synth in
+    /// source slot 0), the play that takes it and the notes sent meanwhile.
     fn start_song(&mut self, song: WaitingSong, bytes: &ArrayBuffer) {
         if !self.voices.contains(&song.play.voice.0) {
             return;
         }
         self.flush();
         let message = Object::new();
-        set(&message, "type", "song");
         set(&message, "source", 0);
-        set(&message, "format", song.format);
         set(&message, "bytes", bytes.slice(0));
-        set(&message, "subsong", song.subsong as u32);
-        set(&message, "looped", song.looped);
+        match song.kind {
+            FileSource::Song {
+                format,
+                subsong,
+                looped,
+            } => {
+                set(&message, "type", "song");
+                set(&message, "format", format);
+                set(&message, "subsong", subsong as u32);
+                set(&message, "looped", looped);
+            }
+            FileSource::Synth { one_shot } => {
+                set(&message, "type", "synth");
+                set(&message, "oneShot", one_shot);
+            }
+        }
         self.post(Outgoing::Message(message.into()));
+        let voice = song.play.voice;
         self.send(Command::PlaySource(song.play));
+        for event in song.events {
+            self.send(Command::SourceEvent { voice, event });
+        }
         self.flush();
     }
 

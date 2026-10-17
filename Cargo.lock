@@ -885,7 +885,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "cubed-ahx"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 dependencies = [
  "cubed-simd",
  "once_cell",
@@ -896,7 +896,7 @@ dependencies = [
 [[package]]
 name = "cubed-dsp"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 dependencies = [
  "base64 0.22.1",
  "cubed-simd",
@@ -917,7 +917,7 @@ dependencies = [
 [[package]]
 name = "cubed-mixer"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 dependencies = [
  "cpal",
  "cubed-ahx",
@@ -930,7 +930,7 @@ dependencies = [
 [[package]]
 name = "cubed-opl"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 dependencies = [
  "serde",
  "serde_json",
@@ -939,12 +939,12 @@ dependencies = [
 [[package]]
 name = "cubed-sid"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 
 [[package]]
 name = "cubed-simd"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+source = "git+https://github.com/Avataren/cubed-synth#f064d63bac65493451ce16acf47d768df2ade685"
 
 [[package]]
 name = "cursor-icon"

@@ -15,8 +15,8 @@ use std::sync::Arc;
 use cubed_mixer::native::{HostConfig, HostStatus, NativeHost};
 use cubed_mixer::songs::{open_song, SongFormat, SongOptions};
 use cubed_mixer::{
-    BusMeter, Capture, Clip, ClipId, Command, Event, MixerConfig, Play, PlaySource, SourceId,
-    VoiceId,
+    BusMeter, Capture, Clip, ClipId, Command, Event, MixerConfig, Play, PlaySource, SourceEvent,
+    SourceId, SynthSource, VoiceId,
 };
 
 use super::layout::{BusLayout, MixerLayout};
@@ -291,6 +291,71 @@ impl Output {
             ..PlaySource::new(VoiceId(id), SourceId(0), bus)
         }));
         Ok(true)
+    }
+
+    /// A synth patch (the DAW's JSON) as a voice that plays the notes it is
+    /// sent; `one_shot` ends it once they have died away. `first` is sent
+    /// with the play.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn play_synth(
+        &mut self,
+        id: u64,
+        path: &Path,
+        options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
+        one_shot: bool,
+        first: Option<SourceEvent>,
+    ) -> Result<bool, String> {
+        self.poll();
+        let bus = self.buses.for_sound(options.bus.as_deref())?;
+        let json = std::fs::read_to_string(path)
+            .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
+        let rate = match self.host() {
+            Some(host) => host.sample_rate() as f32,
+            None => {
+                // Checked anyway, so a broken patch is an error without a device too.
+                SynthSource::from_patch(&json, 48_000.0)
+                    .map_err(|err| format!("cannot play {}: {err}", path.display()))?;
+                return Ok(false);
+            }
+        };
+        let synth = SynthSource::from_patch(&json, rate)
+            .map_err(|err| format!("cannot play {}: {err}", path.display()))?;
+        let synth = if one_shot { synth.one_shot() } else { synth };
+        self.voices.insert(id, None);
+        self.send(Command::PrepareSource(SourceId(0), Box::new(synth)));
+        self.send(Command::PlaySource(PlaySource {
+            gain: options.volume.max(0.0),
+            priority: options.priority,
+            spatial,
+            ..PlaySource::new(VoiceId(id), SourceId(0), bus)
+        }));
+        if let Some(event) = first {
+            self.send(Command::SourceEvent {
+                voice: VoiceId(id),
+                event,
+            });
+        }
+        Ok(true)
+    }
+
+    /// Hands a note (or another event) to a playing source. Returns whether
+    /// the voice may still be playing.
+    pub(super) fn source_event(&mut self, id: u64, event: SourceEvent) -> bool {
+        self.poll();
+        if !self.voices.contains_key(&id) {
+            return false;
+        }
+        self.send_if_open([Command::SourceEvent {
+            voice: VoiceId(id),
+            event,
+        }]);
+        true
+    }
+
+    /// Output frames in `seconds`.
+    pub(super) fn frames(&self, seconds: f32) -> u32 {
+        (seconds.max(0.0) * self.sample_rate() as f32) as u32
     }
 
     pub(super) fn set_listener(&mut self, listener: cubed_mixer::Listener) {

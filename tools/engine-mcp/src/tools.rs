@@ -722,6 +722,33 @@ pub fn tools() -> Vec<Tool> {
             action: Action::Engine("audio.snapshot"),
         },
         Tool {
+            name: "audio_synth",
+            description: "Play a synth patch (a patch file saved by the DAW, its JSON: oscillators, wavetables, sampler with its embedded sample, filters, envelopes, LFOs, effects) as an instrument on a bus, then play it with audio_note {id}. It plays until sound_stop. Scripts use play_synth and synth_note_on / synth_note_off.",
+            schema: object(json!({
+                "path": { "type": "string" },
+                "volume": { "type": "number" },
+                "bus": { "type": "string", "description": "Default sfx (music for a score)" },
+                "position": vec3("Play from this world position")
+            }), &["path"]),
+            action: Action::Engine("audio.synth"),
+        },
+        Tool {
+            name: "audio_note",
+            description: "Play a note: on an instrument from audio_synth (id; held until off: true, or released after duration seconds), or one note of a patch (path) held for duration (0.25 s) as a sound effect, sharing one instrument per patch. note is a MIDI number (60 = middle C) or a name (C4, F#3, Bb2). all_off: true releases every note of the instrument. Scripts use play_note for sound effects.",
+            schema: object(json!({
+                "note": { "type": ["integer", "string"] },
+                "id": { "type": "integer" },
+                "path": { "type": "string" },
+                "velocity": { "type": "number", "description": "0-1 (0.8)" },
+                "duration": { "type": "number", "description": "Seconds held" },
+                "off": { "type": "boolean" },
+                "all_off": { "type": "boolean" },
+                "bus": { "type": "string" },
+                "volume": { "type": "number" }
+            }), &[]),
+            action: Action::Engine("audio.note"),
+        },
+        Tool {
             name: "audio_effect_kinds",
             description: "The mixer's built-in effects (for audio_bus effects) with each parameter's range, default and unit.",
             schema: object(json!({}), &[]),

@@ -163,7 +163,7 @@ impl Default for SpatialLayout {
 /// A named change to the mix that scripts fade to (`set_audio_snapshot`), such
 /// as "paused" muffling sfx and music, and that audio volumes can name: the
 /// same per-bus changes an `AudioVolume` lists.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SnapshotLayout {
     pub name: String,
@@ -172,17 +172,6 @@ pub struct SnapshotLayout {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reverb_damping: Option<f32>,
     pub buses: Vec<super::components::AudioVolumeBus>,
-}
-
-impl Default for SnapshotLayout {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            reverb_room_size: None,
-            reverb_damping: None,
-            buses: Vec::new(),
-        }
-    }
 }
 
 /// The buses of a project, master first, its snapshots and its spatial

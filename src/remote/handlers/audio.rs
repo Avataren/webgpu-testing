@@ -322,3 +322,62 @@ pub(super) fn fade(params: &Value) -> RemoteResult {
     };
     Ok(json!({ "playing": playing }))
 }
+
+/// `audio.synth {path, volume?, bus?, position?}`: a synth patch as an
+/// instrument; returns its id for `audio.note`.
+pub(super) fn synth(params: &Value) -> RemoteResult {
+    let path = req_str(params, "path")?;
+    let options = crate::audio::PlayOptions {
+        volume: opt_f64(params, "volume").map_or(1.0, |v| v.max(0.0) as f32),
+        bus: opt_str(params, "bus").map(str::to_string),
+        spatial: params
+            .get("position")
+            .map(super::super::json::vec3_from_json)
+            .transpose()?
+            .map(|p| crate::audio::SpatialOptions::at(p.to_array())),
+        ..Default::default()
+    };
+    let since = crate::audio::next_id();
+    let id = crate::audio::play_synth(path, options)?;
+    Ok(json!({ "id": id, "played": crate::audio::history(since)[0].clone() }))
+}
+
+/// `audio.note {note, id? | path?, velocity?, duration?, off?, all_off?, bus?}`:
+/// a note on a synth from `audio.synth` (`id`; held until `off: true`, or for
+/// `duration` seconds), or a one-shot note of a patch (`path`, held for
+/// `duration`, 0.25 by default).
+pub(super) fn note(params: &Value) -> RemoteResult {
+    let note = match params.get("note") {
+        Some(Value::Number(n)) => n
+            .as_u64()
+            .filter(|n| *n <= 127)
+            .map(|n| n as u8)
+            .ok_or("note must be 0-127")?,
+        Some(Value::String(name)) => {
+            crate::audio::note_from_name(name).ok_or_else(|| format!("not a note: {name}"))?
+        }
+        None if opt_bool(params, "all_off").unwrap_or(false) => 0,
+        _ => return Err("note must be a MIDI number (60 = middle C) or a name like C4".into()),
+    };
+    let velocity = opt_f64(params, "velocity").unwrap_or(0.8) as f32;
+    if let Some(id) = opt_u64(params, "id") {
+        let playing = if opt_bool(params, "all_off").unwrap_or(false) {
+            crate::audio::all_notes_off(id)
+        } else if opt_bool(params, "off").unwrap_or(false) {
+            crate::audio::note_off(id, note)
+        } else {
+            crate::audio::note_on(id, note, velocity)
+        };
+        return Ok(json!({ "id": id, "playing": playing }));
+    }
+    let path =
+        opt_str(params, "path").ok_or("audio.note needs an id (from audio.synth) or a path")?;
+    let options = crate::audio::NoteOptions {
+        velocity,
+        seconds: opt_f64(params, "duration").map_or(0.25, |v| v.max(0.0) as f32),
+        bus: opt_str(params, "bus").map(str::to_string),
+        volume: opt_f64(params, "volume").map_or(1.0, |v| v.max(0.0) as f32),
+    };
+    let id = crate::audio::play_note(path, note, options)?;
+    Ok(json!({ "id": id, "note": note }))
+}

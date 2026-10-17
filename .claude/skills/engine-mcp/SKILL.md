@@ -212,7 +212,9 @@ engine you launched; save first).
   so pass `summary: true` for one entry per file. `audio_bus` sets a bus's fader, mute,
   solo, output, effects (`audio_effect_kinds` lists them and their parameters), sends and
   ducking; `audio_music` plays music (sound files or AHX/HVL/A2M/SID songs) with
-  crossfades; `audio_snapshot` defines and fades to mixer snapshots; an `audio_volume`
+  crossfades; `audio_synth` / `audio_note` play synth patches saved by the DAW (an
+  instrument, or one-shot notes as sound effects); `audio_snapshot` defines and fades to
+  mixer snapshots; an `audio_volume`
   component changes the mix around the listener in play mode (reverb in a cave);
   `audio_capture` records the mixed output to a WAV for `sound_inspect`, the way to
   check a mix without speakers. Positional sound: an `audio_source` component (clip, loop,

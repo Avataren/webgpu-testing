@@ -947,6 +947,16 @@ the script calls in its hooks.
 - `set_bus_muted(bus, muted)` - Mute or unmute a bus
 - `set_bus_effect(bus, index, {param = value, ..., bypass = false})` - Change one of a bus's
   effects (`index` 1 is the first), e.g. `set_bus_effect("music", 1, {cutoff_hz = 600})`
+- `play_synth(path[, {volume, bus, priority, entity, position, spatial}])` → `id` - A synth
+  patch (a patch file saved by the DAW: oscillators, wavetables, a sampler with its sample,
+  filters, envelopes, LFOs, effects) as an instrument that plays the notes it is sent
+- `synth_note_on(id, note[, velocity])` / `synth_note_off(id, note)` / `synth_all_notes_off(id)`
+  - Play an instrument; `note` is a MIDI number (60 = middle C) or a name (`"C4"`, `"F#3"`,
+  `"Bb2"`) and `velocity` 0-1 (0.8)
+- `play_note(path, note[, {velocity = 0.8, duration = 0.25, bus = "sfx", volume = 1}])` → `id`
+  - One note of a patch, held `duration` seconds and released: a synthesized sound effect.
+  Notes of a patch share one instrument (made on the first note, which takes a few
+  milliseconds), with the patch's voices for polyphony.
 - `set_audio_snapshot(name[, fade])` - Fade the mix to one of the project's snapshots over
   `fade` seconds (default 0.5); `nil` fades back. A pause menu: `set_audio_snapshot("paused")`
   when it opens and `set_audio_snapshot(nil)` when it closes.

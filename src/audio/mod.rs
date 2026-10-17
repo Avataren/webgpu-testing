@@ -205,6 +205,9 @@ struct Audio {
     scene: scene::SceneAudio,
     /// The music track playing (or fading in), and its file.
     music: Option<(u64, PathBuf)>,
+    /// The instruments `play_note` plays on: one synth voice per patch and
+    /// bus, made on its first note.
+    instruments: std::collections::HashMap<(PathBuf, Option<String>), u64>,
 }
 
 impl Audio {
@@ -219,6 +222,7 @@ impl Audio {
             listener_planar: false,
             scene: scene::SceneAudio::default(),
             music: None,
+            instruments: std::collections::HashMap::new(),
         }
     }
 
@@ -360,7 +364,160 @@ pub(crate) fn debug_geometry(
     scene::debug_geometry(world, selected)
 }
 
+/// A synth patch (a patch file saved by the DAW, its JSON) as an instrument:
+/// a voice on a bus that plays the notes sent to it with [`note_on`] and
+/// [`note_off`], until it is stopped. `options` places it like a sound
+/// (bus, volume, position); `looped` and `pitch` do not apply.
+pub fn play_synth(path: &str, options: PlayOptions) -> Result<u64, String> {
+    let path = resolve_path(path)?;
+    with_audio(|audio| audio.play_synth(path, options, false, None))
+}
+
+/// Starts MIDI note `note` (60 is middle C) at `velocity` (0-1) on a synth
+/// from [`play_synth`]. Returns whether the synth is playing.
+pub fn note_on(id: u64, note: u8, velocity: f32) -> bool {
+    with_audio(|audio| {
+        audio.output.source_event(
+            id,
+            cubed_mixer::SourceEvent::NoteOn {
+                note,
+                velocity: velocity.clamp(0.0, 1.0),
+                duration: 0,
+            },
+        )
+    })
+}
+
+/// Releases a note held on a synth.
+pub fn note_off(id: u64, note: u8) -> bool {
+    with_audio(|audio| {
+        audio
+            .output
+            .source_event(id, cubed_mixer::SourceEvent::NoteOff { note })
+    })
+}
+
+/// Releases every note held on a synth.
+pub fn all_notes_off(id: u64) -> bool {
+    with_audio(|audio| {
+        audio
+            .output
+            .source_event(id, cubed_mixer::SourceEvent::AllNotesOff)
+    })
+}
+
+/// A note name as a MIDI number: a letter, then sharps (#) or flats (b), then
+/// the octave ("C4" = 60, "A4" = 69, "Bb2" = 46, "C-1" = 0).
+pub fn note_from_name(text: &str) -> Option<u8> {
+    let mut chars = text.trim().chars().peekable();
+    let base = match chars.next()?.to_ascii_uppercase() {
+        'C' => 0,
+        'D' => 2,
+        'E' => 4,
+        'F' => 5,
+        'G' => 7,
+        'A' => 9,
+        'B' => 11,
+        _ => return None,
+    };
+    let mut offset = 0i32;
+    while let Some(&c) = chars.peek() {
+        match c {
+            '#' => offset += 1,
+            'b' => offset -= 1,
+            _ => break,
+        }
+        chars.next();
+    }
+    let octave: i32 = chars.collect::<String>().parse().ok()?;
+    let note = (octave + 1) * 12 + base + offset;
+    u8::try_from(note).ok().filter(|n| *n <= 127)
+}
+
+/// How [`play_note`] plays a note.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteOptions {
+    /// 0-1.
+    pub velocity: f32,
+    /// How long it is held, in seconds; its release follows.
+    pub seconds: f32,
+    /// The bus of the patch's instrument; `None` is sfx.
+    pub bus: Option<String>,
+    /// The instrument's volume (linear), set when it is made.
+    pub volume: f32,
+}
+
+impl Default for NoteOptions {
+    fn default() -> Self {
+        Self {
+            velocity: 0.8,
+            seconds: 0.25,
+            bus: None,
+            volume: 1.0,
+        }
+    }
+}
+
+/// Plays one note of a synth patch, held for `options.seconds` and then
+/// released: a sound effect made by a synth. Notes of the same patch (and
+/// bus) share one instrument, made on the first note (building a patch takes
+/// a few milliseconds), with the patch's voices for polyphony. Returns the
+/// instrument's id.
+pub fn play_note(path: &str, note: u8, options: NoteOptions) -> Result<u64, String> {
+    let path = resolve_path(path)?;
+    with_audio(|audio| audio.play_note(path, note, options))
+}
+
 impl Audio {
+    fn play_synth(
+        &mut self,
+        path: PathBuf,
+        options: PlayOptions,
+        one_shot: bool,
+        first: Option<cubed_mixer::SourceEvent>,
+    ) -> Result<u64, String> {
+        let id = self.next_id;
+        let spatial = self.spatial(options.spatial.as_ref());
+        let audible = self
+            .output
+            .play_synth(id, &path, &options, spatial, one_shot, first)?;
+        self.next_id += 1;
+        let time = self.started.elapsed().as_secs_f64();
+        self.history.push_back(Played {
+            id,
+            path,
+            options,
+            time,
+            audible,
+        });
+        while self.history.len() > HISTORY_LEN {
+            self.history.pop_front();
+        }
+        Ok(id)
+    }
+
+    fn play_note(&mut self, path: PathBuf, note: u8, options: NoteOptions) -> Result<u64, String> {
+        let event = cubed_mixer::SourceEvent::NoteOn {
+            note,
+            velocity: options.velocity.clamp(0.0, 1.0),
+            duration: self.output.frames(options.seconds).max(1),
+        };
+        let key = (path.clone(), options.bus.clone());
+        if let Some(&id) = self.instruments.get(&key) {
+            if self.output.source_event(id, event) {
+                return Ok(id);
+            }
+        }
+        let play = PlayOptions {
+            volume: options.volume,
+            bus: options.bus,
+            ..PlayOptions::default()
+        };
+        let id = self.play_synth(path, play, false, Some(event))?;
+        self.instruments.insert(key, id);
+        Ok(id)
+    }
+
     fn play(&mut self, path: PathBuf, options: PlayOptions) -> Result<u64, String> {
         let id = self.next_id;
         let spatial = self.spatial(options.spatial.as_ref());
@@ -487,6 +644,7 @@ pub fn stop_all() {
             audio.output.stop_all();
             audio.scene.clear();
             audio.music = None;
+            audio.instruments.clear();
             audio.output.set_ambience(mix::Ambience::default());
         }
     });
@@ -737,6 +895,18 @@ mod tests {
             assert!(audio.output.has_clip(&other));
         });
         stop_all();
+    }
+
+    #[test]
+    fn note_names_are_midi_numbers() {
+        assert_eq!(note_from_name("C4"), Some(60));
+        assert_eq!(note_from_name("A4"), Some(69));
+        assert_eq!(note_from_name("c#4"), Some(61));
+        assert_eq!(note_from_name("Bb2"), Some(46));
+        assert_eq!(note_from_name("C-1"), Some(0));
+        assert_eq!(note_from_name("G9"), Some(127));
+        assert_eq!(note_from_name("A9"), None);
+        assert_eq!(note_from_name("H2"), None);
     }
 
     #[test]
