@@ -10,11 +10,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use cubed_mixer::native::{HostConfig, HostStatus, NativeHost};
-use cubed_mixer::{
-    BusId, BusMeter, BusSettings, Capture, Clip, ClipId, Command, Event, Play, VoiceId,
-};
+use cubed_mixer::{BusMeter, Capture, Clip, ClipId, Command, Event, Play, VoiceId};
 
-use super::layout::{MixerLayout, DEFAULT_BUS, MASTER};
+use super::layout::{BusLayout, MixerLayout};
+use super::mix::Buses;
 use super::PlayOptions;
 
 /// A stop fades out over this long, so it never clicks.
@@ -45,11 +44,7 @@ pub(super) struct Output {
     next_clip_id: u32,
     /// Voices that may still be playing, with their clip.
     voices: HashMap<u64, ClipId>,
-    /// Bus name to mixer slot, for the layout last applied.
-    buses: HashMap<String, BusId>,
-    layout: MixerLayout,
-    /// `set_master_volume`, in dB, applied on top of the master fader.
-    master_volume_db: f32,
+    buses: Buses,
     capture: Option<PendingCapture>,
     /// Files the last recording was written to, newest last.
     pub(super) finished_captures: Vec<PathBuf>,
@@ -69,8 +64,9 @@ impl Output {
                 }
             };
             self.host = Some(opened);
-            let layout = std::mem::take(&mut self.layout);
-            self.apply_layout(layout);
+            for command in self.buses.all() {
+                self.send(command);
+            }
         }
         self.host.as_mut().and_then(Option::as_mut)
     }
@@ -160,7 +156,7 @@ impl Output {
         _master_volume: f32,
     ) -> Result<bool, String> {
         self.poll();
-        let bus = self.bus_id(options.bus.as_deref())?;
+        let bus = self.buses.for_sound(options.bus.as_deref())?;
         let clip = self.clip(path)?;
         if self.host().is_none() {
             return Ok(false);
@@ -173,23 +169,6 @@ impl Output {
             ..Play::new(VoiceId(id), clip, bus)
         }));
         Ok(true)
-    }
-
-    /// The bus a sound plays on: the named one, else sfx (or master if the
-    /// layout has no sfx bus).
-    fn bus_id(&self, name: Option<&str>) -> Result<BusId, String> {
-        match name {
-            Some(name) => self
-                .buses
-                .get(name)
-                .copied()
-                .ok_or_else(|| format!("no audio bus named \"{name}\"")),
-            None => Ok(self
-                .buses
-                .get(DEFAULT_BUS)
-                .copied()
-                .unwrap_or(BusId::MASTER)),
-        }
     }
 
     fn stop_fade(&self) -> u32 {
@@ -228,110 +207,47 @@ impl Output {
         ids
     }
 
-    /// Makes `layout` the mix: buses created, changed or removed to match.
-    /// Bus `i` of the layout is mixer slot `i`, master first.
-    pub(super) fn apply_layout(&mut self, layout: MixerLayout) {
-        let old_len = self.buses.len();
-        self.buses = layout
-            .buses
-            .iter()
-            .enumerate()
-            .map(|(i, bus)| (bus.name.clone(), BusId(i as u16)))
-            .collect();
-        self.layout = layout;
-        if !matches!(self.host, Some(Some(_))) {
-            return;
-        }
-        for slot in self.layout.buses.len()..old_len {
-            self.send(Command::RemoveBus(BusId(slot as u16)));
-        }
-        // Every bus first feeds master, then is routed once all exist.
-        let buses = self.layout.buses.clone();
-        for (i, bus) in buses.iter().enumerate() {
-            let settings = BusSettings {
-                output: BusId::MASTER,
-                gain_db: self.effective_gain(bus),
-                pan: bus.pan,
-                mute: bus.mute,
-                solo: bus.solo,
-                ..BusSettings::default()
-            };
-            self.send(Command::SetBus(BusId(i as u16), settings));
-        }
-        for (i, bus) in buses.iter().enumerate() {
-            if let Some(&output) = bus.output.as_ref().and_then(|o| self.buses.get(o)) {
-                self.send(Command::SetBusOutput(BusId(i as u16), output));
+    /// Sends commands only to a mixer that is running: one that opens later
+    /// gets the whole layout then.
+    fn send_if_open(&mut self, commands: impl IntoIterator<Item = Command>) {
+        if matches!(self.host, Some(Some(_))) {
+            for command in commands {
+                self.send(command);
             }
         }
     }
 
-    /// A bus's fader with the scripts' master volume on top of master's.
-    fn effective_gain(&self, bus: &super::layout::BusLayout) -> f32 {
-        if bus.name == MASTER {
-            bus.gain_db + self.master_volume_db
-        } else {
-            bus.gain_db
-        }
+    /// Makes `layout` the mix: buses created, changed or removed to match.
+    pub(super) fn apply_layout(&mut self, layout: MixerLayout) {
+        let commands = self.buses.set_layout(layout);
+        self.send_if_open(commands);
     }
 
     /// The gain scripts set on top of the master fader (linear).
     pub(super) fn set_master_volume(&mut self, volume: f32) {
-        self.master_volume_db = if volume > 0.0 {
-            20.0 * volume.log10()
-        } else {
-            cubed_mixer::MIN_DB * 2.0
-        };
-        if let Some(master) = self.layout.bus(MASTER).cloned() {
-            if matches!(self.host, Some(Some(_))) {
-                let gain = self.effective_gain(&master);
-                self.send(Command::SetBusGain(BusId::MASTER, gain));
-            }
-        }
+        let command = self.buses.set_master_volume(volume);
+        self.send_if_open(command);
     }
 
     pub(super) fn layout(&self) -> &MixerLayout {
-        &self.layout
+        self.buses.layout()
     }
 
     /// Changes one bus in the layout and the mix.
     pub(super) fn update_bus(
         &mut self,
         name: &str,
-        change: impl FnOnce(&mut super::layout::BusLayout),
+        change: impl FnOnce(&mut BusLayout),
     ) -> Result<(), String> {
-        let bus = self
-            .layout
-            .bus_mut(name)
-            .ok_or_else(|| format!("no audio bus named \"{name}\""))?;
-        let before = bus.clone();
-        change(bus);
-        let after = bus.clone();
-        let Some(&id) = self.buses.get(name) else {
-            return Ok(());
-        };
-        if !matches!(self.host, Some(Some(_))) {
-            return Ok(());
-        }
-        if before.gain_db != after.gain_db {
-            let gain = self.effective_gain(&after);
-            self.send(Command::SetBusGain(id, gain));
-        }
-        if before.pan != after.pan {
-            self.send(Command::SetBusPan(id, after.pan));
-        }
-        if before.mute != after.mute {
-            self.send(Command::SetBusMute(id, after.mute));
-        }
-        if before.solo != after.solo {
-            self.send(Command::SetBusSolo(id, after.solo));
-        }
+        let commands = self.buses.update(name, change)?;
+        self.send_if_open(commands);
         Ok(())
     }
 
     pub(super) fn meter(&self, name: &str) -> Option<BusMeter> {
-        let id = self.buses.get(name)?;
+        let id = self.buses.slot(name)?;
         match &self.host {
-            Some(Some(host)) => host.meter(*id),
+            Some(Some(host)) => host.meter(id),
             _ => None,
         }
     }

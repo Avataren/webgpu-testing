@@ -885,7 +885,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 [[package]]
 name = "cubed-dsp"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#2df657ca4db8071cec9d238912d7733048aae24a"
+source = "git+https://github.com/Avataren/cubed-synth#ac7302682d49f794d22931ab65e9797a87ca08a3"
 dependencies = [
  "base64 0.22.1",
  "cubed-simd",
@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "cubed-mixer"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#2df657ca4db8071cec9d238912d7733048aae24a"
+source = "git+https://github.com/Avataren/cubed-synth#ac7302682d49f794d22931ab65e9797a87ca08a3"
 dependencies = [
  "cpal",
  "cubed-dsp",
@@ -916,7 +916,7 @@ dependencies = [
 [[package]]
 name = "cubed-simd"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#2df657ca4db8071cec9d238912d7733048aae24a"
+source = "git+https://github.com/Avataren/cubed-synth#ac7302682d49f794d22931ab65e9797a87ca08a3"
 
 [[package]]
 name = "cursor-icon"

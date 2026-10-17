@@ -10,24 +10,23 @@
 //! play is also recorded in a short history, which lets automated playtests check
 //! which sounds a game played without hearing them.
 //!
-//! Natively, sounds are mixed by `cubed-mixer` in the audio device's callback, so
-//! bus faders, mute and solo apply to everything playing. On the web, sounds still
-//! go through the Web Audio API: files are fetched relative to the page and decoded
-//! by the browser, so the first play of a file starts once it has loaded, and a
-//! missing or undecodable file is logged rather than returned as an error. Browsers
-//! keep audio suspended until the user first clicks or presses a key; sounds played
-//! before that start then. The web does not apply bus settings yet. Without an
+//! Sounds are mixed by `cubed-mixer` (from cubed-synth), so bus faders, mute and
+//! solo apply to everything playing: natively in the audio device's callback, on
+//! the web in an AudioWorklet running the same mixer as wasm. On the web, files are
+//! fetched relative to the page and decoded by the browser, so the first play of a
+//! file starts once it has loaded, and a missing or undecodable file is logged
+//! rather than returned as an error. Browsers keep audio suspended until the user
+//! first clicks or presses a key; sounds played before that start then. Without an
 //! output device sounds are recorded in the history but not heard.
 
 mod layout;
+mod mix;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(target_arch = "wasm32")]
 mod web;
 
 use std::cell::RefCell;
-#[cfg(target_arch = "wasm32")]
-use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 

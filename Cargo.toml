@@ -88,11 +88,13 @@ web-sys = { version = "0.3", features = [
     "AudioContextState",
     "AudioDestinationNode",
     "AudioNode",
-    "AudioParam",
     "AudioBuffer",
-    "AudioBufferSourceNode",
-    "AudioScheduledSourceNode",
-    "GainNode",
+    "AudioWorklet",
+    "AudioWorkletNode",
+    "AudioWorkletNodeOptions",
+    "MessageEvent",
+    "MessagePort",
+    "Worklet",
     "Storage",
 ] }
 epaint_default_fonts = { version = "0.36", optional = true }

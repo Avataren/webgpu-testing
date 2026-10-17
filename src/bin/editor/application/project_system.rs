@@ -1692,6 +1692,14 @@ mod native {
             .arg(&wasm_path);
         run_command_with_logging("wasm-bindgen", bindgen_cmd)?;
 
+        // The audio mixer's AudioWorklet, loaded from pkg/ next to the player.
+        let mut worklet_cmd = Command::new("bash");
+        worklet_cmd
+            .arg("build_web.sh")
+            .arg("--audio-worklet")
+            .arg(&pkg_dir);
+        run_command_with_logging("audio worklet", worklet_cmd)?;
+
         let index_path = output_dir.join("index.html");
         fs::write(&index_path, build_web_index(name))?;
         info!("Wrote web entry point to {:?}", index_path);

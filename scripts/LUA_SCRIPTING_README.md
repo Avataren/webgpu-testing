@@ -908,8 +908,8 @@ down separately.
 Sounds stop when play mode ends. Without an audio device sounds are silent but still
 recorded, so automated tests can check what played (engine tool `audio_status`).
 
-In web builds, files are fetched relative to the page and decoded by the browser, and
-bus settings are not applied yet. The
+In web builds the same mixer runs in an AudioWorklet; files are fetched relative to the
+page and decoded by the browser. The
 first play of a file starts once it has loaded, and a missing file is logged instead of
 raising an error. Browsers hold audio back until the player first clicks or presses a
 key; sounds played before that start then.
