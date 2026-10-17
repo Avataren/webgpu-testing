@@ -80,7 +80,7 @@ to `Editor`. The editor starts and stops play mode through `RuntimeStateHandle`.
 ## Rendering
 
 `Renderer::render` (`src/renderer/renderer_core.rs`) runs these passes in order:
-skinning → acceleration structures (when ray tracing runs) → shadow maps → depth prepass
+skinning → acceleration structures (when ray tracing runs) → light culling → shadow maps → depth prepass
 → ray-traced shadow mask → main colour pass → path tracing → shader-material colour →
 custom stage (`BeforePostprocess`) → transparent pass → post-processing → custom stage
 (`AfterPostprocess`) → surface passes (overlay, gizmos) → pick pass (only with a pending
@@ -94,9 +94,68 @@ its TAA jitter and texture LOD bias depend on both.
   are prepared; the depth prepass, main, shader-material and transparent passes skip
   instances outside the jittered camera frustum (`OrderedBatch::camera_visible`), and
   each shadow view skips those outside its own. Draws are split into runs of visible
-  instances, so the objects buffer layout does not change. Skinned meshes, GPU-placed
+  instances, so the objects buffer layout does not change. A skinned instance's box
+  follows its pose: each joint's bind-pose box around the vertices it moves (cached per
+  mesh, `culling::joint_bounds`) moved by its palette matrix (`skinned_bounds`). GPU-placed
   instances and shader materials (which may move vertices) are never culled; neither are
   the overlay, gizmo and pick passes, drawn with the unjittered camera.
+- **Lights (Forward+, clustered)** (`renderer/lights.rs`, `renderer/light_culling.rs`,
+  `shader/light_culling.wgsl`): up to 4 directional lights in a fixed array, and any
+  number of point and spot lights ("local" lights, one list, up to `MAX_LOCAL_LIGHTS` =
+  4096; beyond it the ones nearest the camera) in the lights storage buffer after a
+  512-byte header. The view is cut into clusters: 16 columns, rows that keep tiles about
+  square, 24 depth slices logarithmic from 0.5 to 300 m (linear for an orthographic
+  camera). One compute dispatch before the shadow pass tests every light's sphere of reach
+  (and a spot's cone) against every cluster's view-space box, lights loaded 64 at a time
+  into workgroup memory (only those reaching the box around the workgroup's 64 clusters
+  are tested one by one), and writes each cluster's lights (in light order, at most
+  `MAX_LIGHTS_PER_CLUSTER` = 256) into a shared pool of indices taken with one atomic add
+  (`light_lists`: header, an (offset, count) pair per cluster and per grid cell, then the
+  pool). The pool's fill is read back without stalling and the pool grows when a frame
+  needed more (lights left out meanwhile are counted, `cluster_lights_dropped`). A lit
+  surface finds its cluster from its world position (the unjittered view projection and
+  view depth in the header, `light_cluster` in `lighting_common.wgsl`) and loops over that
+  list only: the main and transparent passes, lit particles and shader materials alike.
+  Passes that shade ray hits (reflections, refraction, light probe updates, path tracing,
+  global illumination) cannot use the camera's clusters, so the same dispatch also fills a
+  world-space grid over the lights' reach (at most 16384 roughly cubic cells, within
+  256 m of the camera; `light_grid_cell`) on frames that trace. Reflections and refraction
+  loop over a hit's cell with a shadow ray each; light probe updates trace every light of
+  the cell when it has at most 4 and otherwise one, picked in proportion to what each
+  would add unshadowed (the probes average many updates); the path tracer's primary hits
+  take every light of the cell up to 8 and otherwise 4 such picks, and its path vertices
+  (and global illumination) one pick among the directional and cell lights. Caustic photons
+  come from the 12 lights bringing the most light to the casters. A light without a
+  `range` gets one where its inverse-square falloff drops below a small cutoff, and is
+  faded out toward it like any other.
+- **Local light shadows** (`renderer/internal/shadow_atlas.rs`, `shadows.rs`,
+  `shadow_casters.rs`): every point and spot light's shadow maps are square tiles of one
+  Depth32Float atlas (six cube faces for a point light, one for a spot light), rendered
+  with a 2-texel border so the 3x3 filter's taps stay in the tile. Each frame the
+  shadow-casting lights the view can reach are scored (`shadow_priority` x the pixels their
+  sphere of reach covers x brightness, a little more for lights that held tiles) and ask
+  for tiles of a power of two near their size on screen (128 up to `shadow_map_size`, at
+  most an eighth of the atlas); when the atlas cannot hold them the lowest scores shrink,
+  then go without (unshadowed; at most `MAX_SHADOWED_LOCAL_LIGHTS` = 64 have maps). Tiles
+  come from a buddy allocator and stay put while a light's size class stays (a light that
+  leaves the view keeps them for 600 frames unless another needs the room; a light that is
+  gone frees them at once); the atlas grows by powers of two with demand up to the
+  graphics setting `shadow_atlas_size` (8192 natively, 4096 on the web), and shrinks (or is
+  released) once the lights have needed at most half of a smaller one for 600 frames. A
+  face is kept in two parts: its static casters' depth in a second atlas of the same
+  layout, and the map itself, rebuilt from a copy of that (a
+  fullscreen-triangle depth copy: WebGPU cannot copy part of a depth texture) plus the
+  dynamic casters (skinned, GPU-placed, without bounds, or changed within the last 60
+  frames) in its view. Static depth is rendered again only when a static caster near the
+  face changes (appears, goes, starts moving, settles), found by comparing the casters
+  with last frame's rather than hashing each face's casters every frame. Faces the camera
+  cannot see (their frustum and the camera's do not meet) and faces with nothing new are
+  kept. At most `shadow_updates_per_frame` (48) faces are rebuilt a frame: faces never
+  rendered first, then any that waited 4 frames, then by their light's score; the others
+  keep last frame's map (`shadow_views_deferred`). With ray-traced shadows the 28
+  highest-ranked shadow casters take bits of the mask instead, and their tiles are skipped
+  when only the main pass reads the maps. The renderer keeps each light's state for
+  `Renderer::light_shadow_state` (the inspector's light section, `entity_get`'s `shadow`).
 - **Opaque order**: opaque batches draw front to back by their nearest instance, then by
   mesh, so the prepass rejects hidden fragments early and coplanar surfaces resolve the
   same way every frame (the batcher's map has no order of its own).
@@ -104,13 +163,16 @@ its TAA jitter and texture LOD bias depend on both.
   pipeline (`depth_prepass_masked.wgsl`), so the ray-traced shadow mask traced from this
   depth sees them. Shader materials (their own vertex stage may move vertices) write their
   depth in the main pass.
-- **Shadow maps are cached** (`renderer/internal/shadows.rs`): each light's map remembers
-  a hash of what it was rendered from (the light's view projection and every caster's
-  geometry identity, transform, shadow flag and, for cut-outs, material and texture
-  generation, order-independent); a frame whose hash matches keeps the map. Skinned or
-  GPU-placed casters, and custom shadow passes, render every frame. Every rendered view's
-  view projection goes into one uniform buffer bound at a dynamic offset.
-  `RendererStats::shadow_views_rendered` / `shadow_views_cached` show the split, and
+- **Directional shadow maps are cached** (`renderer/internal/shadows.rs`): each map
+  remembers a hash of what it was rendered from (the light's view projection and every
+  caster's geometry identity, transform, shadow flag and, for cut-outs, material and
+  texture generation, order-independent); a frame whose hash matches keeps the map.
+  Skinned or GPU-placed casters, and custom shadow passes, render every frame. Every
+  rendered view's view projection (directional layers and local faces) goes into one
+  uniform buffer bound at a dynamic offset. Custom shadow passes get the atlas tile as
+  `CustomRenderContext::shadow_viewport` for local faces.
+  `RendererStats::shadow_views_rendered` / `shadow_views_cached` /
+  `shadow_views_deferred` show the split, `lights` the lights and shadow budget, and
   `culled_instances` the culling.
 - **Acceleration structures are kept** across frames with the same instances (geometry,
   transforms, masks, shader-side entries) and no BLAS to build (`raytracing/scene.rs`,
@@ -121,7 +183,10 @@ its TAA jitter and texture LOD bias depend on both.
   camera when the module's `globals` has `unjittered_view_proj`/`prev_view_proj`. Other
   shapes fall back to the PBR shader for their G-buffer and draw their colour in the
   shader-material pass. That pass also redraws every shader material when path tracing
-  replaced the opaque lighting.
+  replaced the opaque lighting. With `// @include_lighting` a shader material reads the
+  lights through `scene_lights_at`, `scene_light_count` and `scene_light`
+  (`lighting_common.wgsl`: the directional lights, then its cluster's point and spot
+  lights), not the lights buffer's arrays.
 - **Cut-out surfaces** (`Material::alpha_cutoff`, glTF `MASK`) are opaque surfaces that
   discard below the cutoff: in the depth prepass, the main pass, the pick pass, shadow
   maps (an alpha-tested shadow pipeline) and ray queries (non-opaque BLAS; every query loop confirms candidates
@@ -187,7 +252,13 @@ to flicker, especially at a distant horizon.
   (facing away, out of range, outside the cone, no shadow data, or already answered by
   the ray-traced mask) is skipped before its PCF taps.
 - **Bind groups** for the main pipeline: 0 = camera, 1 = objects, 2 = lights,
-  3 = textures. Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
+  3 = textures. Group 2 holds the lights buffer (0) and the cluster lists (15), both
+  storage, the shadows uniform (1: directional shadows and the local shadow slots' face
+  matrices and atlas rects), the directional shadow layers (2), one comparison sampler
+  (3), the local shadow atlas (4), the environment (8-10), the ray-traced shadow mask (11)
+  and the light probes (12-14): 2 storage buffers and 6 sampled textures, so the main pass
+  stays within WebGPU's per-stage limits (4 storage buffers, 11 sampled textures with the
+  traditional texture bindings). Group 3 is bindless (`binding_array`, up to `MAX_TEXTURES = 256`) when the
   adapter supports it. Otherwise it is "traditional", with one binding per material slot.
   Browsers never offer bindless textures, so every web build takes the traditional path;
   GPU particle systems bind their own material's textures there

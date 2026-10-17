@@ -10,6 +10,7 @@ pub mod gizmo_shapes;
 mod gpu_timer;
 pub mod hdr_output;
 pub(crate) mod internal;
+pub(crate) mod light_culling;
 pub mod light_probe_debug;
 pub mod light_probes;
 pub mod lights;
@@ -49,8 +50,8 @@ pub use light_probes::{
     LightProbeBakeOutcome, LightProbeBakeProgress, LightProbeGrid, MAX_LIGHT_PROBE_VOLUMES,
 };
 pub use lights::{
-    DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
-    MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+    DirectionalShadowData, LightsData, LocalLight, SpotCone, MAX_DIRECTIONAL_LIGHTS,
+    MAX_LIGHTS_PER_CLUSTER, MAX_LOCAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS,
 };
 pub use material::Material;
 pub use objects::{MaterialData, ObjectData};
@@ -62,7 +63,8 @@ pub use render_context::{
 };
 pub use render_region::RenderRegion;
 pub use renderer_core::{
-    RenderFrame, Renderer, RendererStats, ShaderReload, SurfaceError, TAA_JITTER_FRAMES,
+    LightShadowState, LightStats, RenderFrame, Renderer, RendererStats, ShaderReload, SurfaceError,
+    TAA_JITTER_FRAMES,
 };
 pub use shader_builder::{SamplerFilterMode, ShaderBuilder};
 pub use texture::Texture;

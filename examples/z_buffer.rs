@@ -180,6 +180,7 @@ fn setup_scene(ctx: &mut StartupContext<'_>) {
             color: Vec3::splat(1.0),
             intensity: 420.0,
             range: 14.0,
+            ..PointLight::default()
         },
         CanCastShadow(false),
     ));

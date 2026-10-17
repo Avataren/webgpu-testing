@@ -52,6 +52,17 @@ engine you launched; save first).
   `entity_spawn {kind: "plane", rotation: [-90, 0, 0], scale: 30}`.
 - A scene needs a light to be lit, for example
   `entity_spawn {kind: "directional_light"}`.
+- Lights: up to 4 directional lights; point and spot lights have no practical limit
+  (4096, clustered, so each surface only pays for the lights reaching it; set a `range`
+  so they stay local). Shadowed point and spot lights (`cast_shadow`) share one shadow
+  atlas, ranked by `shadow_priority` (point_light/spot_light field, default 1) x size on
+  screen x brightness: nearer lights get bigger tiles, lights past the budget go
+  unshadowed. `entity_get` shows a light's `shadow` state (`shadow_map` with `tile_size`
+  and `rank`, `ray_traced`, `out_of_view`, `over_budget`); `engine_stats renderer.lights`
+  the totals (shadowed, over_budget, atlas size and use) and `shadow_views_deferred` the
+  shadow views waiting for the per-frame update budget. Graphics settings
+  `shadow_atlas_size` (1024-8192) and `shadow_updates_per_frame` (default 48) trade
+  shadow room and freshness for cost.
 
 ## Building scenes
 
@@ -400,9 +411,9 @@ Facts that change how you write scripts:
   the FPS readout and editor grid; the frame is taken one frame later). Turn
   `render_freeze_noise {enabled: false}` back afterwards: it slightly reduces anti-aliasing.
 - `profile_capture {frames}` captures percentiles of CPU frame/stage times and of the GPU
-  time per render stage (`gpu_stages_ms`, `gpu_total_ms`, from timestamp queries), the
-  renderer counters' min/max/last (`renderer_counters`: draw calls, shadow views
-  rendered/cached, culled instances), script cost and asset growth. `baseline` compares a
+  time per render stage (`gpu_stages_ms`, `gpu_total_ms`, from timestamp queries; with
+  `light_culling`, the clustered lights' compute pass), the renderer counters' min/max/last
+  (`renderer_counters`: draw calls, shadow views rendered/cached, culled instances), script cost and asset growth. `baseline` compares a
   previous report. Prefer its GPU percentiles over one `engine_stats` reading when another
   process shares the GPU.
 - `engine_stats {history: N}` adds one row per frame for the last N frames (draw calls,

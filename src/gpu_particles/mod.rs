@@ -3,7 +3,7 @@ mod behavior;
 mod emitter;
 mod particle;
 mod shader_modules;
-mod system;
+pub(crate) mod system;
 
 pub mod behaviors;
 pub mod pools;

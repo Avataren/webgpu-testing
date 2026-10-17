@@ -21,6 +21,9 @@
 // Part of the trace shader module (pt_trace.wgsl's helpers and bindings).
 
 const CAUSTIC_MAX_CASTERS : u32 = 32u;
+// The lights that shine photons (path_tracing.rs MAX_CAUSTIC_LIGHTS: those bringing the
+// most light to the casters).
+const CAUSTIC_MAX_LIGHTS : u32 = 12u;
 // Light-caster pairs' first photons, four to a vector (path_tracing.rs PAIR_START_VECTORS:
 // 12 lights times 32 casters, plus the total).
 const CAUSTIC_PAIR_START_VECTORS : u32 = 97u;
@@ -40,6 +43,11 @@ struct PtCaustics {
     pair_starts : array<vec4<u32>, CAUSTIC_PAIR_START_VECTORS>,
     // casters, light-caster pairs, photons, photon grid width
     counts : vec4<u32>,
+    // The caustic lights, as indices into the directional lights and then the local
+    // lights (an index past the directional lights' count is a local light's plus it);
+    // x: how many.
+    lights : array<vec4<u32>, 3>,
+    light_count : vec4<u32>,
 };
 
 @group(1) @binding(194)
@@ -61,10 +69,15 @@ struct PtPhoton {
     direction : vec3<f32>,
     // Power (flux) it carries.
     power : vec3<f32>,
-    // The light's range (0: unlimited), for the main pass's range falloff.
+    // The light's range, for the main pass's range falloff.
     range : f32,
     valid : bool,
 };
+
+// Caustic light `slot`'s index into the directional lights, then the local lights.
+fn pt_caustic_light(slot : u32) -> u32 {
+    return pt_caustics.lights[slot / 4u][slot % 4u];
+}
 
 // Photon `k` of the pair (`light`, `caster`): aimed at the caster's bounding sphere,
 // carrying an equal share of the light that reaches the sphere.
@@ -73,7 +86,6 @@ fn pt_emit_photon(light : u32, caster : vec4<f32>, u : vec2<f32>, per_pair : f32
     let center = caster.xyz;
     let radius = max(caster.w, 1e-3);
     let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
     if light < dir_count {
         // A parallel beam through the sphere's cross-section, from far away (what blocks
         // the sun still does), spread over the sun's disc.
@@ -90,25 +102,13 @@ fn pt_emit_photon(light : u32, caster : vec4<f32>, u : vec2<f32>, per_pair : f32
         return photon;
     }
 
-    var position : vec3<f32>;
-    var color : vec4<f32>;
-    var spot = false;
-    var spot_direction = vec3<f32>(0.0);
-    var cone = vec2<f32>(0.0);
-    if light < dir_count + point_count {
-        let source = lights.points[light - dir_count];
-        position = source.position_range.xyz;
-        photon.range = source.position_range.w;
-        color = source.color_intensity;
-    } else {
-        let source = lights.spots[light - dir_count - point_count];
-        position = source.position_range.xyz;
-        photon.range = source.position_range.w;
-        color = source.color_intensity;
-        spot = true;
-        spot_direction = normalize(source.direction.xyz);
-        cone = source.cone_params.xy;
-    }
+    let source = lights.locals[light - dir_count];
+    let position = source.position_range.xyz;
+    photon.range = source.position_range.w;
+    let color = source.color_intensity;
+    let spot = source.direction.w > -1.5;
+    let spot_direction = normalize(source.direction.xyz);
+    let cone = vec2<f32>(source.params.x, source.direction.w);
     // From a point on the lamp (its radius softens the caustic as it softens shadows).
     photon.origin = position + pt_sphere_direction(pt_rand2()) * (pt.params.w * sqrt(pt_rand()));
     let to_center = center - photon.origin;
@@ -282,10 +282,11 @@ fn fs_pt_photons(in : VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0);
     }
     let k = index - first;
-    let light = pair / casters;
-    if light >= pt_light_count() {
+    let slot = pair / casters;
+    if slot >= pt_caustics.light_count.x {
         return vec4<f32>(0.0);
     }
+    let light = pt_caustic_light(slot);
     pt_rng_state = pt_hash(index + pt_hash(pt.frame.x * 7919u + 1u));
     let offset = vec2<u32>(pt_hash(pair * 2u + 101u), pt_hash(pair * 2u + 102u));
     let u = pt_r2(offset, pt.frame.x * per_pair + k);

@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 
 use crate::renderer::shader_source::wgsl;
 use crate::renderer::{
-    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
+    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS},
     MAX_TEXTURES,
 };
 
@@ -71,8 +71,10 @@ impl ShaderBuilder {
     pub fn with_constants(mut self) -> Self {
         self.ensure_module(wgsl!("constants.wgsl"));
         self.set_constant("MAX_DIRECTIONAL_LIGHTS", MAX_DIRECTIONAL_LIGHTS as u32);
-        self.set_constant("MAX_POINT_LIGHTS", MAX_POINT_LIGHTS as u32);
-        self.set_constant("MAX_SPOT_LIGHTS", MAX_SPOT_LIGHTS as u32);
+        self.set_constant(
+            "MAX_SHADOWED_LOCAL_LIGHTS",
+            MAX_SHADOWED_LOCAL_LIGHTS as u32,
+        );
         self.set_constant(
             "MAX_TEXTURES",
             u32::try_from(MAX_TEXTURES).expect("MAX_TEXTURES must fit in u32"),
@@ -335,7 +337,7 @@ mod tests {
     use super::*;
     use crate::asset::material::ShaderMaterialMetadata;
     use crate::renderer::{
-        lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS},
+        lights::{MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS},
         MAX_TEXTURES,
     };
     use naga::front::wgsl;
@@ -351,12 +353,8 @@ mod tests {
             MAX_DIRECTIONAL_LIGHTS as u32
         )));
         assert!(shader.contains(&format!(
-            "const MAX_POINT_LIGHTS: u32 = {}u;",
-            MAX_POINT_LIGHTS as u32
-        )));
-        assert!(shader.contains(&format!(
-            "const MAX_SPOT_LIGHTS: u32 = {}u;",
-            MAX_SPOT_LIGHTS as u32
+            "const MAX_SHADOWED_LOCAL_LIGHTS: u32 = {}u;",
+            MAX_SHADOWED_LOCAL_LIGHTS as u32
         )));
         assert!(shader.contains(&format!(
             "const MAX_TEXTURES: u32 = {}u;",

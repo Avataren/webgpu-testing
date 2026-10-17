@@ -479,6 +479,7 @@ impl EditorApplication {
             let game_viewport = &mut shared.viewports.game_viewport;
             let workspace_info = scene_hierarchy_window.workspace_info();
             let light_probe_status = &shared.light_probe_status;
+            let light_shadow_status = &shared.light_shadow_status;
             let animation_status = &shared.animation_status;
             #[cfg(feature = "navigation")]
             let navigation_status = &shared.navigation_status;
@@ -492,6 +493,7 @@ impl EditorApplication {
                     } else {
                         let mut behavior = EditorBehavior {
                             light_probe_status,
+                            light_shadow_status,
                             animation_status,
                             #[cfg(feature = "navigation")]
                             navigation_status,
@@ -1287,6 +1289,7 @@ impl EditorApplication {
             color: Vec3::splat(1.0),
             intensity: 120.0,
             range: 12.0,
+            ..PointLight::default()
         };
 
         let entity = EntityBuilder::new(&mut ctx.scene)
@@ -1327,6 +1330,7 @@ impl EditorApplication {
             inner_angle: 0.35,
             outer_angle: 0.6,
             range: 18.0,
+            ..SpotLight::default()
         };
 
         let entity = EntityBuilder::new(&mut ctx.scene)

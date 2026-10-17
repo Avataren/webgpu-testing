@@ -305,6 +305,20 @@ pub struct SerializedPointLight {
     pub color: [f32; 3],
     pub intensity: f32,
     pub range: f32,
+    /// Left out when 1 (the default), so scenes from before it load and stay unchanged.
+    #[serde(
+        default = "default_shadow_priority",
+        skip_serializing_if = "is_default_shadow_priority"
+    )]
+    pub shadow_priority: f32,
+}
+
+fn default_shadow_priority() -> f32 {
+    1.0
+}
+
+fn is_default_shadow_priority(priority: &f32) -> bool {
+    *priority == 1.0
 }
 
 impl From<PointLight> for SerializedPointLight {
@@ -313,6 +327,7 @@ impl From<PointLight> for SerializedPointLight {
             color: light.color.to_array(),
             intensity: light.intensity,
             range: light.range,
+            shadow_priority: light.shadow_priority,
         }
     }
 }
@@ -323,6 +338,7 @@ impl From<SerializedPointLight> for PointLight {
             color: glam::Vec3::from_array(serialized.color),
             intensity: serialized.intensity,
             range: serialized.range,
+            shadow_priority: serialized.shadow_priority,
         }
     }
 }
@@ -334,6 +350,12 @@ pub struct SerializedSpotLight {
     pub inner_angle: f32,
     pub outer_angle: f32,
     pub range: f32,
+    /// As [`SerializedPointLight::shadow_priority`].
+    #[serde(
+        default = "default_shadow_priority",
+        skip_serializing_if = "is_default_shadow_priority"
+    )]
+    pub shadow_priority: f32,
 }
 
 impl From<SpotLight> for SerializedSpotLight {
@@ -344,6 +366,7 @@ impl From<SpotLight> for SerializedSpotLight {
             inner_angle: light.inner_angle,
             outer_angle: light.outer_angle,
             range: light.range,
+            shadow_priority: light.shadow_priority,
         }
     }
 }
@@ -356,6 +379,7 @@ impl From<SerializedSpotLight> for SpotLight {
             inner_angle: serialized.inner_angle,
             outer_angle: serialized.outer_angle,
             range: serialized.range,
+            shadow_priority: serialized.shadow_priority,
         }
     }
 }

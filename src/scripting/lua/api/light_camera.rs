@@ -23,6 +23,7 @@ const LIGHT_FIELDS: &[&str] = &[
     "inner_angle_deg",
     "outer_angle_deg",
     "cast_shadow",
+    "shadow_priority",
 ];
 
 const CAMERA_FIELDS: &[&str] = &[
@@ -81,8 +82,9 @@ fn light_name(kind: &str) -> String {
 /// - `spawn_light(kind[, fields][, name])` - spawn a `"point"`, `"directional"` or
 ///   `"spot"` light; returns its handle
 /// - `set_light(entity, fields)` - change a light: `color`, `intensity`, `range`,
-///   `shadow_size`, `inner_angle_deg`, `outer_angle_deg`, `cast_shadow`; `kind` adds a
-///   light or switches its kind
+///   `shadow_size`, `inner_angle_deg`, `outer_angle_deg`, `cast_shadow`,
+///   `shadow_priority` (point and spot lights: their weight in the shadow budget, 1 by
+///   default); `kind` adds a light or switches its kind
 /// - `spawn_camera([fields][, name])` - spawn a camera; returns its handle
 /// - `set_camera(entity, fields)` - change or add a camera: `projection`
 ///   (`"perspective"`/`"orthographic"`), `fov_deg`, `near`, `far`, `left`, `right`,

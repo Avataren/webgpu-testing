@@ -1,6 +1,8 @@
 //! Ray-traced shadows: a screen-space mask traced between the depth prepass and the main
 //! pass (`shader/rt_shadows.wgsl`), one bit per shadowed light, which the main pass reads
-//! instead of the shadow maps for those lights.
+//! instead of the shadow maps for those lights. Bits 0-3 are the directional lights; bits
+//! 4-31 go to up to [`RT_SHADOW_LOCAL_LIGHTS`] point and spot lights, the ones the shadow
+//! budget ranks highest (`LocalLight.params.z` in lighting_common.wgsl holds a light's bit).
 
 use crate::renderer::shader_source::wgsl;
 use bytemuck::{Pod, Zeroable};
@@ -8,20 +10,29 @@ use bytemuck::{Pod, Zeroable};
 use crate::renderer::lights::LightsData;
 use crate::renderer::{PipelineBuilder, RenderRegion, ShaderBuilder};
 
-/// Lights of each kind the mask has bits for: bits 0-3 directional, 4-7 point, 8-11 spot.
+/// Directional lights the mask has bits for (bits 0-3).
 pub(crate) const RT_SHADOW_LIGHTS: usize = 4;
-const POINT_BIT: usize = 4;
-const SPOT_BIT: usize = 8;
+/// Point and spot lights the mask has bits for (bits 4-31).
+pub(crate) const RT_SHADOW_LOCAL_LIGHTS: usize = 28;
+/// The mask bit of the first point or spot light.
+pub(crate) const RT_SHADOW_LOCAL_BIT: u32 = 4;
 /// One bit per light: a ray traced this frame either reaches the light or not.
 pub(crate) const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+
+/// Mirrors `RtShadowLight` in rt_shadows.wgsl.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
+struct RtShadowLight {
+    position_range: [f32; 4],
+    direction: [f32; 4],
+}
 
 /// Mirrors `RtShadowParams` in rt_shadows.wgsl.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 struct RtShadowUniform {
     directionals: [[f32; 4]; RT_SHADOW_LIGHTS],
-    points: [[f32; 4]; RT_SHADOW_LIGHTS],
-    spots: [[f32; 4]; RT_SHADOW_LIGHTS],
+    locals: [RtShadowLight; RT_SHADOW_LOCAL_LIGHTS],
     params: [f32; 4],
     region: [f32; 4],
 }
@@ -184,13 +195,15 @@ impl RtShadowStage {
         mask_changed
     }
 
-    /// The lights [`Self::trace`] would trace for `lights`, as its bit set.
-    pub(crate) fn traced_bits(&self, lights: &LightsData) -> u32 {
-        traced_lights(lights).1
+    /// The lights [`Self::trace`] would trace, as its bit set.
+    pub(crate) fn traced_bits(&self, lights: &LightsData, locals: &[usize]) -> u32 {
+        traced_lights(lights, locals).1
     }
 
-    /// Trace the mask for `lights`' shadow-casting lights. Returns the lights traced as a
-    /// bit set (see [`RT_SHADOW_LIGHTS`]), or 0 when nothing ran.
+    /// Trace the mask for `lights`' shadow-casting directional lights and the local
+    /// lights `locals` (indices into `lights.local_lights()`, in bit order from
+    /// [`RT_SHADOW_LOCAL_BIT`]). Returns the lights traced as a bit set, or 0 when
+    /// nothing ran.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn trace(
         &mut self,
@@ -200,6 +213,7 @@ impl RtShadowStage {
         scene: &wgpu::BindGroup,
         textures: Option<&wgpu::BindGroup>,
         lights: &LightsData,
+        locals: &[usize],
         softness_degrees: f32,
         light_radius: f32,
         frame: u32,
@@ -209,7 +223,7 @@ impl RtShadowStage {
         else {
             return 0;
         };
-        let (mut uniform, bits) = traced_lights(lights);
+        let (mut uniform, bits) = traced_lights(lights, locals);
         let textures = match (self.textures, textures) {
             (true, None) => return 0,
             (true, textures) => textures,
@@ -279,9 +293,10 @@ impl RtShadowStage {
     }
 }
 
-/// The shadow-casting lights the mask covers (w = 1 when traced: toward-light directions
-/// for directional lights, positions for point and spot lights) and their bits.
-fn traced_lights(lights: &LightsData) -> (RtShadowUniform, u32) {
+/// The lights the mask covers and their bits: the shadow-casting directional lights
+/// (w = 1, the direction toward the light), then local lights `locals` (indices into
+/// `lights.local_lights()`), each the next bit from [`RT_SHADOW_LOCAL_BIT`].
+fn traced_lights(lights: &LightsData, locals: &[usize]) -> (RtShadowUniform, u32) {
     let mut uniform = RtShadowUniform::default();
     let mut bits = 0u32;
     let directional_shadows = lights.directional_shadows();
@@ -301,37 +316,17 @@ fn traced_lights(lights: &LightsData) -> (RtShadowUniform, u32) {
             bits |= 1 << index;
         }
     }
-    let point_shadows = lights.point_shadows();
-    for (index, light) in lights
-        .point_lights()
-        .iter()
-        .enumerate()
-        .take(RT_SHADOW_LIGHTS)
-    {
-        if point_shadows
-            .get(index)
-            .is_some_and(|shadow| shadow.params[0] > 0.5)
-        {
-            let [x, y, z, _] = light.position_range;
-            uniform.points[index] = [x, y, z, 1.0];
-            bits |= 1 << (POINT_BIT + index);
-        }
-    }
-    let spot_shadows = lights.spot_shadows();
-    for (index, light) in lights
-        .spot_lights()
-        .iter()
-        .enumerate()
-        .take(RT_SHADOW_LIGHTS)
-    {
-        if spot_shadows
-            .get(index)
-            .is_some_and(|shadow| shadow.params[0] > 0.5)
-        {
-            let [x, y, z, _] = light.position_range;
-            uniform.spots[index] = [x, y, z, 1.0];
-            bits |= 1 << (SPOT_BIT + index);
-        }
+    let local_lights = lights.local_lights();
+    for (slot, &index) in locals.iter().take(RT_SHADOW_LOCAL_LIGHTS).enumerate() {
+        let Some(light) = local_lights.get(index) else {
+            continue;
+        };
+        let raw = crate::renderer::lights::LocalLightRaw::new(light, None, None);
+        uniform.locals[slot] = RtShadowLight {
+            position_range: raw.position_range,
+            direction: raw.direction,
+        };
+        bits |= 1 << (RT_SHADOW_LOCAL_BIT as usize + slot);
     }
     (uniform, bits)
 }
@@ -357,7 +352,7 @@ mod tests {
 
     #[test]
     fn uniform_matches_the_shader_layout() {
-        assert_eq!(std::mem::size_of::<RtShadowUniform>(), 224);
+        assert_eq!(std::mem::size_of::<RtShadowUniform>(), 64 + 28 * 32 + 32);
     }
 
     #[test]

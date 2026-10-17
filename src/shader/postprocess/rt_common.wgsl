@@ -132,7 +132,8 @@ fn rt_surface(hit : RayIntersection, direction : vec3<f32>) -> RtSurface {
 }
 
 // Direct light at a hit, each light tested with a shadow ray (the shadow maps need
-// derivatives and uniform control flow, which a hit shader does not have).
+// derivatives and uniform control flow, which a hit shader does not have): the
+// directional lights, then the point and spot lights of the hit's world grid cell.
 fn rt_direct_lighting(
     position : vec3<f32>,
     n : vec3<f32>,
@@ -141,9 +142,25 @@ fn rt_direct_lighting(
     metallic : f32,
     roughness : f32,
 ) -> vec3<f32> {
-    var lo = vec3<f32>(0.0);
     let origin = position + n * RT_SHADOW_BIAS;
+    var lo = rt_directional_lighting(origin, n, v, base_color, metallic, roughness);
+    let range = light_grid_cell(position);
+    for (var i = 0u; i < range.count; i = i + 1u) {
+        lo += rt_local_light(light_in_range(range, i), position, origin, n, v, base_color, metallic, roughness);
+    }
+    return lo;
+}
 
+// The directional lights' light at a hit (shadow rays start at `origin`).
+fn rt_directional_lighting(
+    origin : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    base_color : vec3<f32>,
+    metallic : f32,
+    roughness : f32,
+) -> vec3<f32> {
+    var lo = vec3<f32>(0.0);
     let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
     for (var i = 0u; i < dir_count; i = i + 1u) {
         let light = lights.directionals[i];
@@ -156,63 +173,108 @@ fn rt_direct_lighting(
             light.color_intensity.xyz, light.color_intensity.w
         );
     }
+    return lo;
+}
 
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-    for (var i = 0u; i < point_count; i = i + 1u) {
-        let light = lights.points[i];
-        let to_light = light.position_range.xyz - position;
-        let distance = length(to_light);
-        let range = light.position_range.w;
-        if distance < 1e-4 || (range > 0.0 && distance > range) {
-            continue;
-        }
-        let l = to_light / distance;
-        if dot(n, l) <= 0.0 || !rt_unoccluded(origin, l, distance - RT_SHADOW_BIAS) {
-            continue;
-        }
-        var attenuation = 1.0 / max(distance * distance, 1e-4);
-        if range > 0.0 {
-            let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-            attenuation = attenuation * range_factor * range_factor;
-        }
-        lo += calculate_light_contribution(
-            n, v, l, base_color, metallic, roughness,
-            light.color_intensity.xyz, light.color_intensity.w * attenuation
-        );
+// A point or spot light's light at a hit, behind a shadow ray from `origin`.
+fn rt_local_light(
+    light : LocalLight,
+    position : vec3<f32>,
+    origin : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    base_color : vec3<f32>,
+    metallic : f32,
+    roughness : f32,
+) -> vec3<f32> {
+    let arrival = local_light_arrival(light, position);
+    if arrival.attenuation <= 0.0 || dot(n, arrival.L) <= 0.0 {
+        return vec3<f32>(0.0);
     }
+    if !rt_unoccluded(origin, arrival.L, arrival.distance - RT_SHADOW_BIAS) {
+        return vec3<f32>(0.0);
+    }
+    return calculate_light_contribution(
+        n, v, arrival.L, base_color, metallic, roughness,
+        light.color_intensity.xyz, light.color_intensity.w * arrival.attenuation
+    );
+}
 
-    let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-    for (var i = 0u; i < spot_count; i = i + 1u) {
-        let light = lights.spots[i];
-        let to_light = light.position_range.xyz - position;
-        let distance = length(to_light);
-        let range = light.position_range.w;
-        if distance < 1e-4 || (range > 0.0 && distance > range) {
-            continue;
+// Up to this many point and spot lights near a hit, rt_sampled_direct_lighting traces them
+// all; with more, it traces one.
+const RT_EXACT_LOCAL_LIGHTS : u32 = 4u;
+
+// Direct light at a hit for passes that average many frames (light probes): the
+// directional lights and, when few are near, every point and spot light, as
+// rt_direct_lighting; with many near, one of those, picked in proportion to what each
+// would add unshadowed (by `u`, uniform in 0..1), divided by the chance of picking it.
+// The cost stays the same however many lights there are.
+fn rt_sampled_direct_lighting(
+    position : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    base_color : vec3<f32>,
+    metallic : f32,
+    roughness : f32,
+    u : f32,
+) -> vec3<f32> {
+    let range = light_grid_cell(position);
+    if range.count <= RT_EXACT_LOCAL_LIGHTS {
+        return rt_direct_lighting(position, n, v, base_color, metallic, roughness);
+    }
+    let origin = position + n * RT_SHADOW_BIAS;
+    var lo = rt_directional_lighting(origin, n, v, base_color, metallic, roughness);
+    var total = 0.0;
+    for (var i = 0u; i < range.count; i = i + 1u) {
+        total += rt_unshadowed_luminance(light_in_range(range, i), position, n, v, base_color, metallic, roughness);
+    }
+    if total <= 0.0 {
+        return lo;
+    }
+    var pick = u * total;
+    for (var i = 0u; i < range.count; i = i + 1u) {
+        let light = light_in_range(range, i);
+        let w = rt_unshadowed_luminance(light, position, n, v, base_color, metallic, roughness);
+        pick -= w;
+        if pick <= 0.0 && w > 0.0 {
+            lo += rt_local_light(light, position, origin, n, v, base_color, metallic, roughness)
+                * (total / w);
+            break;
         }
-        let l = to_light / distance;
-        let cos_theta = dot(normalize(light.direction.xyz), -l);
-        let cos_inner = light.cone_params.x;
-        let cos_outer = light.cone_params.y;
-        if cos_theta < cos_outer || dot(n, l) <= 0.0 {
-            continue;
-        }
-        if !rt_unoccluded(origin, l, distance - RT_SHADOW_BIAS) {
-            continue;
-        }
-        var spot = clamp((cos_theta - cos_outer) / max(cos_inner - cos_outer, 1e-4), 0.0, 1.0);
-        spot = spot * spot;
-        var attenuation = 1.0 / max(distance * distance, 1e-4);
-        if range > 0.0 {
-            let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-            attenuation = attenuation * range_factor * range_factor;
-        }
-        lo += calculate_light_contribution(
-            n, v, l, base_color, metallic, roughness,
-            light.color_intensity.xyz, light.color_intensity.w * attenuation * spot
-        );
     }
     return lo;
+}
+
+// How bright a point or spot light's light at a hit would be without shadows.
+fn rt_unshadowed_luminance(
+    light : LocalLight,
+    position : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    base_color : vec3<f32>,
+    metallic : f32,
+    roughness : f32,
+) -> f32 {
+    let arrival = local_light_arrival(light, position);
+    if arrival.attenuation <= 0.0 || dot(n, arrival.L) <= 0.0 {
+        return 0.0;
+    }
+    let c = calculate_light_contribution(
+        n, v, arrival.L, base_color, metallic, roughness,
+        light.color_intensity.xyz, light.color_intensity.w * arrival.attenuation
+    );
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+
+// A hash of `value` (PCG), and a number in 0..1 from it.
+fn rt_hash(value : u32) -> u32 {
+    let state = value * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+fn rt_random(seed : u32) -> f32 {
+    return f32(rt_hash(seed) >> 8u) / 16777216.0;
 }
 
 // A hit surface's material, with its base colour, metallic-roughness, emissive and

@@ -2,10 +2,12 @@ use std::time::Instant;
 
 use super::core::{NotificationSeverity, ReloadNotification};
 use super::system::{EditorContext, EditorSystem};
-use crate::inspector::{ActiveProbeGrid, LightProbePanelStatus, LightProbeRequest};
+use crate::inspector::{
+    ActiveProbeGrid, LightProbePanelStatus, LightProbeRequest, LightShadowPanelStatus,
+};
 
 /// Carries out the inspector's light probe requests (bake, debug view) on the renderer,
-/// and refreshes the state the light probe section shows.
+/// and refreshes the renderer state the light probe and light sections show.
 #[derive(Default)]
 pub(crate) struct LightProbeSystem {
     /// The serial of the last bake outcome seen, so each finished bake (from the
@@ -87,6 +89,30 @@ impl EditorSystem for LightProbeSystem {
                 bake: renderer.light_probe_bake_progress(),
                 debug: renderer.light_probe_debug(),
                 project_open: wgpu_cube::project::active_project_root().is_some(),
+            };
+            let scene = &gpu.scene;
+            let world = scene.main_world();
+            let lights = world
+                .query::<&wgpu_cube::scene::components::PointLight>()
+                .iter()
+                .map(|(entity, _)| entity)
+                .chain(
+                    world
+                        .query::<&wgpu_cube::scene::components::SpotLight>()
+                        .iter()
+                        .map(|(entity, _)| entity),
+                )
+                .collect::<Vec<_>>();
+            *app.light_shadow_status_mut() = LightShadowPanelStatus {
+                states: lights
+                    .into_iter()
+                    .filter_map(|entity| {
+                        Some((
+                            entity,
+                            renderer.light_shadow_state(scene.light_key(entity))?,
+                        ))
+                    })
+                    .collect(),
             };
             notifications
         });

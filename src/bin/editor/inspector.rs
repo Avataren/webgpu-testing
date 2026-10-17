@@ -307,6 +307,14 @@ impl LightProbePanelStatus {
     }
 }
 
+/// How the scene's point and spot lights got their shadows last frame, for the light
+/// sections, refreshed every frame (LightProbeSystem).
+#[derive(Clone, Debug, Default)]
+pub struct LightShadowPanelStatus {
+    /// By light entity (lights that cast shadows).
+    pub states: std::collections::HashMap<Entity, wgpu_cube::renderer::LightShadowState>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MaterialKindChoice {
     Pbr,
@@ -318,6 +326,7 @@ pub fn show_entity_inspector(
     data: &SceneEntityInspectorData,
     content_root: Option<&Path>,
     light_probes: &LightProbePanelStatus,
+    light_shadows: &LightShadowPanelStatus,
     animation: &AnimationPanelStatus,
     #[cfg(feature = "navigation")] navigation_status: &NavigationPanelStatus,
 ) -> Vec<InspectorAction> {
@@ -361,7 +370,13 @@ pub fn show_entity_inspector(
         show_material_section(ui, entity, &data.name, material, content_root, &mut actions);
     }
 
-    show_light_sections(ui, entity, components, &mut actions);
+    show_light_sections(
+        ui,
+        entity,
+        components,
+        light_shadows.states.get(&entity).copied(),
+        &mut actions,
+    );
 
     if let Some(environment) = components.environment.clone() {
         let header = show_environment_section(ui, entity, environment, &mut actions);
@@ -1345,11 +1360,18 @@ fn show_light_sections(
     ui: &mut egui::Ui,
     entity: Entity,
     components: &SceneEntityComponentsSummary,
+    shadow: Option<wgpu_cube::renderer::LightShadowState>,
     actions: &mut Vec<InspectorAction>,
 ) {
     if let Some(light) = components.point_light {
-        let header =
-            show_point_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        let header = show_point_light_section(
+            ui,
+            entity,
+            light,
+            components.can_cast_shadow,
+            shadow,
+            actions,
+        );
         removable(&header, entity, RemovableComponent::PointLight, actions);
     }
 
@@ -1365,8 +1387,14 @@ fn show_light_sections(
     }
 
     if let Some(light) = components.spot_light {
-        let header =
-            show_spot_light_section(ui, entity, light, components.can_cast_shadow, actions);
+        let header = show_spot_light_section(
+            ui,
+            entity,
+            light,
+            components.can_cast_shadow,
+            shadow,
+            actions,
+        );
         removable(&header, entity, RemovableComponent::SpotLight, actions);
     }
 }
@@ -2389,6 +2417,7 @@ fn show_point_light_section(
     entity: Entity,
     mut light: PointLight,
     casts_shadow: Option<CanCastShadow>,
+    shadow: Option<wgpu_cube::renderer::LightShadowState>,
     actions: &mut Vec<InspectorAction>,
 ) -> egui::Response {
     theme::section(ui, icons::LIGHT, "Point Light", |ui| {
@@ -2416,6 +2445,7 @@ fn show_point_light_section(
                 }
 
                 shadow_checkbox_row(ui, entity, casts_shadow, actions);
+                changed |= shadow_budget_rows(ui, &mut light.shadow_priority, casts_shadow, shadow);
             });
 
         if changed {
@@ -2475,6 +2505,7 @@ fn show_spot_light_section(
     entity: Entity,
     mut light: SpotLight,
     casts_shadow: Option<CanCastShadow>,
+    shadow: Option<wgpu_cube::renderer::LightShadowState>,
     actions: &mut Vec<InspectorAction>,
 ) -> egui::Response {
     theme::section(ui, icons::SPOT, "Spot Light", |ui| {
@@ -2509,6 +2540,7 @@ fn show_spot_light_section(
                 }
 
                 shadow_checkbox_row(ui, entity, casts_shadow, actions);
+                changed |= shadow_budget_rows(ui, &mut light.shadow_priority, casts_shadow, shadow);
             });
 
         if changed {
@@ -2959,6 +2991,50 @@ fn shadow_checkbox_row(
         });
     }
     ui.end_row();
+}
+
+/// A point or spot light's place in the shadow budget: its priority (editable) and how
+/// its shadow was made last frame. Returns whether the priority changed.
+fn shadow_budget_rows(
+    ui: &mut egui::Ui,
+    priority: &mut f32,
+    casts_shadow: Option<CanCastShadow>,
+    state: Option<wgpu_cube::renderer::LightShadowState>,
+) -> bool {
+    use wgpu_cube::renderer::LightShadowState;
+    if !casts_shadow.is_some_and(|flag| flag.0) {
+        return false;
+    }
+    let changed = float_drag_value(ui, "Shadow Priority", priority, 0.05, Some(0.0..=100.0));
+    if *priority < 0.0 {
+        *priority = 0.0;
+    }
+    ui.label("Shadow");
+    let (text, hint) = match state {
+        Some(LightShadowState::ShadowMap { size, rank }) => (
+            format!("{size} px map (rank {rank})"),
+            "Its shadow map's tiles in the shadow atlas: lights that look bigger on screen, \
+             brighter or with a higher priority rank higher and get larger tiles",
+        ),
+        Some(LightShadowState::RayTraced) => (
+            "Ray traced".to_owned(),
+            "Traced into the ray-traced shadow mask instead of a shadow map",
+        ),
+        Some(LightShadowState::OutOfView) => (
+            "Out of view".to_owned(),
+            "Its light reaches nothing the camera sees, so it needs no shadow map now",
+        ),
+        Some(LightShadowState::OverBudget { rank }) => (
+            format!("Over budget (rank {rank}): unshadowed"),
+            "The shadow atlas ran out of room before its turn: raise its priority, or the \
+             shadow atlas size in the graphics settings",
+        ),
+        None => ("-".to_owned(), "Not drawn yet"),
+    };
+    ui.label(egui::RichText::new(text).weak())
+        .on_hover_text(hint);
+    ui.end_row();
+    changed
 }
 
 /// A labelled fine-step slider row in a two-column grid.

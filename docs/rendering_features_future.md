@@ -154,10 +154,11 @@ hazy; with an HDR environment the main pass's environment specular is still adde
 the reflection. `WGPU_CUBE_DISABLE_RAY_TRACING=1` tests the fallback.
 
 **RT shadows (2026-10-15).** `rt_shadows.enabled` traces one shadow ray per pixel and
-shadow-casting light (up to 4 directional, 4 point and 4 spot) between the depth prepass
-and the main pass, into a screen-space R32Uint mask with one bit per light (0-3
-directional, 4-7 point, 8-11 spot; `renderer/raytracing/shadows.rs`,
-`shader/rt_shadows.wgsl`): the surface comes from depth through the jittered camera, its
+shadow-casting light (up to 4 directional lights and, since clustered lighting
+(2026-10-17), the 28 point and spot lights the shadow budget ranks highest, each traced
+only where it reaches) between the depth prepass and the main pass, into a screen-space
+R32Uint mask with one bit per light (0-3 directional, 4-31 point and spot lights, the bit
+in `LocalLight.params.z`; `renderer/raytracing/shadows.rs`, `shader/rt_shadows.wgsl`): the surface comes from depth through the jittered camera, its
 geometric normal from neighbouring depths. The main pass reads the mask (lights group
 binding 11; `lights.counts.w` says which lights) instead of the shadow maps for opaque
 surfaces. `rt_shadows.softness` is the directional lights' apparent size in degrees (0.5

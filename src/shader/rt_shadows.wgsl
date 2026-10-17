@@ -1,8 +1,9 @@
 // Ray-traced shadow mask: for every pixel of the depth prepass, whether each shadowed
-// light reaches the surface, one bit per light (bits 0-3 directional, 4-7 point, 8-11
-// spot lights). Runs between the depth prepass and the main pass, which reads the mask
-// instead of the shadow maps for the lights whose bit is set in lights.counts.w
-// (shadows.wgsl, rt_shadow_bit).
+// light reaches the surface, one bit per light (bits 0-3 directional lights, 4-31 the
+// point and spot lights given a bit, LocalLight.params.z). Runs between the depth
+// prepass and the main pass, which reads the mask instead of the shadow maps for the
+// lights whose bit is set in lights.counts.w (shadows.wgsl, rt_shadow_bit). A pixel
+// traces only the lights that reach it.
 //
 // The surface is rebuilt from depth with the same (jittered) camera the prepass drew
 // with; its geometric normal comes from neighbouring depths. Lights with a size cast soft
@@ -14,15 +15,20 @@
 
 // The camera (`globals`, group 0) comes from camera.wgsl.
 
+// A point or spot light with mask bit 4 + its index: position and range, and a spot
+// light's axis and the cosine of its outer angle (below -1.5: a point light; range 0:
+// not traced).
+struct RtShadowLight {
+    position_range : vec4<f32>,
+    direction : vec4<f32>,
+};
+
 // Mirrors `RtShadowUniform` in src/renderer/raytracing/shadows.rs. w = 1 marks a light
 // that is traced.
 struct RtShadowParams {
     // xyz: direction toward directional light i.
     directionals : array<vec4<f32>, 4>,
-    // xyz: position of point light i.
-    points : array<vec4<f32>, 4>,
-    // xyz: position of spot light i.
-    spots : array<vec4<f32>, 4>,
+    locals : array<RtShadowLight, RT_SHADOW_LOCAL_LIGHTS>,
     // x: tan of the directional lights' angular radius, y: frame index, z: point and spot
     // light radius in meters.
     params : vec4<f32>,
@@ -31,6 +37,9 @@ struct RtShadowParams {
 };
 @group(1) @binding(0) var<uniform> rt_shadow : RtShadowParams;
 @group(1) @binding(1) var rt_depth : texture_depth_2d;
+
+// Point and spot lights the mask has bits for (RT_SHADOW_LOCAL_LIGHTS in shadows.rs).
+const RT_SHADOW_LOCAL_LIGHTS : u32 = 28u;
 
 // The ray tracing scene is group 2 (rt_scene.wgsl), the material textures group 3.
 
@@ -182,15 +191,22 @@ fn fs_rt_shadows(in : VertexOutput) -> @location(0) u32 {
                 lit &= ~(1u << i);
             }
         }
-        let point = rt_shadow.points[i];
-        if point.w > 0.5
-            && !rt_local_light_visible(origin, n, point.xyz, rt_shadow.params.z, disc) {
-            lit &= ~(1u << (4u + i));
+    }
+    // A point or spot light that does not reach the surface keeps its bit: the main pass
+    // gives it no light there anyway.
+    for (var i = 0u; i < RT_SHADOW_LOCAL_LIGHTS; i = i + 1u) {
+        let light = rt_shadow.locals[i];
+        let range = light.position_range.w;
+        let to_surface = center.xyz - light.position_range.xyz;
+        if range <= 0.0 || dot(to_surface, to_surface) > range * range {
+            continue;
         }
-        let spot = rt_shadow.spots[i];
-        if spot.w > 0.5
-            && !rt_local_light_visible(origin, n, spot.xyz, rt_shadow.params.z, disc) {
-            lit &= ~(1u << (8u + i));
+        if light.direction.w > -1.5
+            && dot(normalize(light.direction.xyz), normalize(to_surface)) < light.direction.w {
+            continue;
+        }
+        if !rt_local_light_visible(origin, n, light.position_range.xyz, rt_shadow.params.z, disc) {
+            lit &= ~(1u << (4u + i));
         }
     }
     return lit;

@@ -156,7 +156,8 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "intensity": { "type": "number" }
     });
     let mut point = light_common.clone();
-    point["range"] = json!({ "type": "number" });
+    point["range"] = json!({ "type": "number", "description": "Where the light fades out, meters (0: no range; it is cut off where it gets too dim to matter)" });
+    point["shadow_priority"] = json!({ "type": "number", "description": "Weight in the shadow budget (default 1): lights are ranked by this x their size on screen x brightness for shadow map tiles; higher keeps this light's shadows (and their resolution) ahead of others, 0 gives them up first" });
     let mut spot = point.clone();
     spot["inner_angle_deg"] = json!({ "type": "number" });
     spot["outer_angle_deg"] = json!({ "type": "number" });
@@ -199,8 +200,8 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "cast_shadow": { "type": "boolean", "description": "Lights: whether the light casts shadows. Meshes: whether the mesh shows up in shadow maps (default true)" },
         "mesh": { "type": ["string", "null"], "enum": ["cube", "sphere", "plane", "cylinder", "cone", "torus", null], "description": "Replace the geometry with a primitive, or null to remove" },
         "material": material,
-        "point_light": nullable_object("Add/update a point light, or null to remove. Renderer uses the first 4 point lights in scene/world order; see engine_info limits.", point),
-        "spot_light": nullable_object("Add/update a spot light (shines along -Z), or null to remove. Renderer uses the first 4 spot lights in scene/world order; see engine_info limits.", spot),
+        "point_light": nullable_object("Add/update a point light, or null to remove. Any number of point and spot lights light the scene (clustered; see engine_info limits); with cast_shadow they share a shadow budget ranked by shadow_priority, size on screen and brightness (entity_get shows a light's shadow state).", point),
+        "spot_light": nullable_object("Add/update a spot light (shines along -Z), or null to remove. Lit and shadowed like point lights (see point_light).", spot),
         "directional_light": nullable_object("Add/update a directional light (shines along -Z), or null to remove. Renderer uses the first 4 directional lights in scene/world order.", directional),
         "camera": nullable_object("Add/update a camera component, or null to remove", json!({
             "projection": { "type": "string", "enum": ["perspective", "orthographic"] },
@@ -774,7 +775,7 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "graphics_get",
-            description: "The player's graphics settings (what the engine's settings page shows: display mode, window size, vsync, anti-aliasing, render scale and upscaler, the ray tracing master switch, ray-traced shadows/reflections/AO/refraction, FPS readout), whether the page is open, and what the GPU supports. Saved per game and user; they replace the scene volumes' anti_aliasing, upscaling and ray-tracing choices.",
+            description: "The player's graphics settings (what the engine's settings page shows: display mode, window size, vsync, anti-aliasing, render scale and upscaler, the shadow atlas size and shadow updates per frame, the ray tracing master switch, ray-traced shadows/reflections/AO/refraction, FPS readout), whether the page is open, and what the GPU supports. Saved per game and user; they replace the scene volumes' anti_aliasing, upscaling and ray-tracing choices.",
             schema: empty(),
             action: Action::Engine("graphics.get"),
         },
@@ -789,6 +790,8 @@ pub fn tools() -> Vec<Tool> {
                 "render_scale": { "type": "number", "description": "0.25-1: 1 native, 0.67 FSR quality, 0.5 performance" },
                 "upscaler": { "type": "string", "enum": ["fsr", "taau"] },
                 "sharpness": { "type": "number", "description": "FSR sharpening 0-1" },
+                "shadow_atlas_size": { "type": "integer", "enum": [1024, 2048, 4096, 8192], "description": "Most texels across the point/spot light shadow atlas (default 8192 native, 4096 web; 8 bytes a texel): room for more shadowed lights at higher resolution. engine_stats renderer.lights shows its use" },
+                "shadow_updates_per_frame": { "type": "integer", "description": "Point/spot light shadow views redrawn per frame at most (default 48; views wait at most a few frames). engine_stats renderer.shadow_views_deferred counts the waiting ones" },
                 "ray_tracing": { "type": "boolean", "description": "Hardware ray tracing at all (default true). false: every effect takes its raster version (shadow maps, screen-space reflections and AO, see-through glass, no traced GI or path tracing) and light probes show their bakes, as on a GPU without ray tracing (or the web); the individual choices are kept for when it is switched back on" },
                 "ray_traced_shadows": { "type": "boolean" },
                 "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },

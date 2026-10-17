@@ -330,7 +330,8 @@ them into chunks (e.g. 32³) so a change re-meshes only one chunk.
 - `set_light(entity, fields)` - Change a light. Fields: `color` ({r, g, b} in 0..1 or
   `"#rrggbb"`), `intensity`, `range` (point, spot), `shadow_size` (directional),
   `inner_angle_deg`/`outer_angle_deg` (spot), `cast_shadow` (default false for lights
-  scripts spawn). `kind` adds a light or switches its kind.
+  scripts spawn), `shadow_priority` (point, spot: weight in the shadow budget, default
+  1). `kind` adds a light or switches its kind.
 - `spawn_camera([fields][, name])` → `entity` - Spawn a camera
 - `set_camera(entity, fields)` - Change a camera, adding one if needed. Fields:
   `projection` (`"perspective"`/`"orthographic"`), `fov_deg`, `near`, `far`, `left`,
@@ -339,6 +340,12 @@ them into chunks (e.g. 32³) so a change re-meshes only one chunk.
 
 Lights and cameras sit at their entity's position and point along its -Z, so
 `set_translation` and `look_at` place and aim them (also right after spawning).
+Directional lights: the first 4 count. Point and spot lights have no fixed limit (up to
+4096; a surface only pays for the lights that reach it), so a market full of lanterns or
+a few hundred sparks of light are fine. Their shadows (`cast_shadow = true`) share a
+budget: lights that look bigger on screen, are brighter or have a higher
+`shadow_priority` get larger shadow maps first, and lights past the budget are drawn
+unshadowed (the graphics settings' `shadow_atlas_size` sets the room).
 Unknown field names are an error. Like other changes, they apply before the frame is
 drawn and are undone when play mode stops.
 

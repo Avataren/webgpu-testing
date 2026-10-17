@@ -10,7 +10,10 @@ mod scene;
 mod shadows;
 
 pub(crate) use scene::{RayTracingScene, RtCamera, MAX_CAUSTIC_CASTERS};
-pub(crate) use shadows::{RtShadowStage, MASK_FORMAT as RT_SHADOW_MASK_FORMAT};
+pub(crate) use shadows::{
+    RtShadowStage, MASK_FORMAT as RT_SHADOW_MASK_FORMAT, RT_SHADOW_LOCAL_BIT,
+    RT_SHADOW_LOCAL_LIGHTS,
+};
 
 use std::fmt;
 

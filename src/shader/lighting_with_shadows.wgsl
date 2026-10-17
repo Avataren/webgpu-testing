@@ -61,93 +61,29 @@ fn calculate_scene_lighting_at(
         );
     }
 
-    // Point lights
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-    for (var i = 0u; i < point_count; i = i + 1u) {
-        let light = lights.points[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-        if (distance <= 0.0001) {
+    // Point and spot lights of the surface's cluster
+    let range = light_cluster(world_pos);
+    for (var i = 0u; i < range.count; i = i + 1u) {
+        let light = light_in_range(range, i);
+        let arrival = local_light_arrival(light, world_pos);
+        if (arrival.attenuation <= 0.0 || dot(N, arrival.L) <= 0.0) {
             continue;
         }
-        var attenuation = 1.0 / max(distance * distance, 0.0001);
-        let range = light.position_range.w;
-        if (range > 0.0) {
-            let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-            attenuation = attenuation * range_factor * range_factor;
+        var shadow = -1.0;
+        let rt_bit = i32(light.params.z);
+        if (rt_bit >= 0) {
+            shadow = rt_shadow_bit(u32(rt_bit), pixel);
         }
-        let L = to_light / distance;
-        if (attenuation <= 0.0 || dot(N, L) <= 0.0) {
-            continue;
-        }
-        var shadow = rt_shadow_bit(4u + i, pixel);
         if (shadow < 0.0) {
-            shadow = sample_point_shadow_offset(
-                i,
-                world_pos,
-                N,
-                light.position_range.xyz,
-                light.position_range.w
-            );
+            shadow = sample_local_shadow(light, world_pos, N);
         }
         if (shadow <= 0.0) {
             continue;
         }
         let light_color = light.color_intensity.xyz;
-        let light_intensity = light.color_intensity.w * attenuation;
+        let light_intensity = light.color_intensity.w * arrival.attenuation;
         Lo += shadow * calculate_light_contribution(
-            N, V, L, base_color, metallic, roughness,
-            light_color, light_intensity
-        );
-    }
-
-    // Spot lights
-    let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-    for (var i = 0u; i < spot_count; i = i + 1u) {
-        let light = lights.spots[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-        if (distance <= 0.0001) {
-            continue;
-        }
-        let L = to_light / distance;
-        var attenuation = 1.0 / max(distance * distance, 0.0001);
-        let range = light.position_range.w;
-        if (range > 0.0) {
-            let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-            attenuation = attenuation * range_factor * range_factor;
-        }
-
-        let light_dir = normalize(light.direction.xyz);
-        let cos_theta = dot(light_dir, -L);
-        let cos_inner = light.cone_params.x;
-        let cos_outer = light.cone_params.y;
-        var spot_effect = 0.0;
-        if (cos_theta >= cos_outer) {
-            let denom = max(cos_inner - cos_outer, 0.0001);
-            spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
-            spot_effect = spot_effect * spot_effect;
-        }
-        if (spot_effect <= 0.0 || attenuation <= 0.0 || dot(N, L) <= 0.0) {
-            continue;
-        }
-        var shadow = rt_shadow_bit(8u + i, pixel);
-        if (shadow < 0.0) {
-            shadow = sample_spot_shadow_advanced(
-                i,
-                world_pos,
-                N,
-                light.position_range.xyz,
-                light.direction.xyz
-            );
-        }
-        if (shadow <= 0.0) {
-            continue;
-        }
-        let light_color = light.color_intensity.xyz;
-        let light_intensity = light.color_intensity.w * attenuation * spot_effect;
-        Lo += shadow * calculate_light_contribution(
-            N, V, L, base_color, metallic, roughness,
+            N, V, arrival.L, base_color, metallic, roughness,
             light_color, light_intensity
         );
     }

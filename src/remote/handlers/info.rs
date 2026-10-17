@@ -41,9 +41,12 @@ pub(super) fn engine_info(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
         "limits": {
             "lights": {
                 "directional": crate::renderer::lights::MAX_DIRECTIONAL_LIGHTS,
-                "point": crate::renderer::lights::MAX_POINT_LIGHTS,
-                "spot": crate::renderer::lights::MAX_SPOT_LIGHTS,
-                "selection": "First lights in scene/world iteration order; no distance or influence ranking. Limit is shared across scene instances.",
+                "local": crate::renderer::lights::MAX_LOCAL_LIGHTS,
+                "per_cluster": crate::renderer::lights::MAX_LIGHTS_PER_CLUSTER,
+                "shadowed_local": crate::renderer::lights::MAX_SHADOWED_LOCAL_LIGHTS,
+                "ray_traced_shadowed_local": crate::renderer::raytracing::RT_SHADOW_LOCAL_LIGHTS,
+                "shadow_atlas_size": ctx.gpu.renderer.shadow_atlas_max_size(),
+                "selection": "Directional: the first 4 in scene/world order. Point and spot lights (\"local\", together): all of them up to the limit (beyond it the ones nearest the camera), sorted into clusters of the view so each surface only loops over the lights that reach it. Shadows of point and spot lights come from one shadow atlas: lights are ranked by shadow_priority x their size on screen x brightness; nearer and bigger ones get larger tiles, and lights past the budget (atlas room or shadowed_local slots) are drawn unshadowed. With ray-traced shadows the highest-ranked ray_traced_shadowed_local lights are traced instead.",
             },
             "geometry": {
                 "compose_parts": crate::procgen::geometry::MAX_COMPOSE_PARTS,
@@ -113,8 +116,10 @@ pub(super) fn stats_with(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> Rem
                     "shadow_draw_calls": stats.shadow_draw_calls,
                     "shadow_views_rendered": stats.shadow_views_rendered,
                     "shadow_views_cached": stats.shadow_views_cached,
+                    "shadow_views_deferred": stats.shadow_views_deferred,
                     "culled_instances": stats.culled_instances,
                     "instances": stats.instance_count,
+                    "shadowed_lights": stats.lights.shadowed,
                     "gpu_total_ms": record.gpu.as_ref().map(|gpu| round(gpu.total_ms)),
                     "gpu_stages_ms": record.gpu.as_ref().map(|gpu| {
                         gpu.stages
@@ -169,7 +174,20 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "shadow_draw_calls": stats.shadow_draw_calls,
             "shadow_views_rendered": stats.shadow_views_rendered,
             "shadow_views_cached": stats.shadow_views_cached,
+            "shadow_views_deferred": stats.shadow_views_deferred,
             "culled_instances": stats.culled_instances,
+            "lights": json!({
+                "directional": stats.lights.directional,
+                "local": stats.lights.local,
+                "shadowed": stats.lights.shadowed,
+                "ray_traced_shadows": stats.lights.ray_traced,
+                "over_budget": stats.lights.over_budget,
+                "shadow_atlas_size": stats.lights.shadow_atlas_size,
+                "shadow_atlas_used": round(stats.lights.shadow_atlas_used),
+                "cluster_light_indices": stats.lights.cluster_light_indices,
+                "cluster_lights_dropped": stats.lights.cluster_lights_dropped,
+                "note": "local = point and spot lights. shadowed: shadow-casting local lights with a shadow map this frame; ray_traced_shadows: traced into the ray-traced shadow mask instead; over_budget: shadow casters drawn unshadowed for lack of room (atlas or slots). shadow_atlas_size: texels across the point/spot shadow atlas (it grows with demand and shrinks when demand stays low; 0: none), shadow_atlas_used: share of it holding tiles. cluster_light_indices: entries the per-cluster light lists needed when last read back; cluster_lights_dropped: lights left out of clusters for lack of room (the lists grow the next frames).",
+            }),
             "render_scale": ctx.gpu.renderer.render_scale(),
             "path_traced": stats.path_traced,
             "global_illumination": stats.global_illumination,

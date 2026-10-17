@@ -337,7 +337,8 @@ pub(crate) fn shadow_pass(
                     CustomRenderStage::Shadow(invocation.stage),
                     Some(invocation.view_proj),
                     None,
-                );
+                )
+                .with_shadow_viewport(invocation.viewport);
                 (request.callback)(&mut ctx);
             }
         }

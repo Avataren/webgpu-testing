@@ -1227,12 +1227,18 @@ mod tests {
             ),
             ("background", RenderPipeline::background_source()),
         ];
+        let template = ShaderMaterialMetadata::default_template();
         for bindless in [true, false] {
             for filtering in [SamplerFilterMode::Linear, SamplerFilterMode::Nearest] {
                 sources.push(("pbr", RenderPipeline::shader_source(bindless, filtering)));
                 sources.push((
                     "error",
                     RenderPipeline::error_shader_source(bindless, filtering),
+                ));
+                // The shader material template (it lights with the scene's lights).
+                sources.push((
+                    "shader material template",
+                    RenderPipeline::build_shader_material_source(bindless, filtering, &template),
                 ));
             }
         }

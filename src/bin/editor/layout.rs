@@ -14,6 +14,7 @@ use wgpu_cube::{
 use crate::asset_browser::{AssetBrowserAction, AssetBrowserState};
 use crate::inspector::{
     show_entity_inspector, AnimationPanelStatus, InspectorAction, LightProbePanelStatus,
+    LightShadowPanelStatus,
 };
 use crate::library_panel::{LibraryAction, LibraryPanelState};
 use crate::theme;
@@ -68,6 +69,7 @@ pub struct EditorBehavior<'a> {
     pub content_root: Option<PathBuf>,
     pub workspace_info: SceneHierarchyWorkspaceInfo,
     pub light_probe_status: &'a LightProbePanelStatus,
+    pub light_shadow_status: &'a LightShadowPanelStatus,
     pub animation_status: &'a AnimationPanelStatus,
     #[cfg(feature = "navigation")]
     pub navigation_status: &'a crate::inspector::NavigationPanelStatus,
@@ -218,6 +220,7 @@ impl EditorBehavior<'_> {
                                 &selection,
                                 self.content_root.as_deref(),
                                 self.light_probe_status,
+                                self.light_shadow_status,
                                 self.animation_status,
                                 #[cfg(feature = "navigation")]
                                 self.navigation_status,

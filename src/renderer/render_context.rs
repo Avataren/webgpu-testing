@@ -56,6 +56,7 @@ pub struct CustomRenderContext<'a> {
     pub stage: CustomRenderStage,
     pub shadow_view_proj: Option<Mat4>,
     render_region: Option<RenderRegion>,
+    shadow_viewport: Option<[u32; 4]>,
 }
 
 impl<'a> CustomRenderContext<'a> {
@@ -80,7 +81,15 @@ impl<'a> CustomRenderContext<'a> {
             stage,
             shadow_view_proj,
             render_region,
+            shadow_viewport: None,
         }
+    }
+
+    /// Draw a shadow view into the tile `viewport` (x, y, width, height in texels) of the
+    /// depth view (the point and spot lights' shadow atlas).
+    pub fn with_shadow_viewport(mut self, viewport: Option<[u32; 4]>) -> Self {
+        self.shadow_viewport = viewport;
+        self
     }
 
     /// Returns the texture format of the color target for the current custom
@@ -98,6 +107,13 @@ impl<'a> CustomRenderContext<'a> {
     /// Returns the view-projection matrix for the current shadow pass, if any.
     pub fn shadow_view_proj(&self) -> Option<Mat4> {
         self.shadow_view_proj
+    }
+
+    /// The part of the depth view a shadow pass draws into (x, y, width, height in texels):
+    /// a tile of the shadow atlas for point and spot lights (set it as the pass's viewport
+    /// and scissor, and keep what is in the rest), `None` for a whole directional layer.
+    pub fn shadow_viewport(&self) -> Option<[u32; 4]> {
+        self.shadow_viewport
     }
 
     pub fn render_region(&self) -> Option<RenderRegion> {

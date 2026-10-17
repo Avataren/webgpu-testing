@@ -1,22 +1,47 @@
+//! Shadow maps: a layer per directional light, and one atlas for every point and spot
+//! light (tiles placed by `shadow_atlas.rs`).
+//!
+//! The directional maps follow the camera at `shadow_map_size`. A local light's faces
+//! (six cube faces for a point light, one for a spot light) are square tiles of the atlas,
+//! sized by how large the light looks on screen and by the shadow budget; each face is
+//! rendered with a small border so the shaders' filter taps stay inside its tile.
+//!
+//! A face is kept from frame to frame in two parts: its static casters' depth in a
+//! second atlas of the same layout, rendered again only when a static caster near it
+//! changes (`shadow_casters.rs`), and the shadow map itself, rebuilt from it when dynamic
+//! casters (characters, moving props) are in its view: a copy of the static depth, then
+//! the dynamic casters drawn over it. Faces with nothing new are left as they are, and so
+//! are faces the camera cannot see. At most `update_budget` faces are rebuilt a frame,
+//! the highest-scoring lights' first and every face within a few frames of its last
+//! update; the rest keep last frame's map. The static renders share one pass over the
+//! static atlas and the rebuilds one over the atlas, each face in its own viewport.
+
 use crate::renderer::shader_source::wgsl;
+use std::collections::HashMap;
 use std::mem;
 use std::num::NonZeroU64;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 use crate::renderer::batch::{CullMode, InstanceSource};
-use crate::renderer::internal::culling::{instance_visible, Frustum, Visibility};
+use crate::renderer::internal::culling::{
+    frustum_corners, instance_visible, Frustum, Sphere, Visibility,
+};
+use crate::renderer::internal::shadow_atlas::{
+    ShadowAtlasPlanner, ShadowCamera, ShadowState, Tile, TILE_GUARD,
+};
+use crate::renderer::internal::shadow_casters::{casts_shadows, CasterTracker};
 use crate::renderer::internal::{
     DynamicObjectsBuffer, OrderedBatch, PreparedBatches, RenderContext,
 };
 use crate::renderer::lights::{
-    LightsData, MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS,
+    LightsData, LocalShadowRaw, MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS,
+    POINT_SHADOW_FACES,
 };
-use crate::renderer::{PipelineBuilder, RenderPass, ShaderBuilder, ShadowPassStage, Vertex};
+use crate::renderer::{PipelineBuilder, ShaderBuilder, ShadowPassStage, Vertex};
 
-const POINT_SHADOW_FACE_COUNT: usize = 6;
-const POINT_SHADOW_LAYERS: u32 = (MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT) as u32;
+const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -35,7 +60,7 @@ struct ShadowArray {
 /// prepass): the one bindless group, or a group per material index (classic binding).
 pub(crate) enum MaskTextures {
     Bindless(wgpu::BindGroup),
-    PerMaterial(std::collections::HashMap<u32, wgpu::BindGroup>),
+    PerMaterial(HashMap<u32, wgpu::BindGroup>),
 }
 
 impl MaskTextures {
@@ -47,11 +72,14 @@ impl MaskTextures {
     }
 }
 
+/// A shadow view rendered this frame, for custom shadow passes: draw into `view` (in
+/// `viewport` of it, an atlas tile, when given) with `view_proj`.
 #[derive(Clone)]
 pub(crate) struct ShadowInvocation {
     pub stage: ShadowPassStage,
     pub view: wgpu::TextureView,
     pub view_proj: Mat4,
+    pub viewport: Option<[u32; 4]>,
 }
 
 impl ShadowArray {
@@ -66,7 +94,7 @@ impl ShadowArray {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
+            format: SHADOW_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
@@ -75,7 +103,7 @@ impl ShadowArray {
 
         let array_view = texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(&format!("{label}ArrayView")),
-            format: Some(wgpu::TextureFormat::Depth32Float),
+            format: Some(SHADOW_FORMAT),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
@@ -89,7 +117,7 @@ impl ShadowArray {
         for layer in 0..layers.max(1) {
             layer_views.push(texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some(&format!("{label}Layer{layer}")),
-                format: Some(wgpu::TextureFormat::Depth32Float),
+                format: Some(SHADOW_FORMAT),
                 dimension: Some(wgpu::TextureViewDimension::D2),
                 aspect: wgpu::TextureAspect::All,
                 base_mip_level: 0,
@@ -109,14 +137,6 @@ impl ShadowArray {
 
     fn layer_view(&self, index: usize) -> &wgpu::TextureView {
         let clamped = index.min(self.layer_views.len().saturating_sub(1));
-        if clamped != index {
-            log::warn!(
-                "Shadow layer index {} clamped to {} (max: {})",
-                index,
-                clamped,
-                self.layer_views.len() - 1
-            );
-        }
         &self.layer_views[clamped]
     }
 
@@ -125,34 +145,115 @@ impl ShadowArray {
     }
 }
 
-/// Shadow views a frame can render: one per directional and spot light, six per point
-/// light.
+/// The local lights' shadow atlas texture.
+struct AtlasTexture {
+    view: wgpu::TextureView,
+    texture: wgpu::Texture,
+}
+
+impl AtlasTexture {
+    fn new(device: &wgpu::Device, label: &str, size: u32) -> Self {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: size.max(1),
+                height: size.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self { view, texture }
+    }
+}
+
+/// Shadow views a frame can render: one per directional light and per local light face.
 const MAX_SHADOW_VIEWS: usize =
-    MAX_DIRECTIONAL_LIGHTS + MAX_SPOT_LIGHTS + MAX_POINT_LIGHTS * POINT_SHADOW_FACE_COUNT;
+    MAX_DIRECTIONAL_LIGHTS + MAX_SHADOWED_LOCAL_LIGHTS * POINT_SHADOW_FACES;
 
 /// What the shadow pass did this frame.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ShadowPassOutcome {
     pub draw_calls: u32,
-    /// Views whose map was rendered this frame.
+    /// Views whose map was rendered (or rebuilt from its static casters) this frame.
     pub views_rendered: u32,
-    /// Views whose map was kept from an earlier frame (nothing it shows changed).
+    /// Views whose map was kept from an earlier frame (nothing it shows changed, or the
+    /// camera cannot see it).
     pub views_cached: u32,
+    /// Views that wanted an update but waited for a later frame (the update budget).
+    pub views_deferred: u32,
 }
 
-/// What each light's map holds: a hash of the inputs it was rendered from (the view
-/// projection and every caster), or `None` when its content is unknown.
+/// Faces rebuilt per frame at most, unless more have never been rendered.
+pub(crate) const DEFAULT_SHADOW_UPDATES_PER_FRAME: u32 = 48;
+/// A face that waited this many frames goes ahead of the others.
+const MAX_FACE_WAIT: u32 = 4;
+
+/// What a local light's face holds, from frame to frame.
+struct FaceState {
+    /// What it was rendered for: its view projection and tile.
+    view_proj: Mat4,
+    tile: Tile,
+    /// Its static casters' depth (in the static atlas) is up to date.
+    static_ok: bool,
+    /// Its shadow map has been rendered since it got this tile.
+    rendered: bool,
+    /// Its shadow map holds dynamic casters, which may have moved since.
+    has_dynamic: bool,
+    /// Frames it has waited for an update.
+    waited: u32,
+}
+
+/// The local shadows a frame has: each shadowed light's slot in the shadows uniform and
+/// the faces to render.
 #[derive(Default)]
-struct ShadowCache {
-    directional: [Option<u64>; MAX_DIRECTIONAL_LIGHTS],
-    spot: [Option<u64>; MAX_SPOT_LIGHTS],
-    point: [Option<u64>; MAX_POINT_LIGHTS],
+pub(crate) struct LocalShadowFrame {
+    /// Per local light (as `LightsData::local_lights`), its slot.
+    pub slots: Vec<Option<usize>>,
+    /// The slots' entries of the shadows uniform.
+    pub uniforms: Vec<LocalShadowRaw>,
+    faces: Vec<LocalFace>,
+}
+
+/// One face of a shadowed local light.
+struct LocalFace {
+    key: u64,
+    light: usize,
+    face: usize,
+    tile: Tile,
+    view_proj: Mat4,
+    /// The camera sees part of what the face covers (else it is left as it is).
+    visible: bool,
+    /// Its light's score in the shadow budget.
+    score: f32,
+}
+
+/// The shadow atlas's figures for the stats.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ShadowAtlasStats {
+    /// Texels across the atlas (0: none yet), and the share of it in use.
+    pub size: u32,
+    pub used: f32,
+    /// Shadow-casting local lights with a shadow map, and those left without one.
+    pub shadowed: u32,
+    pub over_budget: u32,
 }
 
 pub(crate) struct ShadowResources {
     directional: ShadowArray,
-    spot: ShadowArray,
-    point: ShadowArray,
+    /// Every local light's shadow map tiles; a 1x1 texture until a light needs one.
+    atlas: AtlasTexture,
+    /// The same tiles holding only the static casters, which each frame's dynamic casters
+    /// are drawn over.
+    static_atlas: AtlasTexture,
+    planner: ShadowAtlasPlanner,
     sampler: wgpu::Sampler,
     /// The view projection of every view rendered this frame, `view_stride` bytes apart,
     /// bound at a dynamic offset.
@@ -166,7 +267,26 @@ pub(crate) struct ShadowResources {
     /// Cut-out surfaces' pipelines (with the alpha test), by sidedness like `pipeline`;
     /// `None` until [`Self::enable_alpha_masking`], and they then cast solid shadows.
     masked_pipeline: Option<[wgpu::RenderPipeline; 2]>,
-    cache: ShadowCache,
+    /// Clears an atlas tile to the far plane, and copies a tile of the static atlas into
+    /// the atlas (with `copy_group` binding the static atlas).
+    clear_pipeline: wgpu::RenderPipeline,
+    copy_pipeline: wgpu::RenderPipeline,
+    copy_layout: wgpu::BindGroupLayout,
+    copy_group: wgpu::BindGroup,
+    /// What each directional map holds: a hash of the inputs it was rendered from (the
+    /// view projection and every caster), or nothing when its content is unknown.
+    directional_cache: [Option<u64>; MAX_DIRECTIONAL_LIGHTS],
+    /// Each local light face's state, by light key and face.
+    faces: HashMap<(u64, usize), FaceState>,
+    /// Which casters stay put.
+    casters: CasterTracker,
+    /// Faces rebuilt per frame at most.
+    update_budget: u32,
+    /// This frame's local shadows ([`Self::plan_local`]).
+    local: LocalShadowFrame,
+    /// Each shadow-casting local light's state in the last plan, by light key.
+    states: HashMap<u64, ShadowState>,
+    stats: ShadowAtlasStats,
     /// Scratch for culling each view.
     visibility: Visibility,
 }
@@ -185,21 +305,20 @@ impl ShadowResources {
             &self.directional.texture,
         ));
         out.push(FetchableTexture::new(
-            "shadows.spot",
-            "Spot light shadow maps (light-space depth): one array layer per spot light",
-            &self.spot.texture,
-        ));
-        out.push(FetchableTexture::new(
-            "shadows.point",
-            "Point light shadow maps (light-space depth): six array layers (cube faces) per point light",
-            &self.point.texture,
+            "shadows.atlas",
+            "Point and spot light shadow maps (light-space depth): square tiles, six cube faces \
+             per point light and one per spot light, sized by the shadow budget",
+            &self.atlas.texture,
         ));
     }
 
+    /// `shadow_map_size`: the directional maps' size and the largest local tile;
+    /// `atlas_size`: the largest the local shadow atlas may grow to.
     pub(crate) fn new(
         device: &wgpu::Device,
         objects: &DynamicObjectsBuffer,
         shadow_map_size: u32,
+        atlas_size: u32,
     ) -> Self {
         let directional = ShadowArray::new(
             device,
@@ -207,18 +326,10 @@ impl ShadowResources {
             MAX_DIRECTIONAL_LIGHTS as u32,
             shadow_map_size,
         );
-        let spot = ShadowArray::new(
-            device,
-            "SpotShadowMap",
-            MAX_SPOT_LIGHTS as u32,
-            shadow_map_size,
-        );
-        let point = ShadowArray::new(
-            device,
-            "PointShadowMap",
-            POINT_SHADOW_LAYERS,
-            shadow_map_size,
-        );
+        let atlas_size = atlas_size.min(device.limits().max_texture_dimension_2d);
+        let planner = ShadowAtlasPlanner::new(atlas_size, shadow_map_size.min(atlas_size / 8));
+        let atlas = AtlasTexture::new(device, "LocalShadowAtlas", 1);
+        let static_atlas = AtlasTexture::new(device, "LocalShadowStaticAtlas", 1);
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ShadowSampler"),
@@ -296,7 +407,7 @@ impl ShadowResources {
                 .depth_only() // No fragment shader for shadow pass
                 .with_vertex_buffer(Vertex::layout())
                 .with_depth_stencil_biased(
-                    wgpu::TextureFormat::Depth32Float,
+                    SHADOW_FORMAT,
                     true,
                     wgpu::CompareFunction::LessEqual,
                     2,   // constant bias
@@ -306,10 +417,54 @@ impl ShadowResources {
                 .build()
         });
 
+        let tile_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("ShadowTileShader"),
+            source: wgpu::ShaderSource::Wgsl(wgsl!("shadow_tile.wgsl").into()),
+        });
+        let empty_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ShadowTileClearLayout"),
+            bind_group_layouts: &[],
+            immediate_size: 0,
+        });
+        let clear_pipeline = PipelineBuilder::new(device, &empty_layout, &tile_shader)
+            .with_label("ShadowTileClearPipeline")
+            .with_vertex_entry("vs_tile")
+            .depth_only()
+            .with_depth_stencil(SHADOW_FORMAT, true, wgpu::CompareFunction::Always)
+            .with_no_culling()
+            .build();
+        let copy_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ShadowTileCopyLayout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let copy_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ShadowTileCopyPipelineLayout"),
+            bind_group_layouts: &[Some(&copy_layout)],
+            immediate_size: 0,
+        });
+        let copy_pipeline = PipelineBuilder::new(device, &copy_pipeline_layout, &tile_shader)
+            .with_label("ShadowTileCopyPipeline")
+            .with_vertex_entry("vs_tile")
+            .with_fragment_entry("fs_copy")
+            .with_depth_stencil(SHADOW_FORMAT, true, wgpu::CompareFunction::Always)
+            .with_no_culling()
+            .build();
+        let copy_group = copy_bind_group(device, &copy_layout, &static_atlas.view);
+
         Self {
             directional,
-            spot,
-            point,
+            atlas,
+            static_atlas,
+            planner,
             sampler,
             view_buffer,
             view_stride,
@@ -318,7 +473,17 @@ impl ShadowResources {
             uniform_layout,
             pipeline,
             masked_pipeline: None,
-            cache: ShadowCache::default(),
+            clear_pipeline,
+            copy_pipeline,
+            copy_layout,
+            copy_group,
+            directional_cache: [None; MAX_DIRECTIONAL_LIGHTS],
+            faces: HashMap::new(),
+            casters: CasterTracker::default(),
+            update_budget: DEFAULT_SHADOW_UPDATES_PER_FRAME,
+            local: LocalShadowFrame::default(),
+            states: HashMap::new(),
+            stats: ShadowAtlasStats::default(),
             visibility: Visibility::default(),
         }
     }
@@ -358,7 +523,7 @@ impl ShadowResources {
                 .with_fragment_entry("fs_masked")
                 .with_vertex_buffer(Vertex::layout())
                 .with_depth_stencil_biased(
-                    wgpu::TextureFormat::Depth32Float,
+                    SHADOW_FORMAT,
                     true,
                     wgpu::CompareFunction::LessEqual,
                     2,
@@ -368,7 +533,8 @@ impl ShadowResources {
                 .build()
         }));
         // The maps were drawn without the alpha test.
-        self.cache = ShadowCache::default();
+        self.directional_cache = [None; MAX_DIRECTIONAL_LIGHTS];
+        self.faces.clear();
     }
 
     /// Width (and height) in texels of the directional shadow maps.
@@ -380,25 +546,147 @@ impl ShadowResources {
         self.directional.array_view()
     }
 
-    pub(crate) fn spot_array_view(&self) -> &wgpu::TextureView {
-        self.spot.array_view()
-    }
-
-    pub(crate) fn point_array_view(&self) -> &wgpu::TextureView {
-        self.point.array_view()
+    pub(crate) fn atlas_view(&self) -> &wgpu::TextureView {
+        &self.atlas.view
     }
 
     pub(crate) fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
 
-    /// Render the shadow maps of `lights`' shadow-casting lights, except those in `skip`
-    /// (bits as the ray-traced shadow mask: 0-3 directional, 4-7 point, 8-11 spot),
-    /// whose maps nothing reads this frame. A map whose inputs (the light's view and
-    /// every caster's geometry, transform and cut-out textures, by `texture_generation`)
-    /// are the same as when it was last rendered is kept as it is, unless custom passes
-    /// draw into the maps too (`record_custom_passes`), which also lists each rendered
-    /// view in `custom_invocations`.
+    /// The local shadows planned for this frame.
+    pub(crate) fn local_frame(&self) -> &LocalShadowFrame {
+        &self.local
+    }
+
+    /// The shadow state of the local light with key `key` in the last frame, if it casts
+    /// shadows.
+    pub(crate) fn light_state(&self, key: u64) -> Option<ShadowState> {
+        self.states.get(&key).copied()
+    }
+
+    pub(crate) fn atlas_stats(&self) -> ShadowAtlasStats {
+        self.stats
+    }
+
+    /// The largest the shadow atlas grows to, in texels across.
+    pub(crate) fn max_atlas_size(&self) -> u32 {
+        self.planner.max_size()
+    }
+
+    /// Let the shadow atlas grow to `size` texels across (a power of two, within the
+    /// device's limit) from the next frame; a smaller size than the atlas has starts it
+    /// over.
+    pub(crate) fn set_max_atlas_size(&mut self, device: &wgpu::Device, size: u32) {
+        let size = size
+            .clamp(
+                super::shadow_atlas::MIN_ATLAS,
+                device.limits().max_texture_dimension_2d,
+            )
+            .next_power_of_two()
+            .min(device.limits().max_texture_dimension_2d);
+        if size != self.planner.max_size() {
+            let max_tile = self.directional_map_size().min(size / 8);
+            self.planner = ShadowAtlasPlanner::new(size, max_tile);
+            self.faces.clear();
+        }
+    }
+
+    /// Rebuild at most `faces` local light faces a frame.
+    pub(crate) fn set_update_budget(&mut self, faces: u32) {
+        self.update_budget = faces.max(1);
+    }
+
+    pub(crate) fn update_budget(&self) -> u32 {
+        self.update_budget
+    }
+
+    /// Decide which local lights have shadow maps this frame and where (see
+    /// `shadow_atlas.rs`); lights flagged in `skip` take theirs from the ray-traced
+    /// mask. Returns whether the atlas texture was recreated (whoever binds it must
+    /// rebind).
+    pub(crate) fn plan_local(
+        &mut self,
+        device: &wgpu::Device,
+        lights: &LightsData,
+        camera: &ShadowCamera,
+        camera_corners: &[Vec3; 8],
+        skip: &[bool],
+    ) -> bool {
+        let local_lights = lights.local_lights();
+        let plan = self.planner.plan(local_lights, camera, skip);
+        let mut recreated = false;
+        if plan.atlas_changed || self.atlas.texture.width() != self.planner.size.max(1) {
+            self.atlas = AtlasTexture::new(device, "LocalShadowAtlas", self.planner.size);
+            self.static_atlas =
+                AtlasTexture::new(device, "LocalShadowStaticAtlas", self.planner.size);
+            self.copy_group = copy_bind_group(device, &self.copy_layout, &self.static_atlas.view);
+            self.faces.clear();
+            recreated = true;
+        }
+
+        // Faces of lights that gave their tiles up.
+        let planner = &self.planner;
+        self.faces
+            .retain(|(key, _), _| planner.lights.contains_key(key));
+
+        self.states.clear();
+        for (light, state) in local_lights.iter().zip(&plan.states) {
+            if let Some(state) = state {
+                self.states.insert(light.key, *state);
+            }
+        }
+        let atlas = self.planner.size.max(1);
+        self.stats = ShadowAtlasStats {
+            size: self.planner.size,
+            used: plan.texels_used as f32 / (atlas as f32 * atlas as f32),
+            shadowed: plan.shadowed.len() as u32,
+            over_budget: plan.over_budget,
+        };
+
+        let frame = &mut self.local;
+        frame.slots.clear();
+        frame.slots.resize(local_lights.len(), None);
+        frame.uniforms.clear();
+        frame.faces.clear();
+        for (&index, &score) in plan.shadowed.iter().zip(&plan.scores) {
+            let light = &local_lights[index];
+            let Some(tiles) = self.planner.lights.get(&light.key) else {
+                continue;
+            };
+            let (matrices, tan_half) = light.shadow_view_projs(tiles.size, TILE_GUARD);
+            let mut raw = LocalShadowRaw::zeroed();
+            for (face, (matrix, tile)) in matrices.iter().zip(&tiles.tiles).enumerate() {
+                raw.view_proj[face] = matrix.to_cols_array_2d();
+                raw.rects[face] = tile.rect(atlas);
+                let corners = frustum_corners(*matrix);
+                let visible = !camera.frustum.excludes(&corners)
+                    && !Frustum::from_view_proj(*matrix).excludes(camera_corners);
+                frame.faces.push(LocalFace {
+                    key: light.key,
+                    light: index,
+                    face,
+                    tile: *tile,
+                    view_proj: *matrix,
+                    visible,
+                    score,
+                });
+            }
+            raw.params = [matrices.len() as f32, tiles.size as f32, tan_half, 0.0];
+            frame.slots[index] = Some(frame.uniforms.len());
+            frame.uniforms.push(raw);
+        }
+        recreated
+    }
+
+    /// Render the directional maps (except those in `skip`, bits as the ray-traced shadow
+    /// mask's 0-3, whose maps nothing reads this frame) and update this frame's local
+    /// faces ([`Self::plan_local`]; see the module comment). A directional map whose
+    /// inputs (the light's view and every caster's geometry, transform and cut-out
+    /// textures, by `texture_generation`) are the same as when it was last rendered is
+    /// kept as it is. Custom passes that draw into the maps (`record_custom_passes`) count
+    /// as dynamic casters in every view; each view updated is listed in
+    /// `custom_invocations` for them.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &mut self,
@@ -415,186 +703,165 @@ impl ShadowResources {
         texture_generation: u64,
     ) -> ShadowPassOutcome {
         let mut outcome = ShadowPassOutcome::default();
-        // Lights whose map nothing reads this frame (bits as the ray-traced shadow mask:
-        // 0-3 directional, 4-7 point, 8-11 spot).
-        let skipped = |bit: usize| skip & (1 << bit) != 0;
+        let mesh_identity = |batch: &OrderedBatch| {
+            geometry
+                .mesh(batch)
+                .map(|mesh| std::sync::Arc::as_ptr(mesh.shared_data()) as usize as u64)
+        };
         let casters = if record_custom_passes {
             None
         } else {
-            casters_signature(
-                batches,
-                |batch| {
-                    geometry
-                        .mesh(batch)
-                        .map(|mesh| std::sync::Arc::as_ptr(mesh.shared_data()) as usize as u64)
-                },
-                texture_generation,
-            )
+            casters_signature(batches, mesh_identity, texture_generation)
         };
 
-        // The views to render, each with the matrices of its faces and where its cache
-        // entry is.
-        struct View {
-            kind: ViewKind,
-            index: usize,
-            key: Option<u64>,
-        }
-        enum ViewKind {
-            Directional,
-            Spot,
-            Point,
-        }
-        let mut views: Vec<View> = Vec::new();
-        for (index, shadow) in lights
-            .directional_shadows()
-            .iter()
-            .enumerate()
-            .take(MAX_DIRECTIONAL_LIGHTS)
-        {
+        // Directional layers to render.
+        let mut directional: Vec<(usize, Mat4, Option<u64>)> = Vec::new();
+        for (index, shadow) in lights.directional_shadows().iter().enumerate() {
             if shadow.params[0] == 0.0 {
                 continue;
             }
-            if skipped(index) {
-                self.cache.directional[index] = None;
+            if skip & (1 << index) != 0 {
+                self.directional_cache[index] = None;
                 continue;
             }
             let key = casters.map(|casters| view_key(casters, &[shadow.view_proj]));
-            if key.is_some() && self.cache.directional[index] == key {
+            if key.is_some() && self.directional_cache[index] == key {
                 outcome.views_cached += 1;
                 continue;
             }
-            views.push(View {
-                kind: ViewKind::Directional,
-                index,
-                key,
-            });
+            directional.push((index, Mat4::from_cols_array_2d(&shadow.view_proj), key));
         }
-        for (index, shadow) in lights
-            .spot_shadows()
-            .iter()
-            .enumerate()
-            .take(MAX_SPOT_LIGHTS)
-        {
-            if shadow.params[0] == 0.0 {
-                continue;
+
+        // Local faces to update: where static casters changed, faces lose their static
+        // depth; faces with dynamic casters in view (or that held some) are rebuilt.
+        let changes = self
+            .casters
+            .update(batches, mesh_identity, texture_generation);
+        if changes.all_dirty {
+            self.faces
+                .values_mut()
+                .for_each(|face| face.static_ok = false);
+        } else if !changes.dirty.is_empty() {
+            for face in self.faces.values_mut().filter(|face| face.static_ok) {
+                let frustum = Frustum::from_view_proj(face.view_proj);
+                if changes
+                    .dirty
+                    .iter()
+                    .any(|sphere| frustum.intersects(*sphere))
+                {
+                    face.static_ok = false;
+                }
             }
-            if skipped(8 + index) {
-                self.cache.spot[index] = None;
-                continue;
+        }
+        struct Job {
+            face: usize,
+            render_static: bool,
+            dynamic: bool,
+            priority: f32,
+        }
+        let mut jobs: Vec<Job> = Vec::new();
+        let local_lights = lights.local_lights();
+        for (index, face) in self.local.faces.iter().enumerate() {
+            let state = self
+                .faces
+                .entry((face.key, face.face))
+                .or_insert_with(|| FaceState {
+                    view_proj: face.view_proj,
+                    tile: face.tile,
+                    static_ok: false,
+                    rendered: false,
+                    has_dynamic: false,
+                    waited: 0,
+                });
+            if state.view_proj != face.view_proj || state.tile != face.tile {
+                *state = FaceState {
+                    view_proj: face.view_proj,
+                    tile: face.tile,
+                    static_ok: false,
+                    rendered: false,
+                    has_dynamic: false,
+                    waited: 0,
+                };
             }
-            let key = casters.map(|casters| view_key(casters, &[shadow.view_proj]));
-            if key.is_some() && self.cache.spot[index] == key {
+            if !face.visible {
                 outcome.views_cached += 1;
                 continue;
             }
-            views.push(View {
-                kind: ViewKind::Spot,
-                index,
-                key,
+            let light = &local_lights[face.light];
+            let reach = Sphere {
+                center: light.position,
+                radius: light.reach(),
+            };
+            let frustum = Frustum::from_view_proj(face.view_proj);
+            let dynamic = record_custom_passes
+                || changes
+                    .dynamic_spheres
+                    .iter()
+                    .any(|sphere| sphere_meets(reach, *sphere) && frustum.intersects(*sphere));
+            if state.static_ok && state.rendered && !dynamic && !state.has_dynamic {
+                outcome.views_cached += 1;
+                state.waited = 0;
+                continue;
+            }
+            // Faces never rendered first (their tile holds nothing of theirs), then those
+            // that waited long, then by their light's score and how long they waited.
+            let priority = if !state.rendered {
+                f32::INFINITY
+            } else if state.waited >= MAX_FACE_WAIT {
+                f32::MAX / 2.0 + state.waited as f32
+            } else {
+                face.score * (1.0 + 0.5 * state.waited as f32)
+            };
+            jobs.push(Job {
+                face: index,
+                render_static: !state.static_ok,
+                dynamic,
+                priority,
             });
         }
-        for (index, shadow) in lights
-            .point_shadows()
-            .iter()
-            .enumerate()
-            .take(MAX_POINT_LIGHTS)
-        {
-            if shadow.params[0] == 0.0 {
-                continue;
+        jobs.sort_by(|a, b| b.priority.total_cmp(&a.priority));
+        let forced = jobs.iter().filter(|job| job.priority.is_infinite()).count();
+        let take = (self.update_budget as usize).max(forced).min(jobs.len());
+        for job in &jobs[take..] {
+            let face = &self.local.faces[job.face];
+            if let Some(state) = self.faces.get_mut(&(face.key, face.face)) {
+                state.waited += 1;
             }
-            if skipped(4 + index) {
-                self.cache.point[index] = None;
-                continue;
-            }
-            let key = casters.map(|casters| view_key(casters, &shadow.view_proj));
-            if key.is_some() && self.cache.point[index] == key {
-                outcome.views_cached += POINT_SHADOW_FACE_COUNT as u32;
-                continue;
-            }
-            views.push(View {
-                kind: ViewKind::Point,
-                index,
-                key,
-            });
+            outcome.views_deferred += 1;
         }
-        if views.is_empty() {
+        jobs.truncate(take);
+        if directional.is_empty() && jobs.is_empty() {
             return outcome;
         }
 
-        // Every rendered face's view projection, one slot each, uploaded at once.
+        // Every view's projection, one slot each, uploaded at once: directional layers,
+        // then faces.
         let stride = self.view_stride as usize;
         self.view_scratch.clear();
-        let mut faces: Vec<(usize, usize, Mat4, ShadowPassStage)> = Vec::new();
-        for (view_index, view) in views.iter().enumerate() {
-            let matrices: Vec<(Mat4, ShadowPassStage)> = match view.kind {
-                ViewKind::Directional => {
-                    let shadow = &lights.directional_shadows()[view.index];
-                    vec![(
-                        Mat4::from_cols_array_2d(&shadow.view_proj),
-                        ShadowPassStage::Directional {
-                            light_index: view.index as u32,
-                        },
-                    )]
-                }
-                ViewKind::Spot => {
-                    let shadow = &lights.spot_shadows()[view.index];
-                    vec![(
-                        Mat4::from_cols_array_2d(&shadow.view_proj),
-                        ShadowPassStage::Spot {
-                            light_index: view.index as u32,
-                        },
-                    )]
-                }
-                ViewKind::Point => {
-                    let shadow = &lights.point_shadows()[view.index];
-                    (0..POINT_SHADOW_FACE_COUNT)
-                        .map(|face| {
-                            (
-                                Mat4::from_cols_array_2d(&shadow.view_proj[face]),
-                                ShadowPassStage::Point {
-                                    light_index: view.index as u32,
-                                    face_index: face as u32,
-                                },
-                            )
-                        })
-                        .collect()
-                }
+        let matrices = directional
+            .iter()
+            .map(|(_, matrix, _)| *matrix)
+            .chain(jobs.iter().map(|job| self.local.faces[job.face].view_proj));
+        for (slot, matrix) in matrices.enumerate() {
+            let uniform = ShadowViewUniform {
+                view_proj: matrix.to_cols_array_2d(),
             };
-            for (matrix, stage) in matrices {
-                let slot = faces.len();
-                let uniform = ShadowViewUniform {
-                    view_proj: matrix.to_cols_array_2d(),
-                };
-                self.view_scratch.resize((slot + 1) * stride, 0);
-                self.view_scratch
-                    [slot * stride..slot * stride + mem::size_of::<ShadowViewUniform>()]
-                    .copy_from_slice(bytemuck::bytes_of(&uniform));
-                faces.push((view_index, slot, matrix, stage));
-            }
+            self.view_scratch.resize((slot + 1) * stride, 0);
+            self.view_scratch[slot * stride..slot * stride + mem::size_of::<ShadowViewUniform>()]
+                .copy_from_slice(bytemuck::bytes_of(&uniform));
         }
         context
             .queue
             .write_buffer(&self.view_buffer, 0, &self.view_scratch);
 
         let mut visibility = std::mem::take(&mut self.visibility);
-        for (view_index, slot, matrix, stage) in faces {
-            let view = &views[view_index];
-            let layer = match stage {
-                ShadowPassStage::Directional { light_index } => {
-                    self.directional.layer_view(light_index as usize)
-                }
-                ShadowPassStage::Spot { light_index } => self.spot.layer_view(light_index as usize),
-                ShadowPassStage::Point {
-                    light_index,
-                    face_index,
-                } => self.point.layer_view(
-                    light_index as usize * POINT_SHADOW_FACE_COUNT + face_index as usize,
-                ),
-            };
+        // Directional layers, a pass each.
+        for (slot, &(index, matrix, key)) in directional.iter().enumerate() {
+            let layer = self.directional.layer_view(index);
             visibility.compute(batches.bounds(), &Frustum::from_view_proj(matrix));
-            outcome.draw_calls += self.render_pass(
-                encoder,
-                layer,
+            let mut pass = begin_shadow_pass(encoder, layer, true);
+            outcome.draw_calls += self.draw_casters(
+                &mut pass,
                 geometry,
                 batches,
                 objects,
@@ -602,30 +869,130 @@ impl ShadowResources {
                 (slot * stride) as u32,
                 &visibility,
             );
+            drop(pass);
             outcome.views_rendered += 1;
             if record_custom_passes {
                 custom_invocations.push(ShadowInvocation {
-                    stage,
+                    stage: ShadowPassStage::Directional {
+                        light_index: index as u32,
+                    },
                     view: layer.clone(),
                     view_proj: matrix,
+                    viewport: None,
                 });
             }
-            match view.kind {
-                ViewKind::Directional => self.cache.directional[view.index] = view.key,
-                ViewKind::Spot => self.cache.spot[view.index] = view.key,
-                ViewKind::Point => self.cache.point[view.index] = view.key,
+            self.directional_cache[index] = key;
+        }
+        let first_face_slot = directional.len();
+        let set_tile = |pass: &mut wgpu::RenderPass<'_>, tile: Tile| {
+            pass.set_viewport(
+                tile.x as f32,
+                tile.y as f32,
+                tile.size as f32,
+                tile.size as f32,
+                0.0,
+                1.0,
+            );
+            pass.set_scissor_rect(tile.x, tile.y, tile.size, tile.size);
+        };
+
+        // Static casters of the faces that lost them, into the static atlas.
+        if jobs.iter().any(|job| job.render_static) {
+            let static_view = self.static_atlas.view.clone();
+            let mut pass = begin_shadow_pass(encoder, &static_view, false);
+            for (offset, job) in jobs.iter().enumerate() {
+                if !job.render_static {
+                    continue;
+                }
+                let face = &self.local.faces[job.face];
+                set_tile(&mut pass, face.tile);
+                pass.set_pipeline(&self.clear_pipeline);
+                pass.draw(0..3, 0..1);
+                visibility.compute_filtered(
+                    batches,
+                    &Frustum::from_view_proj(face.view_proj),
+                    |batch, instance| !changes.is_dynamic(batch, instance),
+                );
+                outcome.draw_calls += self.draw_casters(
+                    &mut pass,
+                    geometry,
+                    batches,
+                    objects,
+                    mask_textures,
+                    ((first_face_slot + offset) * stride) as u32,
+                    &visibility,
+                );
+            }
+        }
+
+        // The shadow maps: each face's static depth, then its dynamic casters.
+        let atlas_view = self.atlas.view.clone();
+        {
+            let mut pass = begin_shadow_pass(encoder, &atlas_view, false);
+            for (offset, job) in jobs.iter().enumerate() {
+                let face = &self.local.faces[job.face];
+                set_tile(&mut pass, face.tile);
+                pass.set_pipeline(&self.copy_pipeline);
+                pass.set_bind_group(0, &self.copy_group, &[]);
+                pass.draw(0..3, 0..1);
+                if job.dynamic {
+                    visibility.compute_filtered(
+                        batches,
+                        &Frustum::from_view_proj(face.view_proj),
+                        |batch, instance| changes.is_dynamic(batch, instance),
+                    );
+                    outcome.draw_calls += self.draw_casters(
+                        &mut pass,
+                        geometry,
+                        batches,
+                        objects,
+                        mask_textures,
+                        ((first_face_slot + offset) * stride) as u32,
+                        &visibility,
+                    );
+                }
+            }
+        }
+        for job in &jobs {
+            let face = &self.local.faces[job.face];
+            outcome.views_rendered += 1;
+            if let Some(state) = self.faces.get_mut(&(face.key, face.face)) {
+                state.static_ok = true;
+                state.rendered = true;
+                state.has_dynamic = job.dynamic;
+                state.waited = 0;
+            }
+            if record_custom_passes {
+                let spot = local_lights
+                    .get(face.light)
+                    .is_some_and(|light| light.cone.is_some());
+                let tile = face.tile;
+                custom_invocations.push(ShadowInvocation {
+                    stage: if spot {
+                        ShadowPassStage::Spot {
+                            light_index: face.light as u32,
+                        }
+                    } else {
+                        ShadowPassStage::Point {
+                            light_index: face.light as u32,
+                            face_index: face.face as u32,
+                        }
+                    },
+                    view: atlas_view.clone(),
+                    view_proj: face.view_proj,
+                    viewport: Some([tile.x, tile.y, tile.size, tile.size]),
+                });
             }
         }
         self.visibility = visibility;
         outcome
     }
 
-    /// Draw the casters `visibility` keeps into one shadow map layer. Returns the draws.
+    /// Draw the casters `visibility` keeps into the current shadow view. Returns the draws.
     #[allow(clippy::too_many_arguments)]
-    fn render_pass(
+    fn draw_casters(
         &self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
+        pass: &mut wgpu::RenderPass<'_>,
         geometry: &crate::renderer::renderer_core::passes::BatchGeometry<'_>,
         batches: &PreparedBatches,
         objects: &DynamicObjectsBuffer,
@@ -635,22 +1002,6 @@ impl ShadowResources {
     ) -> u32 {
         let materials = batches.materials();
         let mut draws = 0u32;
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("ShadowPass"),
-            color_attachments: &[],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-
         pass.set_bind_group(0, &self.uniform_bind_group, &[uniform_offset]);
         pass.set_bind_group(1, &objects.bind_group, &[]);
         let mut binder = crate::renderer::renderer_core::passes::GeometryBinder::default();
@@ -675,7 +1026,7 @@ impl ShadowResources {
             pass.set_pipeline(masked.map_or(&self.pipeline[sides], |(pipeline, _)| pipeline));
 
             let instance_count = batch.instances.len() as u32;
-            binder.bind(&mut pass, mesh, None);
+            binder.bind(pass, mesh, None);
             let base_vertex = mesh.base_vertex() as i32;
             let mut current_range_start: Option<u32> = None;
             let mut current_material: Option<u32> = None;
@@ -734,12 +1085,56 @@ impl ShadowResources {
     }
 }
 
-/// Whether a pass's batches cast shadows.
-fn casts_shadows(pass: RenderPass) -> bool {
-    !matches!(
-        pass,
-        RenderPass::Transparent | RenderPass::Overlay | RenderPass::Gizmo | RenderPass::GizmoSolid
-    )
+/// The bind group the tile copy reads `static_atlas` through.
+fn copy_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    static_atlas: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("ShadowTileCopyBindGroup"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(static_atlas),
+        }],
+    })
+}
+
+/// Whether two spheres overlap (an unbounded one meets everything).
+fn sphere_meets(a: Sphere, b: Sphere) -> bool {
+    if !a.radius.is_finite() || !b.radius.is_finite() {
+        return true;
+    }
+    a.center.distance_squared(b.center) <= (a.radius + b.radius).powi(2)
+}
+
+/// A depth pass over `view`: cleared to the far plane, or keeping what is there (the
+/// atlases, whose tiles each view clears or copies itself).
+fn begin_shadow_pass<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    clear: bool,
+) -> wgpu::RenderPass<'a> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("ShadowPass"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load: if clear {
+                    wgpu::LoadOp::Clear(1.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
 }
 
 /// One step of a fast, order-sensitive 64-bit mix (as FxHash).
@@ -879,7 +1274,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None)
+        PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None)
     }
 
     fn signature(objects: &[(usize, Vec3, InstanceSource)], generation: u64) -> Option<u64> {

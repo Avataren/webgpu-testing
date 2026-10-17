@@ -7,7 +7,7 @@
 
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::asset::LocalBounds;
+use crate::asset::{LocalBounds, MeshData};
 use crate::scene::transform::Transform;
 
 /// A bounding sphere in world space.
@@ -52,6 +52,69 @@ pub(crate) fn world_sphere(bounds: &LocalBounds, transform: &Transform) -> Spher
     Sphere { center, radius }
 }
 
+/// Each joint's box around the vertices it moves (by any weight) in a skinned mesh's bind
+/// pose, by joint index; `None` for joints that move none.
+pub(crate) fn joint_bounds(data: &MeshData) -> Vec<Option<LocalBounds>> {
+    let mut joints: Vec<Option<LocalBounds>> = Vec::new();
+    let Some(skin) = data.skin.as_ref().filter(|_| data.is_skinned()) else {
+        return joints;
+    };
+    for (vertex, influence) in data.vertices.iter().zip(skin) {
+        let position = Vec3::from_array(vertex.pos);
+        for (joint, weight) in influence.joints.iter().zip(influence.weights) {
+            if weight == 0 {
+                continue;
+            }
+            let joint = *joint as usize;
+            if joints.len() <= joint {
+                joints.resize(joint + 1, None);
+            }
+            let bounds = joints[joint].get_or_insert(LocalBounds {
+                min: position,
+                max: position,
+            });
+            bounds.min = bounds.min.min(position);
+            bounds.max = bounds.max.max(position);
+        }
+    }
+    joints
+}
+
+/// The box around a skinned mesh posed by `palette` (mesh-space joint matrices), from its
+/// [`joint_bounds`]: each joint's bind-pose box moved by its matrix. A skinned vertex is a
+/// weighted mean of its joints' matrices applied to it, and each of those lies in that
+/// joint's moved box, so the vertex lies in the box around them all.
+pub(crate) fn skinned_bounds(
+    joints: &[Option<LocalBounds>],
+    palette: &[Mat4],
+) -> Option<LocalBounds> {
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for (bounds, matrix) in joints.iter().zip(palette) {
+        let Some(bounds) = bounds else {
+            continue;
+        };
+        // The box of a box moved by an affine matrix: its moved centre, and its half
+        // extents through the matrix's absolute values.
+        let center = matrix.transform_point3(bounds.center());
+        let half = bounds.half_extents();
+        let extent = Vec3::new(
+            matrix.x_axis.x.abs() * half.x
+                + matrix.y_axis.x.abs() * half.y
+                + matrix.z_axis.x.abs() * half.z,
+            matrix.x_axis.y.abs() * half.x
+                + matrix.y_axis.y.abs() * half.y
+                + matrix.z_axis.y.abs() * half.z,
+            matrix.x_axis.z.abs() * half.x
+                + matrix.y_axis.z.abs() * half.y
+                + matrix.z_axis.z.abs() * half.z,
+        );
+        min = min.min(center - extent);
+        max = max.max(center + extent);
+    }
+    (min.cmple(max).all() && min.is_finite() && max.is_finite()).then_some(LocalBounds { min, max })
+}
+
 /// The six clip planes of a view-projection matrix (wgpu clip space: -w..w in x and y,
 /// 0..w in z).
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +152,35 @@ impl Frustum {
             .iter()
             .all(|plane| plane.truncate().dot(sphere.center) + plane.w >= -margin)
     }
+}
+
+impl Frustum {
+    /// Whether every one of `points` lies outside one of the planes, so a convex shape
+    /// spanned by them cannot touch the frustum. Conservative: shapes it keeps may still
+    /// miss the frustum.
+    pub(crate) fn excludes(&self, points: &[Vec3]) -> bool {
+        self.planes.iter().any(|plane| {
+            points
+                .iter()
+                .all(|point| plane.truncate().dot(*point) + plane.w < -1e-4)
+        })
+    }
+}
+
+/// The corners of the box `view_proj` maps to clip space (wgpu: x and y -1..1, z 0..1), in
+/// world space.
+pub(crate) fn frustum_corners(view_proj: Mat4) -> [Vec3; 8] {
+    let inverse = view_proj.inverse();
+    std::array::from_fn(|corner| {
+        let ndc = Vec4::new(
+            if corner & 1 == 0 { -1.0 } else { 1.0 },
+            if corner & 2 == 0 { -1.0 } else { 1.0 },
+            if corner & 4 == 0 { 0.0 } else { 1.0 },
+            1.0,
+        );
+        let world = inverse * ndc;
+        world.truncate() / world.w
+    })
 }
 
 /// Scale a plane so its normal is a unit vector; a degenerate plane (a projection
@@ -145,6 +237,42 @@ impl Visibility {
             }
             self.batches.push(any);
             self.ranges.push((start, spheres.len() as u32));
+        }
+    }
+
+    /// As [`Self::compute`] for `batches`, keeping only the instances `keep(batch,
+    /// instance)` accepts (instances without bounds pass the frustum).
+    pub(crate) fn compute_filtered(
+        &mut self,
+        batches: &crate::renderer::internal::PreparedBatches,
+        frustum: &Frustum,
+        keep: impl Fn(usize, usize) -> bool,
+    ) {
+        self.batches.clear();
+        self.ranges.clear();
+        self.instances.clear();
+        for (index, batch) in batches.all().iter().enumerate() {
+            let start = self.instances.len() as u32;
+            if batch
+                .bounding_sphere
+                .is_some_and(|sphere| !frustum.intersects(sphere))
+            {
+                self.batches.push(false);
+                self.ranges.push((start, 0));
+                continue;
+            }
+            let mut any = false;
+            for instance in 0..batch.instances.len() {
+                let visible = keep(index, instance)
+                    && batch
+                        .bounds
+                        .get(instance)
+                        .is_none_or(|sphere| frustum.intersects(*sphere));
+                any |= visible;
+                self.instances.push(visible);
+            }
+            self.batches.push(any);
+            self.ranges.push((start, batch.instances.len() as u32));
         }
     }
 
@@ -314,6 +442,66 @@ mod tests {
             let world = matrix.transform_point3(local);
             assert!(world.distance(sphere.center) <= sphere.radius + 1e-4);
         }
+    }
+
+    #[test]
+    fn skinned_bounds_follow_the_joints() {
+        use crate::renderer::{SkinVertex, Vertex};
+        let vertex = |x: f32, y: f32| Vertex {
+            pos: [x, y, 0.0],
+            ..bytemuck::Zeroable::zeroed()
+        };
+        // Two bones: the lower half follows joint 0, the upper half joint 1, the middle
+        // both.
+        let data = MeshData {
+            vertices: vec![vertex(0.0, 0.0), vertex(0.0, 1.0), vertex(0.0, 2.0)],
+            indices: vec![0, 1, 2],
+            skin: Some(vec![
+                SkinVertex {
+                    joints: [0, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
+                },
+                SkinVertex {
+                    joints: [0, 1, 0, 0],
+                    weights: [u16::MAX / 2, u16::MAX / 2, 0, 0],
+                },
+                SkinVertex {
+                    joints: [1, 0, 0, 0],
+                    weights: [u16::MAX, 0, 0, 0],
+                },
+            ]),
+        };
+        let joints = joint_bounds(&data);
+        assert_eq!(joints.len(), 2);
+        assert_eq!(joints[0].unwrap().max.y, 1.0);
+        assert_eq!(joints[1].unwrap().min.y, 1.0);
+        // Joint 1 raises the top by 3 meters: the box reaches it, the bottom stays.
+        let palette = [
+            Mat4::IDENTITY,
+            Mat4::from_translation(Vec3::new(0.0, 3.0, 0.0)),
+        ];
+        let posed = skinned_bounds(&joints, &palette).unwrap();
+        assert!(posed.min.abs_diff_eq(Vec3::ZERO, 1e-6));
+        assert!(posed.max.abs_diff_eq(Vec3::new(0.0, 5.0, 0.0), 1e-6));
+    }
+
+    #[test]
+    fn frusta_that_do_not_meet_are_told_apart() {
+        let camera_view = camera();
+        let frustum = Frustum::from_view_proj(camera_view);
+        let corners = frustum_corners(camera_view);
+        // A light's face looking away from the camera's view, behind it.
+        let behind = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 5.0)
+            * Mat4::look_at_rh(Vec3::new(0.0, 1.0, 8.0), Vec3::new(0.0, 1.0, 9.0), Vec3::Y);
+        let behind_corners = frustum_corners(behind);
+        assert!(
+            frustum.excludes(&behind_corners) || Frustum::from_view_proj(behind).excludes(&corners)
+        );
+        // One looking into the view is kept.
+        let ahead = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 5.0)
+            * Mat4::look_at_rh(Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 1.0, -1.0), Vec3::Y);
+        assert!(!frustum.excludes(&frustum_corners(ahead)));
+        assert!(!Frustum::from_view_proj(ahead).excludes(&corners));
     }
 
     #[test]

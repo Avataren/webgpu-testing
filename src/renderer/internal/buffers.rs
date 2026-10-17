@@ -8,7 +8,8 @@ use wgpu::util::DeviceExt;
 use crate::renderer::internal::{
     environment::EnvironmentResources, OrderedBatch, RenderContext, ShadowResources,
 };
-use crate::renderer::lights::{LightsData, LightsUniform, ShadowsUniform};
+use crate::renderer::light_culling::{light_lists_size, INITIAL_POOL};
+use crate::renderer::lights::{LightsHeader, LocalLightRaw, ShadowsUniform, LOCAL_LIGHTS_OFFSET};
 use crate::renderer::material::Material;
 use crate::renderer::uniforms::CameraUniform;
 use crate::renderer::{batch::InstanceSource, MaterialData, ObjectData};
@@ -401,23 +402,56 @@ impl CameraBuffer {
     }
 }
 
+/// The lights group (group 2 of the lit passes): the lights and their cluster lists,
+/// shadows, environment, the ray-traced shadow mask and the light probes.
 pub(crate) struct LightsBuffer {
+    /// `LightsHeader`, then the local lights (see `lights.rs`); grows with them.
     pub(crate) buffer: wgpu::Buffer,
+    local_capacity: usize,
     pub(crate) shadow_buffer: wgpu::Buffer,
+    /// Which lights reach each cluster and world grid cell (`light_culling.rs`).
+    pub(crate) lists: wgpu::Buffer,
+    /// Light indices the lists' pool holds.
+    pub(crate) pool: u32,
     pub(crate) bind_group: wgpu::BindGroup,
     pub(crate) bind_layout: wgpu::BindGroupLayout,
-    last_lights: Option<LightsUniform>,
-    last_shadows: Option<ShadowsUniform>,
+    last_header: Option<LightsHeader>,
+    last_locals: Vec<LocalLightRaw>,
+    last_shadows: Option<Box<ShadowsUniform>>,
     /// The ray-traced shadow mask (binding 11), or a white 1x1 texture without one.
     rt_shadow_mask: Option<wgpu::TextureView>,
     _fallback_mask: wgpu::Texture,
     fallback_mask_view: wgpu::TextureView,
-    /// Directional lights whose shadows the main pass reads from the mask (`counts.w`).
+    /// Lights whose shadows the main pass reads from the mask (`counts.w`).
     rt_shadow_bits: u32,
     /// The light probe grid (bindings 12-14): its uniform and current atlases.
     probe_buffer: wgpu::Buffer,
     probe_irradiance: wgpu::TextureView,
     probe_distance: wgpu::TextureView,
+}
+
+/// Local lights the lights buffer has room for at first.
+const INITIAL_LOCAL_LIGHTS: usize = 64;
+
+fn create_lights_buffer(device: &wgpu::Device, local_capacity: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("LightsBuffer"),
+        size: LOCAL_LIGHTS_OFFSET
+            + (local_capacity.max(1) * mem::size_of::<LocalLightRaw>()) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+fn create_light_lists(device: &wgpu::Device, pool: u32) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("LightListsBuffer"),
+        size: light_lists_size(pool),
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
 }
 
 impl LightsBuffer {
@@ -438,6 +472,16 @@ impl LightsBuffer {
             },
             count: None,
         };
+        let depth_texture = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension,
+                multisampled: false,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("LightsBindLayout"),
             entries: &[
@@ -447,8 +491,10 @@ impl LightsBuffer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
-                        min_binding_size: Some(
-                            NonZeroU64::new(mem::size_of::<LightsUniform>() as u64).unwrap(),
+                        // The header and room for one local light (the shader's runtime
+                        // array counts as one element).
+                        min_binding_size: NonZeroU64::new(
+                            LOCAL_LIGHTS_OFFSET + mem::size_of::<LocalLightRaw>() as u64,
                         ),
                     },
                     count: None,
@@ -465,54 +511,14 @@ impl LightsBuffer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
+                depth_texture(2, wgpu::TextureViewDimension::D2Array),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
+                depth_texture(4, wgpu::TextureViewDimension::D2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 8,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -561,15 +567,22 @@ impl LightsBuffer {
                 },
                 probe_texture(13),
                 probe_texture(14),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 15,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
-        let initial = LightsUniform::zeroed();
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("LightsBuffer"),
-            contents: bytemuck::bytes_of(&initial),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        });
+        let local_capacity = INITIAL_LOCAL_LIGHTS;
+        let buffer = create_lights_buffer(device, local_capacity);
+        queue.write_buffer(&buffer, 0, bytemuck::bytes_of(&LightsHeader::zeroed()));
 
         let shadow_initial = ShadowsUniform::zeroed();
         let shadow_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -577,6 +590,9 @@ impl LightsBuffer {
             contents: bytemuck::bytes_of(&shadow_initial),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+
+        let pool = INITIAL_POOL;
+        let lists = create_light_lists(device, pool);
 
         // Every light reaches every pixel: what the main pass reads when no frame traced
         // shadows.
@@ -607,8 +623,7 @@ impl LightsBuffer {
         let bind_group = Self::create_bind_group(
             device,
             &layout,
-            &buffer,
-            &shadow_buffer,
+            [&buffer, &shadow_buffer, &lists],
             shadows,
             environment,
             &fallback_mask_view,
@@ -618,10 +633,14 @@ impl LightsBuffer {
 
         Self {
             buffer,
+            local_capacity,
             shadow_buffer,
+            lists,
+            pool,
             bind_group,
             bind_layout: layout,
-            last_lights: None,
+            last_header: None,
+            last_locals: Vec::new(),
             last_shadows: None,
             rt_shadow_mask: None,
             _fallback_mask: fallback_mask,
@@ -633,18 +652,19 @@ impl LightsBuffer {
         }
     }
 
+    /// `buffers`: the lights, the shadows uniform and the light lists.
     #[allow(clippy::too_many_arguments)]
     fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        lights_buffer: &wgpu::Buffer,
-        shadow_buffer: &wgpu::Buffer,
+        buffers: [&wgpu::Buffer; 3],
         shadows: &ShadowResources,
         environment: &EnvironmentResources,
         rt_shadow_mask: &wgpu::TextureView,
         probe_buffers: [&wgpu::Buffer; 2],
         probe_views: [&wgpu::TextureView; 2],
     ) -> wgpu::BindGroup {
+        let [lights_buffer, shadow_buffer, lists] = buffers;
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("LightsBindGroup"),
             layout,
@@ -667,19 +687,7 @@ impl LightsBuffer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::TextureView(shadows.spot_array_view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(shadows.sampler()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(shadows.point_array_view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(shadows.sampler()),
+                    resource: wgpu::BindingResource::TextureView(shadows.atlas_view()),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -709,40 +717,77 @@ impl LightsBuffer {
                     binding: 14,
                     resource: wgpu::BindingResource::TextureView(probe_views[1]),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: lists.as_entire_binding(),
+                },
             ],
         })
     }
 
-    pub(crate) fn update(&mut self, queue: &wgpu::Queue, lights: &LightsData) {
-        let data = LightsUniform::from_data(lights);
-        let should_update_lights = self
-            .last_lights
-            .as_ref()
-            .map(|last| last != &data)
-            .unwrap_or(true);
-
-        if should_update_lights {
-            queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&data));
-            self.last_lights = Some(data);
+    /// Upload the frame's lights: the header, the local lights and the shadows uniform
+    /// (each only when it changed). Grows the lights buffer when the lights outgrow it;
+    /// returns whether it did (the bind groups that hold it were rebuilt here, the light
+    /// culling pass rebuilds its own).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        header: &LightsHeader,
+        locals: &[LocalLightRaw],
+        shadow_data: &ShadowsUniform,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+    ) -> bool {
+        let mut grown = false;
+        if locals.len() > self.local_capacity {
+            self.local_capacity = locals.len().next_power_of_two();
+            self.buffer = create_lights_buffer(device, self.local_capacity);
+            self.last_header = None;
+            self.last_locals.clear();
+            self.rebuild_bind_group(device, shadows, environment);
+            grown = true;
+        }
+        if self.last_header.as_ref() != Some(header) {
+            queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(header));
+            self.last_header = Some(*header);
             // The upload wrote counts.w (the ray-traced shadow bits) as 0.
             self.rt_shadow_bits = 0;
         }
-
-        let shadow_data = ShadowsUniform::from_data(lights);
-        let should_update_shadows = self
-            .last_shadows
-            .as_ref()
-            .map(|last| last != &shadow_data)
-            .unwrap_or(true);
-
-        if should_update_shadows {
-            queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(&shadow_data));
-            self.last_shadows = Some(shadow_data);
+        if self.last_locals != locals && !locals.is_empty() {
+            queue.write_buffer(
+                &self.buffer,
+                LOCAL_LIGHTS_OFFSET,
+                bytemuck::cast_slice(locals),
+            );
         }
+        if self.last_locals != locals {
+            self.last_locals.clear();
+            self.last_locals.extend_from_slice(locals);
+        }
+        if self.last_shadows.as_deref() != Some(shadow_data) {
+            queue.write_buffer(&self.shadow_buffer, 0, bytemuck::bytes_of(shadow_data));
+            self.last_shadows = Some(Box::new(*shadow_data));
+        }
+        grown
     }
 
-    /// Which lights (bits 0-3 directional, 4-7 point, 8-11 spot) take their shadow from the
-    /// ray-traced mask this frame (`lights.counts.w`).
+    /// Make the light lists' pool hold `pool` light indices.
+    pub(crate) fn resize_lists(
+        &mut self,
+        device: &wgpu::Device,
+        pool: u32,
+        shadows: &ShadowResources,
+        environment: &EnvironmentResources,
+    ) {
+        self.pool = pool;
+        self.lists = create_light_lists(device, pool);
+        self.rebuild_bind_group(device, shadows, environment);
+    }
+
+    /// Which lights (bits 0-3 directional, 4-31 point and spot lights given a bit) take
+    /// their shadow from the ray-traced mask this frame (`lights.counts.w`).
     pub(crate) fn set_rt_shadow_bits(&mut self, queue: &wgpu::Queue, bits: u32) {
         if bits != self.rt_shadow_bits {
             queue.write_buffer(&self.buffer, 12, bytemuck::bytes_of(&bits));
@@ -771,8 +816,7 @@ impl LightsBuffer {
         self.bind_group = Self::create_bind_group(
             device,
             &self.bind_layout,
-            &self.buffer,
-            &self.shadow_buffer,
+            [&self.buffer, &self.shadow_buffer, &self.lists],
             shadows,
             environment,
             self.rt_shadow_mask

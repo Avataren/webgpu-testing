@@ -192,6 +192,7 @@ fn setup_bloom_scene(ctx: &mut StartupContext<'_>) {
                     color: *light_color,
                     intensity: 24.0,
                     range: 9.0,
+                    ..PointLight::default()
                 },
                 CanCastShadow(false),
             ));

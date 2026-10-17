@@ -150,6 +150,7 @@ fn spawn_pbr_lighting(scene: &mut Scene) {
             color: Vec3::new(0.9, 0.95, 1.0),
             intensity: 75.0,
             range: 22.0,
+            ..PointLight::default()
         },
         CanCastShadow(false),
     ));

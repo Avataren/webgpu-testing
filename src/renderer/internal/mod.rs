@@ -15,6 +15,8 @@ pub mod environment;
 pub mod pick;
 pub mod pipeline;
 pub(crate) mod shader_material;
+pub(crate) mod shadow_atlas;
+pub(crate) mod shadow_casters;
 pub mod shadows;
 
 pub(crate) use batches::{OrderedBatch, PreparedBatches};

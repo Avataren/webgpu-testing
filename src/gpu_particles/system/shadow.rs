@@ -7,10 +7,19 @@ use crate::renderer::{PipelineBuilder, ShaderBuilder, Vertex};
 
 pub(crate) struct ParticleShadowResources {
     pipeline: wgpu::RenderPipeline,
+    /// One view projection per shadow view drawn, `stride` bytes apart, bound at a dynamic
+    /// offset: every view of a frame needs its own, since all the frame's writes land
+    /// before its passes run.
     uniform_buffer: wgpu::Buffer,
+    stride: u32,
+    next_slot: u32,
     _uniform_bind_group_layout: wgpu::BindGroupLayout,
     uniform_bind_group: wgpu::BindGroup,
 }
+
+/// View projection slots, more than the shadow views a frame renders (taken in turn, so a
+/// frame's views never share one).
+const VIEW_SLOTS: u32 = 512;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -36,16 +45,22 @@ impl ParticleShadowResources {
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                            ParticleShadowUniform,
+                        >() as u64),
                     },
                     count: None,
                 }],
             });
 
+        let uniform_size = std::mem::size_of::<ParticleShadowUniform>() as u64;
+        let stride = (device.limits().min_uniform_buffer_offset_alignment as u64)
+            .max(uniform_size)
+            .next_multiple_of(uniform_size) as u32;
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ParticleShadowUniformBuffer"),
-            size: std::mem::size_of::<ParticleShadowUniform>() as u64,
+            size: u64::from(stride) * u64::from(VIEW_SLOTS),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -55,7 +70,11 @@ impl ParticleShadowResources {
             layout: &uniform_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &uniform_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(uniform_size),
+                }),
             }],
         });
 
@@ -84,16 +103,22 @@ impl ParticleShadowResources {
         Self {
             pipeline,
             uniform_buffer,
+            stride,
+            next_slot: 0,
             _uniform_bind_group_layout: uniform_bind_group_layout,
             uniform_bind_group,
         }
     }
 
-    pub(crate) fn update_view_proj(&self, queue: &wgpu::Queue, matrix: Mat4) {
+    /// Write `matrix` into the next slot; returns the dynamic offset to bind it at.
+    pub(crate) fn update_view_proj(&mut self, queue: &wgpu::Queue, matrix: Mat4) -> u32 {
         let uniform = ParticleShadowUniform {
             view_proj: matrix.to_cols_array_2d(),
         };
-        queue.write_buffer(&self.uniform_buffer, 0, bytes_of(&uniform));
+        let offset = self.next_slot * self.stride;
+        self.next_slot = (self.next_slot + 1) % VIEW_SLOTS;
+        queue.write_buffer(&self.uniform_buffer, u64::from(offset), bytes_of(&uniform));
+        offset
     }
 
     pub(crate) fn pipeline(&self) -> &wgpu::RenderPipeline {

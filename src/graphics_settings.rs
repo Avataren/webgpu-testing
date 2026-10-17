@@ -1,5 +1,5 @@
 //! Graphics settings the player chooses: display, frame pacing, anti-aliasing, upscaling,
-//! ray-traced effects and the FPS readout. They belong to the player and the game, not
+//! shadow budget, ray-traced effects and the FPS readout. They belong to the player and the game, not
 //! to a scene: they are applied over whatever the scene's post-process volumes ask for
 //! (the player's choice always wins) and saved per user and project next to the save
 //! data (`<user data dir>/wgpu-cube/settings/<project>/graphics.txt`, `localStorage` on
@@ -69,6 +69,14 @@ pub struct GraphicsSettings {
     pub upscaler: Upscaler,
     /// FSR's sharpening, 0 (off) to 1.
     pub sharpness: f32,
+    /// The point and spot lights' shadow atlas: the most texels across it grows to (a
+    /// power of two from 1024 to 8192). Bigger holds more shadowed lights at higher
+    /// resolution; each texel costs 8 bytes (the shadow maps and their static casters).
+    pub shadow_atlas_size: u32,
+    /// Point and spot light shadow views rebuilt per frame at most. Fewer cost less GPU
+    /// and CPU time, and the moving shadows of lower-ranked lights then trail by a frame or
+    /// more.
+    pub shadow_updates_per_frame: u32,
     /// Hardware ray tracing at all. Off, every effect takes its raster version (shadow
     /// maps, screen-space reflections and ambient occlusion, see-through glass, no traced
     /// global illumination or path tracing) and light probes show their bakes, as on a
@@ -108,6 +116,8 @@ impl Default for GraphicsSettings {
             render_scale: 1.0,
             upscaler: Upscaler::Fsr,
             sharpness: 0.5,
+            shadow_atlas_size: Self::DEFAULT_SHADOW_ATLAS_SIZE,
+            shadow_updates_per_frame: Self::DEFAULT_SHADOW_UPDATES_PER_FRAME,
             ray_tracing: true,
             ray_traced_shadows: true,
             reflections: EffectQuality::RayTraced,
@@ -145,6 +155,15 @@ impl GraphicsSettings {
         }
         serde_json::from_value(merged).map_err(|err| format!("invalid graphics settings: {err}"))
     }
+
+    /// The shadow atlas's default size: 8192 natively, 4096 on the web.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const DEFAULT_SHADOW_ATLAS_SIZE: u32 = 8192;
+    #[cfg(target_arch = "wasm32")]
+    pub const DEFAULT_SHADOW_ATLAS_SIZE: u32 = 4096;
+    pub const DEFAULT_SHADOW_UPDATES_PER_FRAME: u32 = 48;
+    /// Shadow atlas sizes offered.
+    pub const SHADOW_ATLAS_SIZES: [u32; 4] = [1024, 2048, 4096, 8192];
 
     /// Render scales offered as presets (FSR's quality modes).
     pub const RENDER_SCALE_PRESETS: [(&'static str, f32); 5] = [
@@ -227,6 +246,8 @@ impl GraphicsSettings {
             .window_size
             .filter(|size| size[0] >= 320 && size[1] >= 200)
             .map(|size| [size[0].min(16384), size[1].min(16384)]);
+        self.shadow_atlas_size = self.shadow_atlas_size.clamp(1024, 8192).next_power_of_two();
+        self.shadow_updates_per_frame = self.shadow_updates_per_frame.clamp(1, 1024);
         self
     }
 }

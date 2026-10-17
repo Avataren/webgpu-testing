@@ -166,8 +166,12 @@ fn fs_probe_trace(in : VertexOutput) -> @location(0) vec4<f32> {
             radiance += material.base_color;
         } else {
             let diffuse_color = material.base_color * (1.0 - material.metallic);
-            // Direct light as a diffuse surface (the probe stores no view direction).
-            radiance += rt_direct_lighting(position, n, v, diffuse_color, 0.0, 1.0);
+            // Direct light as a diffuse surface (the probe stores no view direction); with
+            // many lights near the hit one of them, as the probes average many updates.
+            // (The update's random rotation varies the pick from update to update.)
+            let turn = bitcast<u32>(probe_update.rotation[0].x) ^ bitcast<u32>(probe_update.rotation[1].y);
+            let seed = rt_hash(texel.x + rt_hash(texel.y + rt_hash(turn + event)));
+            radiance += rt_sampled_direct_lighting(position, n, v, diffuse_color, 0.0, 1.0, rt_random(seed));
             // Further bounces: the probes' own light there (any volume's), last
             // update's; outside every volume, the environment's.
             let probes = light_probe_irradiance_at(position, n, v);

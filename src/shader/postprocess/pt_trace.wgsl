@@ -74,7 +74,10 @@ const PT_DIFFUSE_SPREAD : f32 = 0.3;
 // Distance through a transmissive medium over which its colour tints light fully
 // (as RT_REFRACTION_ABSORPTION_DISTANCE in rt_reflections.wgsl).
 const PT_ABSORPTION_DISTANCE : f32 = 0.5;
-const PT_MAX_LIGHTS : u32 = 12u;
+// A vertex with at most this many point and spot lights near it gets direct light from
+// every one; with more, from PT_LOCAL_PICKS of them, picked by what they would add.
+const PT_EXACT_LIGHTS : u32 = 8u;
+const PT_LOCAL_PICKS : u32 = 4u;
 
 // ---------------------------------------------------------------------------------------
 // Random numbers
@@ -164,10 +167,19 @@ fn pt_smith_g1(n_dot_x : f32, alpha : f32) -> f32 {
 // Lights
 // ---------------------------------------------------------------------------------------
 
-fn pt_light_count() -> u32 {
-    return min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS)
-        + min(lights.counts.y, MAX_POINT_LIGHTS)
-        + min(lights.counts.z, MAX_SPOT_LIGHTS);
+// The lights a point may get light from: the directional lights, then the point and spot
+// lights of its world grid cell (light_grid_cell), as one list.
+struct PtLights {
+    directional : u32,
+    locals : LightRange,
+};
+
+fn pt_lights_at(position : vec3<f32>) -> PtLights {
+    return PtLights(min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS), light_grid_cell(position));
+}
+
+fn pt_light_total(here : PtLights) -> u32 {
+    return here.directional + here.locals.count;
 }
 
 struct PtLightSample {
@@ -180,46 +192,26 @@ struct PtLightSample {
     angular_radius : f32,
 };
 
-// A point on light `index` (directional lights first, then point, then spot lights, as
-// the lights buffer counts them) seen from `position`: on the sun's disc or the lamp's
-// sphere, by `u`. Attenuated as the main pass attenuates.
-fn pt_light_sample(index : u32, position : vec3<f32>, u : vec2<f32>) -> PtLightSample {
+// A point on the sun's disc, from a directional light.
+fn pt_directional_sample(light : DirectionalLight, u : vec2<f32>) -> PtLightSample {
     var out : PtLightSample;
-    let dir_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-    if index < dir_count {
-        let light = lights.directionals[index];
-        out.center = normalize(-light.direction.xyz);
-        out.angular_radius = pt.params.z;
-        out.direction = pt_cone_direction(out.center, pt.params.z, u);
-        out.distance = PT_MAX_DISTANCE;
-        out.radiance = light.color_intensity.xyz * light.color_intensity.w;
-        return out;
-    }
+    out.center = normalize(-light.direction.xyz);
+    out.angular_radius = pt.params.z;
+    out.direction = pt_cone_direction(out.center, pt.params.z, u);
+    out.distance = PT_MAX_DISTANCE;
+    out.radiance = light.color_intensity.xyz * light.color_intensity.w;
+    return out;
+}
 
-    var center : vec3<f32>;
-    var range : f32;
-    var color : vec4<f32>;
-    var spot = false;
-    var spot_direction = vec3<f32>(0.0);
-    var cone = vec2<f32>(0.0);
-    if index < dir_count + point_count {
-        let light = lights.points[index - dir_count];
-        center = light.position_range.xyz;
-        range = light.position_range.w;
-        color = light.color_intensity;
-    } else {
-        let light = lights.spots[index - dir_count - point_count];
-        center = light.position_range.xyz;
-        range = light.position_range.w;
-        color = light.color_intensity;
-        spot = true;
-        spot_direction = normalize(light.direction.xyz);
-        cone = light.cone_params.xy;
-    }
+// A point on a point or spot light's sphere seen from `position`: on the disc of the
+// sphere that faces it, by `u`. Attenuated as the main pass attenuates.
+fn pt_local_sample(light : LocalLight, position : vec3<f32>, u : vec2<f32>) -> PtLightSample {
+    var out : PtLightSample;
+    let center = light.position_range.xyz;
+    let range = light.position_range.w;
     let to_center = center - position;
     let center_distance = length(to_center);
-    if center_distance < 1e-4 || (range > 0.0 && center_distance > range) {
+    if center_distance < 1e-4 || center_distance > range {
         return out;
     }
     let axis = to_center / center_distance;
@@ -233,19 +225,17 @@ fn pt_light_sample(index : u32, position : vec3<f32>, u : vec2<f32>) -> PtLightS
     let to_light = on_light - position;
     out.distance = length(to_light);
     out.direction = to_light / max(out.distance, 1e-6);
-
-    var attenuation = 1.0 / max(center_distance * center_distance, 1e-4);
-    if range > 0.0 {
-        let range_factor = clamp(1.0 - center_distance / range, 0.0, 1.0);
-        attenuation = attenuation * range_factor * range_factor;
-    }
-    if spot {
-        let cos_theta = dot(spot_direction, -axis);
-        let factor = clamp((cos_theta - cone.y) / max(cone.x - cone.y, 1e-4), 0.0, 1.0);
-        attenuation = attenuation * factor * factor;
-    }
-    out.radiance = color.xyz * color.w * attenuation;
+    out.radiance = light.color_intensity.xyz * light.color_intensity.w
+        * local_light_arrival(light, position).attenuation;
     return out;
+}
+
+// Light `index` of `here` (directional lights first) seen from `position`.
+fn pt_light_sample(here : PtLights, index : u32, position : vec3<f32>, u : vec2<f32>) -> PtLightSample {
+    if index < here.directional {
+        return pt_directional_sample(lights.directionals[index], u);
+    }
+    return pt_local_sample(light_in_range(here.locals, index - here.directional), position, u);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -351,9 +341,50 @@ fn pt_visible(origin : vec3<f32>, direction : vec3<f32>, distance : f32) -> bool
     return rayQueryGetCommittedIntersection(&query).kind == RAY_QUERY_INTERSECTION_NONE;
 }
 
-// What one light, picked among all in proportion to what each would add unshadowed (a
-// sample at its centre), adds at a path vertex behind a shadow ray, divided by the
-// chance of picking it.
+// One of the lights `first .. first + count` of `here`, picked in proportion to what each
+// would add unshadowed (a sample at its centre), and the chance it was picked (0: none
+// adds anything). Two passes over the candidates instead of a list of their weights, so
+// any number of lights costs no registers.
+struct PtLightPick {
+    index : u32,
+    probability : f32,
+};
+
+fn pt_pick_light(
+    here : PtLights,
+    first : u32,
+    count : u32,
+    position : vec3<f32>,
+    n : vec3<f32>,
+    v : vec3<f32>,
+    diffuse_color : vec3<f32>,
+    f0 : vec3<f32>,
+    roughness : f32,
+) -> PtLightPick {
+    var total = 0.0;
+    for (var i = first; i < first + count; i = i + 1u) {
+        let s = pt_light_sample(here, i, position, vec2<f32>(0.5));
+        let brdf = pt_brdf(n, v, s.direction, f0, roughness);
+        total += pt_luminance((brdf.diffuse * diffuse_color + brdf.specular) * s.radiance);
+    }
+    if total <= 0.0 {
+        return PtLightPick(first, 0.0);
+    }
+    var pick = pt_rand() * total;
+    for (var i = first; i < first + count; i = i + 1u) {
+        let s = pt_light_sample(here, i, position, vec2<f32>(0.5));
+        let brdf = pt_brdf(n, v, s.direction, f0, roughness);
+        let w = pt_luminance((brdf.diffuse * diffuse_color + brdf.specular) * s.radiance);
+        pick -= w;
+        if pick <= 0.0 && w > 0.0 {
+            return PtLightPick(i, w / total);
+        }
+    }
+    return PtLightPick(first, 0.0);
+}
+
+// What one light, picked among all near a path vertex in proportion to what each would
+// add unshadowed, adds there behind a shadow ray, divided by the chance of picking it.
 fn pt_sample_one_light(
     position : vec3<f32>,
     n : vec3<f32>,
@@ -363,36 +394,12 @@ fn pt_sample_one_light(
     roughness : f32,
     bias : f32,
 ) -> vec3<f32> {
-    let count = min(pt_light_count(), PT_MAX_LIGHTS);
-    if count == 0u {
+    let here = pt_lights_at(position);
+    let picked = pt_pick_light(here, 0u, pt_light_total(here), position, n, v, diffuse_color, f0, roughness);
+    if picked.probability <= 0.0 {
         return vec3<f32>(0.0);
     }
-    var weights : array<f32, PT_MAX_LIGHTS>;
-    var total = 0.0;
-    for (var i = 0u; i < count; i = i + 1u) {
-        let s = pt_light_sample(i, position, vec2<f32>(0.5));
-        let brdf = pt_brdf(n, v, s.direction, f0, roughness);
-        let w = pt_luminance((brdf.diffuse * diffuse_color + brdf.specular) * s.radiance);
-        weights[i] = w;
-        total += w;
-    }
-    if total <= 0.0 {
-        return vec3<f32>(0.0);
-    }
-    var pick = pt_rand() * total;
-    var chosen = count - 1u;
-    for (var i = 0u; i < count; i = i + 1u) {
-        pick -= weights[i];
-        if pick <= 0.0 && weights[i] > 0.0 {
-            chosen = i;
-            break;
-        }
-    }
-    let probability = weights[chosen] / total;
-    if probability <= 0.0 {
-        return vec3<f32>(0.0);
-    }
-    let s = pt_light_sample(chosen, position, pt_rand2());
+    let s = pt_light_sample(here, picked.index, position, pt_rand2());
     let brdf = pt_brdf(n, v, s.direction, f0, roughness);
     let light = (brdf.diffuse * diffuse_color + brdf.specular) * s.radiance;
     if all(light <= vec3<f32>(0.0)) {
@@ -401,7 +408,7 @@ fn pt_sample_one_light(
     if !pt_visible(position + n * bias, s.direction, s.distance - bias) {
         return vec3<f32>(0.0);
     }
-    return light / probability;
+    return light / picked.probability;
 }
 
 // ---------------------------------------------------------------------------------------
@@ -740,12 +747,29 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
     let offset_diffuse = vec2<u32>(pt_hash(pixel_seed ^ 0x68bc21ebu), pt_hash(pixel_seed ^ 0x02e5be93u));
     let offset_specular = vec2<u32>(pt_hash(pixel_seed ^ 0x967a889bu), pt_hash(pixel_seed ^ 0x2c1b3c6du));
 
-    // Direct light: every light, each behind one shadow ray to a point on it.
+    // Direct light: every directional light and, when few are near, every point and spot
+    // light, each behind one shadow ray to a point on it; with many near, PT_LOCAL_PICKS
+    // of those, picked by what they would add.
     var diffuse = vec3<f32>(0.0);
     var specular = vec3<f32>(0.0);
-    let light_count = min(pt_light_count(), PT_MAX_LIGHTS);
-    for (var i = 0u; i < light_count; i = i + 1u) {
-        let s = pt_light_sample(i, position, pt_rand2());
+    let here = pt_lights_at(position);
+    let all_lights = here.locals.count <= PT_EXACT_LIGHTS;
+    let exact = select(here.directional, pt_light_total(here), all_lights);
+    let picks = select(PT_LOCAL_PICKS, 0u, all_lights);
+    for (var k = 0u; k < exact + picks; k = k + 1u) {
+        var index = k;
+        var weight = 1.0;
+        if k >= exact {
+            let picked = pt_pick_light(
+                here, here.directional, here.locals.count, position, n, v, diffuse_color, f0, roughness
+            );
+            if picked.probability <= 0.0 {
+                continue;
+            }
+            index = picked.index;
+            weight = 1.0 / (f32(PT_LOCAL_PICKS) * picked.probability);
+        }
+        let s = pt_light_sample(here, index, position, pt_rand2());
         if all(s.radiance <= vec3<f32>(0.0)) || dot(ng, s.direction) <= 0.0 {
             continue;
         }
@@ -756,9 +780,9 @@ fn fs_pt_trace(in : VertexOutput) -> PtTraceOutput {
         if !pt_visible(origin, s.direction, s.distance - bias) {
             continue;
         }
-        diffuse += brdf.diffuse * s.radiance;
+        diffuse += brdf.diffuse * s.radiance * weight;
         let highlight = pt_area_specular(n, v, s.center, s.angular_radius, f0, roughness);
-        specular += highlight * s.radiance / specular_albedo;
+        specular += highlight * s.radiance * weight / specular_albedo;
     }
 
     // Indirect light: one diffuse and one specular path per sample.

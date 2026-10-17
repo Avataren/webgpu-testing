@@ -630,7 +630,8 @@ impl GpuParticleSystem {
         }
 
         let resources = self.shadow_resources.as_mut().unwrap();
-        resources.update_view_proj(ctx.renderer.get_queue(), view_proj);
+        let offset = resources.update_view_proj(ctx.renderer.get_queue(), view_proj);
+        let viewport = ctx.shadow_viewport();
 
         let mut pass = ctx.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ParticleShadowPass"),
@@ -648,8 +649,13 @@ impl GpuParticleSystem {
             multiview_mask: None,
         });
 
+        // A point or spot light's face is a tile of the shadow atlas.
+        if let Some([x, y, width, height]) = viewport {
+            pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+            pass.set_scissor_rect(x, y, width, height);
+        }
         pass.set_pipeline(resources.pipeline());
-        pass.set_bind_group(0, resources.uniform_bind_group(), &[]);
+        pass.set_bind_group(0, resources.uniform_bind_group(), &[offset]);
         pass.set_bind_group(1, &self.render_bind_group, &[]);
         pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
         pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());

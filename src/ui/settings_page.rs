@@ -332,6 +332,32 @@ fn quality_rows(
         egui::Slider::new(&mut settings.sharpness, 0.0..=1.0).fixed_decimals(2),
     );
     ui.end_row();
+
+    // How many point and spot light shadows fit, and how sharp: the atlas's size (two
+    // depth atlases of 8 bytes a texel together).
+    let atlas_label = |size: u32| format!("{size} ({} MiB)", (u64::from(size).pow(2) * 8) >> 20);
+    ui.label("Shadow atlas");
+    egui::ComboBox::from_id_salt("engine_settings_shadow_atlas")
+        .selected_text(atlas_label(settings.shadow_atlas_size))
+        .show_ui(ui, |ui| {
+            for size in GraphicsSettings::SHADOW_ATLAS_SIZES {
+                ui.selectable_value(&mut settings.shadow_atlas_size, size, atlas_label(size));
+            }
+        })
+        .response
+        .on_hover_text("Room for point and spot light shadows: more lights, sharper shadows");
+    ui.end_row();
+
+    ui.label("Shadow updates per frame");
+    ui.add(egui::Slider::new(
+        &mut settings.shadow_updates_per_frame,
+        8..=192,
+    ))
+    .on_hover_text(
+        "Point and spot light shadow views redrawn each frame at most; moving shadows of \
+             lower-ranked lights trail when the budget runs out",
+    );
+    ui.end_row();
 }
 
 fn ray_tracing_rows(

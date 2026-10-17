@@ -108,12 +108,15 @@ struct PtCaustics {
     /// total: pairs get photons in proportion to the light that reaches the caster.
     pair_starts: [[u32; 4]; PAIR_START_VECTORS],
     counts: [u32; 4],
+    /// The caustic lights: indices into the directional lights, then (past their count)
+    /// the local lights.
+    lights: [[u32; 4]; MAX_CAUSTIC_LIGHTS / 4],
+    light_count: [u32; 4],
 }
 
-const MAX_LIGHTS: usize = crate::renderer::lights::MAX_DIRECTIONAL_LIGHTS
-    + crate::renderer::lights::MAX_POINT_LIGHTS
-    + crate::renderer::lights::MAX_SPOT_LIGHTS;
-const MAX_PAIRS: usize = MAX_LIGHTS * MAX_CAUSTIC_CASTERS;
+/// Lights that shine caustic photons: those bringing the most light to the casters.
+const MAX_CAUSTIC_LIGHTS: usize = 12;
+const MAX_PAIRS: usize = MAX_CAUSTIC_LIGHTS * MAX_CAUSTIC_CASTERS;
 const PAIR_START_VECTORS: usize = (MAX_PAIRS + 1).div_ceil(4);
 
 /// What focuses light this frame and the lights that shine on it.
@@ -125,10 +128,11 @@ pub(crate) struct CausticSources<'a> {
 }
 
 impl CausticSources<'_> {
-    /// Light power reaching each caster's bounding sphere from each light, unshadowed,
-    /// in the lights buffer's order (directional, point, spot) times the casters.
-    fn pair_flux(&self) -> Vec<f32> {
-        use crate::renderer::lights::{MAX_DIRECTIONAL_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
+    /// The caustic lights (indices into the directional lights, then the local lights)
+    /// and the light power reaching each caster's bounding sphere from each of them,
+    /// unshadowed, light by light. Up to [`MAX_CAUSTIC_LIGHTS`] lights: those whose light
+    /// reaches the casters most.
+    fn pair_flux(&self) -> (Vec<u32>, Vec<f32>) {
         let casters = &self.casters[..self.casters.len().min(MAX_CAUSTIC_CASTERS)];
         let luminance =
             |c: [f32; 4]| (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]).max(0.0) * c[3].max(0.0);
@@ -161,48 +165,49 @@ impl CausticSources<'_> {
                 let falloff = (1.0 - (distance - radius).max(0.0) / range).clamp(0.0, 1.0);
                 flux *= falloff * falloff;
             }
-            if let Some((direction, cone_params)) = cone {
+            if let Some((direction, params)) = cone {
                 let axis = Vec3::new(direction[0], direction[1], direction[2]).normalize_or_zero();
                 let angle = axis.dot(to / distance.max(1e-6)).clamp(-1.0, 1.0).acos();
                 let nearest = (angle - half_angle).max(0.0).cos();
-                let (inner, outer) = (cone_params[0], cone_params[1]);
+                let (inner, outer) = (params[0], direction[3]);
                 let factor = ((nearest - outer) / (inner - outer).max(1e-4)).clamp(0.0, 1.0);
                 flux *= factor * factor;
             }
             flux
         };
-        let mut flux = Vec::new();
-        for light in self
-            .lights
-            .directional_lights()
-            .iter()
-            .take(MAX_DIRECTIONAL_LIGHTS)
-        {
+        let mut per_light: Vec<(u32, Vec<f32>)> = Vec::new();
+        let directional = self.lights.directional_lights();
+        for (index, light) in directional.iter().enumerate() {
             let irradiance = luminance(light.color_intensity);
-            flux.extend(
+            per_light.push((
+                index as u32,
                 casters
                     .iter()
-                    .map(|sphere| irradiance * std::f32::consts::PI * sphere[3] * sphere[3]),
-            );
+                    .map(|sphere| irradiance * std::f32::consts::PI * sphere[3] * sphere[3])
+                    .collect(),
+            ));
         }
-        for light in self.lights.point_lights().iter().take(MAX_POINT_LIGHTS) {
-            let power = luminance(light.color_intensity);
-            flux.extend(
+        for (index, light) in self.lights.local_lights().iter().enumerate() {
+            let raw = crate::renderer::lights::LocalLightRaw::new(light, None, None);
+            let power = luminance(raw.color_intensity);
+            let cone = light.cone.is_some().then_some((raw.direction, raw.params));
+            per_light.push((
+                (directional.len() + index) as u32,
                 casters
                     .iter()
-                    .map(|sphere| lamp(light.position_range, power, *sphere, None)),
-            );
+                    .map(|sphere| lamp(raw.position_range, power, *sphere, cone))
+                    .collect(),
+            ));
         }
-        for light in self.lights.spot_lights().iter().take(MAX_SPOT_LIGHTS) {
-            let power = luminance(light.color_intensity);
-            let cone = Some((light.direction, light.cone_params));
-            flux.extend(
-                casters
-                    .iter()
-                    .map(|sphere| lamp(light.position_range, power, *sphere, cone)),
-            );
+        if per_light.len() > MAX_CAUSTIC_LIGHTS {
+            let total = |flux: &[f32]| flux.iter().sum::<f32>();
+            per_light.sort_by(|a, b| total(&b.1).total_cmp(&total(&a.1)));
+            per_light.truncate(MAX_CAUSTIC_LIGHTS);
+            per_light.sort_by_key(|(index, _)| *index);
         }
-        flux
+        let lights = per_light.iter().map(|(index, _)| *index).collect();
+        let flux = per_light.into_iter().flat_map(|(_, flux)| flux).collect();
+        (lights, flux)
     }
 }
 
@@ -1319,7 +1324,7 @@ impl PathTracingStage {
         self.write_uniform(queue, &frame, valid);
         // Caustic photons: shared evenly between every light and every caster.
         let casters = frame.caustics.casters.len().min(MAX_CAUSTIC_CASTERS) as u32;
-        let flux = frame.caustics.pair_flux();
+        let (caustic_lights, flux) = frame.caustics.pair_flux();
         let pairs = flux.len() as u32;
         let photon_grid = if !gi && frame.settings.caustics && casters > 0 && pairs > 0 {
             let width = (frame.settings.caustic_photons as f32)
@@ -1333,7 +1338,12 @@ impl PathTracingStage {
                     casters: [[0.0; 4]; MAX_CAUSTIC_CASTERS],
                     pair_starts: [[0; 4]; PAIR_START_VECTORS],
                     counts: [casters, pairs, photons, width],
+                    lights: [[0; 4]; MAX_CAUSTIC_LIGHTS / 4],
+                    light_count: [caustic_lights.len() as u32, 0, 0, 0],
                 };
+                for (slot, light) in caustic_lights.iter().enumerate() {
+                    uniform.lights[slot / 4][slot % 4] = *light;
+                }
                 uniform.casters[..casters as usize]
                     .copy_from_slice(&frame.caustics.casters[..casters as usize]);
                 for (index, start) in starts.iter().enumerate() {
@@ -1585,7 +1595,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<AtrousStep>(), 16);
         assert_eq!(
             std::mem::size_of::<PtCaustics>(),
-            16 * (MAX_CAUSTIC_CASTERS + PAIR_START_VECTORS + 1)
+            16 * (MAX_CAUSTIC_CASTERS + PAIR_START_VECTORS + 1 + MAX_CAUSTIC_LIGHTS / 4 + 1)
         );
     }
 

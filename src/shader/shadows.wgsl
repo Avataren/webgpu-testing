@@ -13,21 +13,21 @@ struct DirectionalShadow {
     _padding: vec4<f32>,
 };
 
-struct PointShadow {
+// A point or spot light's shadow maps: tiles of the shadow atlas (LocalShadowRaw in
+// src/renderer/lights.rs).
+struct LocalShadow {
+    // Per face: a point light's look along +X, -X, +Y, -Y, +Z, -Z; a spot light has one.
     view_proj: array<mat4x4<f32>, POINT_SHADOW_FACE_COUNT>,
-    params: vec4<f32>,
-};
-
-struct SpotShadow {
-    view_proj: mat4x4<f32>,
+    // Each face's tile in the atlas, in texture coordinates: x, y, width, height.
+    rects: array<vec4<f32>, POINT_SHADOW_FACE_COUNT>,
+    // x: faces, y: texels across a tile, z: tan(fov / 2) of a face.
     params: vec4<f32>,
 };
 
 struct Shadows {
     counts: vec4<u32>,
-    directionals: array<DirectionalShadow, 4>,  // MAX_DIRECTIONAL_LIGHTS
-    points: array<PointShadow, 4>,              // MAX_POINT_LIGHTS
-    spots: array<SpotShadow, 4>,                // MAX_SPOT_LIGHTS
+    directionals: array<DirectionalShadow, MAX_DIRECTIONAL_LIGHTS>,
+    locals: array<LocalShadow, MAX_SHADOWED_LOCAL_LIGHTS>,
 };
 
 // ============================================================================
@@ -36,14 +36,12 @@ struct Shadows {
 
 @group(2) @binding(1) var<uniform> shadow_info: Shadows;
 @group(2) @binding(2) var directional_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(3) var directional_shadow_sampler: sampler_comparison;
-@group(2) @binding(4) var spot_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(5) var spot_shadow_sampler: sampler_comparison;
-@group(2) @binding(6) var point_shadow_maps: texture_depth_2d_array;
-@group(2) @binding(7) var point_shadow_sampler: sampler_comparison;
-// Ray-traced visibility per screen pixel, one bit per light (0-3 directional, 4-7 point,
-// 8-11 spot), for the lights whose bit is set in lights.counts.w
-// (src/renderer/raytracing/shadows.rs).
+@group(2) @binding(3) var shadow_sampler: sampler_comparison;
+// Every point and spot light's shadow maps, in tiles (src/renderer/internal/shadows.rs).
+@group(2) @binding(4) var local_shadow_atlas: texture_depth_2d;
+// Ray-traced visibility per screen pixel, one bit per light (0-3 directional, 4-31 the
+// point and spot lights given a bit, LocalLight.params.z), for the lights whose bit is
+// set in lights.counts.w (src/renderer/raytracing/shadows.rs).
 @group(2) @binding(11) var rt_shadow_mask: texture_2d<u32>;
 
 // Ray-traced visibility of the light with mask bit `bit` at framebuffer `pixel` (0 or 1),
@@ -130,29 +128,6 @@ fn sample_shadow_pcf(
     return result / 9.0;
 }
 
-// PCF with view-depth scaling for spot lights
-fn sample_shadow_pcf_viewdepth(
-    texture: texture_depth_2d_array,
-    smp: sampler_comparison,
-    proj_xy: vec2<f32>,
-    layer: i32,
-    depth: f32,
-    base_texel: vec2<f32>,
-    view_depth_norm: f32,
-    pcf_scale: f32
-) -> f32 {
-    let radius = base_texel * max(view_depth_norm, 0.0) * pcf_scale;
-
-    var acc = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * radius;
-            acc += textureSampleCompareLevel(texture, smp, proj_xy + offset, layer, depth);
-        }
-    }
-    return acc / 9.0;
-}
-
 // Whether a shadow-map projection lands inside the map (and its depth range); outside
 // it a surface counts as lit.
 fn shadow_projection_valid(proj: vec3<f32>) -> bool {
@@ -190,78 +165,11 @@ fn sample_directional_shadow(
     }
     return sample_shadow_pcf(
         directional_shadow_maps,
-        directional_shadow_sampler,
+        shadow_sampler,
         proj.xy,
         i32(index),
         proj.z,
         texel,
-    );
-}
-
-fn sample_spot_shadow(index: u32, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
-    let info = shadow_info.spots[index];
-    // params.x: has_data (!=0)
-    // params.y: far (for proper normalization)
-    // params.z: receiver normal offset (0..0.004)
-    // params.w: pcf_scale (1.5..3.0)
-    if (info.params.x == 0.0) {
-        return 1.0;
-    }
-    let receiver_offset = info.params.z;
-
-    // Project into shadow map (with receiver offset)
-    let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, receiver_offset);
-    if (!shadow_projection_valid(proj)) {
-        return 1.0;
-    }
-    let texel = shadow_texel_size(spot_shadow_maps);
-    return sample_shadow_pcf(
-        spot_shadow_maps,
-        spot_shadow_sampler,
-        proj.xy,
-        i32(index),
-        proj.z,
-        texel,
-    );
-}
-
-// Advanced spot shadow with depth-scaled PCF
-fn sample_spot_shadow_advanced(
-    index: u32, 
-    world_pos: vec3<f32>, 
-    N: vec3<f32>,
-    light_pos: vec3<f32>,
-    light_dir: vec3<f32>
-) -> f32 {
-    let info = shadow_info.spots[index];
-    if (info.params.x == 0.0) {
-        return 1.0;
-    }
-    let far_plane = max(info.params.y, 0.0001);
-    let receiver_offset = info.params.z;
-    let pcf_scale = select(2.0, info.params.w, info.params.w > 0.0);
-
-    let proj = project_shadow_with_normal_offset(info.view_proj, world_pos, N, receiver_offset);
-    if (!shadow_projection_valid(proj)) {
-        return 1.0;
-    }
-
-    // Calculate view-space depth along spotlight forward axis
-    let to_frag = world_pos - light_pos;
-    let Lfwd = normalize(light_dir);
-    let view_depth = max(dot(to_frag, Lfwd), 0.0);
-    let view_depth_norm = clamp(view_depth / far_plane, 0.0, 1.0);
-
-    let texel = shadow_texel_size(spot_shadow_maps);
-    return sample_shadow_pcf_viewdepth(
-        spot_shadow_maps,
-        spot_shadow_sampler,
-        proj.xy,
-        i32(index),
-        proj.z,
-        texel,
-        view_depth_norm,
-        pcf_scale
     );
 }
 
@@ -288,52 +196,48 @@ fn select_point_face(direction: vec3<f32>) -> u32 {
     }
 }
 
-fn sample_point_shadow(
-    index: u32, 
-    world_pos: vec3<f32>,
-    light_pos: vec3<f32>,
-    light_range: f32
-) -> f32 {
-    return sample_point_shadow_offset(index, world_pos, vec3<f32>(0.0), light_pos, light_range);
-}
-
-// The same, looked up a little above the surface (normal `N`): about a texel's footprint
-// at the fragment's distance, more where the light grazes, against acne on curved and
-// low-poly surfaces (as sample_directional_shadow does).
-fn sample_point_shadow_offset(
-    index: u32,
-    world_pos: vec3<f32>,
-    N: vec3<f32>,
-    light_pos: vec3<f32>,
-    light_range: f32
-) -> f32 {
-    let info = shadow_info.points[index];
-    let to_fragment = world_pos - light_pos;
-    let distance = length(to_fragment);
-    let in_range = light_range <= 0.0 || distance <= light_range;
-    if (info.params.x == 0.0 || distance <= 0.0001 || !in_range) {
+// How much of a point or spot light reaches `world_pos` (normal `N`) past its shadow
+// map: 1 lit, 0 shadowed, 1 for a light without one. The lookup is a little above the
+// surface (about a texel's footprint at the fragment's distance, more where the light
+// grazes), against acne on curved and low-poly surfaces, and the 3x3 filter's taps stay
+// inside the face's tile (each face is rendered with a border for that).
+fn sample_local_shadow(light: LocalLight, world_pos: vec3<f32>, N: vec3<f32>) -> f32 {
+    let slot = i32(light.params.y);
+    if (slot < 0) {
         return 1.0;
     }
-
+    let info = shadow_info.locals[slot];
+    let to_fragment = world_pos - light.position_range.xyz;
+    let distance = length(to_fragment);
+    if (distance <= 0.0001 || distance > light.position_range.w) {
+        return 1.0;
+    }
     let dir = to_fragment / distance;
-    let face = select_point_face(dir);
-    let matrix = info.view_proj[face];
-    // Each face spans 90 degrees: a texel is 2 * distance / size wide at the fragment.
-    let texel_world = 2.0 * distance * shadow_texel_size(point_shadow_maps).x;
+    var face = 0u;
+    var depth = dot(to_fragment, normalize(light.direction.xyz));
+    if (info.params.x > 1.5) {
+        face = select_point_face(dir);
+        depth = distance;
+    }
+    let texels = max(info.params.y, 1.0);
+    let texel_world = 2.0 * max(depth, 0.0) * info.params.z / texels;
     let n_dot_l = clamp(dot(N, -dir), 0.0, 1.0);
     let offset = texel_world * (1.0 + 2.0 * (1.0 - n_dot_l));
-    let proj = project_shadow_with_normal_offset(matrix, world_pos, N, offset);
+    let proj = project_shadow_with_normal_offset(info.view_proj[face], world_pos, N, offset);
     if (!shadow_projection_valid(proj)) {
         return 1.0;
     }
-    let layer = i32(index * POINT_SHADOW_FACE_COUNT + face);
-    let texel = shadow_texel_size(point_shadow_maps);
-    return sample_shadow_pcf(
-        point_shadow_maps,
-        point_shadow_sampler,
-        proj.xy,
-        layer,
-        proj.z,
-        texel,
-    );
+    let rect = info.rects[face];
+    let texel = rect.zw / texels;
+    let lo = rect.xy + texel * 0.5;
+    let hi = rect.xy + rect.zw - texel * 0.5;
+    let center = rect.xy + proj.xy * rect.zw;
+    var result = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let uv = clamp(center + vec2<f32>(f32(x), f32(y)) * texel, lo, hi);
+            result += textureSampleCompareLevel(local_shadow_atlas, shadow_sampler, uv, proj.z);
+        }
+    }
+    return result / 9.0;
 }

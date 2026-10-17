@@ -5,7 +5,7 @@
 // The renderer scans shader source code for the following opt-in include
 // markers and inserts the corresponding shared modules automatically:
 //   // @include_material_system   -> Shared material buffers and flags.
-//   // @include_lighting          -> Scene light bindings and helpers.
+//   // @include_lighting          -> Scene lights (scene_lights_at, scene_light) and PBR helpers.
 //   // @include_shadows           -> Shadow samplers and lighting integration.
 //   // @include_environment       -> Environment lighting utilities.
 //
@@ -112,6 +112,9 @@ fn phong_light(
     return (diffuse + specular) * light_color * light_intensity;
 }
 
+// Every light that reaches the surface: the directional lights, then the point and spot
+// lights of its cluster (scene_lights_at and scene_light in lighting_common.wgsl; the
+// renderer does not keep its lights in fixed arrays, so shaders read them through these).
 fn phong_scene_lighting(
     world_pos: vec3<f32>,
     N: vec3<f32>,
@@ -121,92 +124,20 @@ fn phong_scene_lighting(
     shininess: f32,
 ) -> vec3<f32> {
     var lighting = vec3<f32>(0.0);
-
-    let directional_count = min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS);
-    for (var i = 0u; i < directional_count; i = i + 1u) {
-        let light = lights.directionals[i];
-        let light_dir = normalize(-light.direction.xyz);
+    let here = scene_lights_at(world_pos);
+    for (var i = 0u; i < scene_light_count(here); i = i + 1u) {
+        let light = scene_light(here, i, world_pos);
         lighting += phong_light(
             N,
             V,
-            light_dir,
-            light.color_intensity.xyz,
-            light.color_intensity.w,
+            light.direction,
+            light.radiance,
+            1.0,
             diffuse_color,
             specular_color,
             shininess,
         );
     }
-
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-    for (var i = 0u; i < point_count; i = i + 1u) {
-        let light = lights.points[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-
-        if (distance > 0.0001) {
-            let L = to_light / distance;
-            var attenuation = 1.0 / max(distance * distance, 0.0001);
-            let range = light.position_range.w;
-            if (range > 0.0) {
-                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-                attenuation = attenuation * range_factor * range_factor;
-            }
-
-            lighting += phong_light(
-                N,
-                V,
-                L,
-                light.color_intensity.xyz,
-                light.color_intensity.w * attenuation,
-                diffuse_color,
-                specular_color,
-                shininess,
-            );
-        }
-    }
-
-    let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-    for (var i = 0u; i < spot_count; i = i + 1u) {
-        let light = lights.spots[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-
-        if (distance > 0.0001) {
-            let L = to_light / distance;
-            var attenuation = 1.0 / max(distance * distance, 0.0001);
-            let range = light.position_range.w;
-            if (range > 0.0) {
-                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-                attenuation = attenuation * range_factor * range_factor;
-            }
-
-            let light_dir = normalize(light.direction.xyz);
-            let cos_theta = dot(light_dir, -L);
-            let cos_inner = light.cone_params.x;
-            let cos_outer = light.cone_params.y;
-            var spot_effect = 0.0;
-            if (cos_theta >= cos_outer) {
-                let denom = max(cos_inner - cos_outer, 0.0001);
-                spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
-                spot_effect = spot_effect * spot_effect;
-            }
-
-            if (spot_effect > 0.0) {
-                lighting += phong_light(
-                    N,
-                    V,
-                    L,
-                    light.color_intensity.xyz,
-                    light.color_intensity.w * attenuation * spot_effect,
-                    diffuse_color,
-                    specular_color,
-                    shininess,
-                );
-            }
-        }
-    }
-
     return lighting;
 }
 

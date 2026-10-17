@@ -284,6 +284,14 @@ impl Scene {
         self.main_scene
     }
 
+    /// The renderer's key for the point or spot light on `entity` of the main scene (see
+    /// `LocalLight::key`), to look up its shadow state
+    /// (`Renderer::light_shadow_state`).
+    pub fn light_key(&self, entity: hecs::Entity) -> u64 {
+        let node = slotmap::Key::data(&self.main_scene).as_ffi();
+        super::internal::lights::light_key(node, entity)
+    }
+
     pub fn set_main_scene(&mut self, node: SceneNodeId) {
         if self.is_valid_node(node) {
             self.main_scene = node;

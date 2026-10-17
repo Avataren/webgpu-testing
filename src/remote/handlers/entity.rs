@@ -243,7 +243,12 @@ fn particle_preset_from_name(name: &str) -> Result<ParticleBehaviorPreset, Strin
 }
 
 fn point_light_json(light: &PointLight) -> Value {
-    json!({ "color": vec3_json(light.color), "intensity": round(light.intensity), "range": round(light.range) })
+    json!({
+        "color": vec3_json(light.color),
+        "intensity": round(light.intensity),
+        "range": round(light.range),
+        "shadow_priority": round(light.shadow_priority),
+    })
 }
 
 fn directional_light_json(light: &DirectionalLight) -> Value {
@@ -257,7 +262,24 @@ fn spot_light_json(light: &SpotLight) -> Value {
         "range": round(light.range),
         "inner_angle_deg": round(light.inner_angle.to_degrees()),
         "outer_angle_deg": round(light.outer_angle.to_degrees()),
+        "shadow_priority": round(light.shadow_priority),
     })
+}
+
+/// How a point or spot light's shadow was made last frame (null: it casts none).
+fn light_shadow_json(state: Option<crate::renderer::LightShadowState>) -> Value {
+    use crate::renderer::LightShadowState;
+    match state {
+        None => Value::Null,
+        Some(LightShadowState::ShadowMap { size, rank }) => {
+            json!({ "state": "shadow_map", "tile_size": size, "rank": rank })
+        }
+        Some(LightShadowState::RayTraced) => json!({ "state": "ray_traced" }),
+        Some(LightShadowState::OutOfView) => json!({ "state": "out_of_view" }),
+        Some(LightShadowState::OverBudget { rank }) => {
+            json!({ "state": "over_budget", "rank": rank })
+        }
+    }
 }
 
 fn camera_json(camera: &CameraComponent) -> Value {
@@ -352,6 +374,12 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
     }
     if let Ok(shadow) = world.get::<&CanCastShadow>(entity) {
         out["cast_shadow"] = json!(shadow.0);
+    }
+    if world.satisfies::<&PointLight>(entity).unwrap_or(false)
+        || world.satisfies::<&SpotLight>(entity).unwrap_or(false)
+    {
+        let state = ctx.gpu.renderer.light_shadow_state(scene.light_key(entity));
+        out["shadow"] = light_shadow_json(state);
     }
     if let Ok(camera) = world.get::<&CameraComponent>(entity) {
         let mut value = camera_json(&camera);
@@ -1151,6 +1179,9 @@ pub(crate) fn patch_light_or_camera(
             if let Some(range) = opt_f64(v, "range") {
                 light.range = range as f32;
             }
+            if let Some(priority) = opt_f64(v, "shadow_priority") {
+                light.shadow_priority = (priority as f32).max(0.0);
+            }
             Ok(())
         })?,
         "directional_light" => {
@@ -1172,6 +1203,9 @@ pub(crate) fn patch_light_or_camera(
             }
             if let Some(angle) = opt_f64(v, "outer_angle_deg") {
                 light.outer_angle = (angle as f32).to_radians();
+            }
+            if let Some(priority) = opt_f64(v, "shadow_priority") {
+                light.shadow_priority = (priority as f32).max(0.0);
             }
             Ok(())
         })?,

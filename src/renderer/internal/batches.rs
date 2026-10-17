@@ -27,8 +27,9 @@ pub(crate) struct OrderedBatch {
     /// Its materials cut the surface away by alpha (`Material::is_alpha_masked`).
     pub alpha_masked: bool,
     /// Each instance's world-space bounding sphere, for culling; empty when their
-    /// extent is not known (skinned, GPU-placed, or drawn by a shader material that
-    /// may move vertices), so every instance counts as visible everywhere.
+    /// extent is not known (GPU-placed, or drawn by a shader material that may move
+    /// vertices), so every instance counts as visible everywhere. A skinned instance's
+    /// follows its pose.
     pub bounds: Vec<Sphere>,
     /// A sphere around every instance (`None` without `bounds`), to reject a whole
     /// batch at once.
@@ -59,11 +60,13 @@ pub(crate) struct PreparedBatches {
 
 impl PreparedBatches {
     /// Order this frame's batches for drawing. `bounds_of` gives a mesh's local bounds
-    /// (for culling); meshes without them are never culled.
+    /// (for culling), and `skinned_bounds_of` a skinned instance's (its mesh posed by its
+    /// skinning job); meshes without them are never culled.
     pub(crate) fn from_batcher(
         batcher: &RenderBatcher,
         camera_pos: Vec3,
         bounds_of: &dyn Fn(Handle<Mesh>) -> Option<LocalBounds>,
+        skinned_bounds_of: &dyn Fn(Handle<Mesh>, SkinKey) -> Option<LocalBounds>,
     ) -> Self {
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
@@ -219,10 +222,14 @@ impl PreparedBatches {
                 .instances
                 .iter()
                 .any(|instance| instance.source == InstanceSource::Gpu);
-            if batch.skin.is_some() || shader_material || gpu_placed {
+            if shader_material || gpu_placed {
                 continue;
             }
-            let Some(bounds) = bounds_of(batch.mesh) else {
+            let bounds = match batch.skin {
+                Some(key) => skinned_bounds_of(batch.mesh, key),
+                None => bounds_of(batch.mesh),
+            };
+            let Some(bounds) = bounds else {
                 continue;
             };
             batch.bounds = batch
@@ -569,7 +576,7 @@ mod tests {
 
         batcher.clear();
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None);
 
         assert!(
             prepared.all().is_empty(),
@@ -608,7 +615,7 @@ mod tests {
                 .unwrap();
         }
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None);
         let order: Vec<(usize, Vec<u64>)> = prepared
             .transparent()
             .iter()
@@ -658,7 +665,7 @@ mod tests {
                 )
                 .unwrap();
         }
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None);
         let order: Vec<usize> = prepared
             .opaque()
             .iter()
@@ -706,7 +713,8 @@ mod tests {
             min: Vec3::splat(-0.5),
             max: Vec3::splat(0.5),
         };
-        let mut prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| Some(bounds));
+        let mut prepared =
+            PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| Some(bounds), &|_, _| None);
         let view = glam::Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
         let proj = glam::Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 100.0);
         let culled = prepared.cull_for_camera(&Frustum::from_view_proj(proj * view));
@@ -852,7 +860,7 @@ mod tests {
             )
             .unwrap();
 
-        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None);
+        let prepared = PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None);
 
         let mut gpu_indices = BTreeSet::new();
         for batch in prepared.all() {

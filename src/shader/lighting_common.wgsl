@@ -11,23 +11,39 @@ struct DirectionalLight {
     color_intensity: vec4<f32>,
 };
 
-struct PointLight {
+// A point or spot light (LocalLightRaw in src/renderer/lights.rs).
+struct LocalLight {
+    // xyz: position, w: range (always > 0: where the light has faded out)
     position_range: vec4<f32>,
     color_intensity: vec4<f32>,
-};
-
-struct SpotLight {
-    position_range: vec4<f32>,
+    // xyz: a spot light's axis, w: the cosine of its outer angle (below -1.5: a point
+    // light, which has no cone)
     direction: vec4<f32>,
-    color_intensity: vec4<f32>,
-    cone_params: vec4<f32>,  // x: cos_inner, y: cos_outer
+    // x: the cosine of a spot light's inner angle, y: its slot in the shadows uniform,
+    // z: its bit in the ray-traced shadow mask (-1: none)
+    params: vec4<f32>,
 };
 
+// The lights buffer (LightsHeader, then the local lights; src/renderer/lights.rs).
 struct Lights {
-    counts: vec4<u32>,  // x: directional, y: point, z: spot, w: unused
+    // x: directional lights, y: local lights, z: 1 when the world grid was built this
+    // frame, w: which bits of the ray-traced shadow mask the frame traced
+    counts: vec4<u32>,
+    // How a surface finds its cluster (light_cluster): the camera's view projection
+    // without TAA jitter, the view depth of a point (dot(xyz, p) + w), the clusters along
+    // x, y and depth (and their count), and the depth slice: floor(log(depth) * x + y),
+    // or floor(depth * x + y) when w = 1 (orthographic).
+    cluster_view_proj: mat4x4<f32>,
+    cluster_depth_axis: vec4<f32>,
+    cluster_dims: vec4<u32>,
+    cluster_slices: vec4<f32>,
+    // The world grid (light_grid_cell): its lowest corner and cells per meter, and its
+    // cells along x, y and z and where their entries start in light_lists.
+    grid_origin: vec4<f32>,
+    grid_dims: vec4<u32>,
     directionals: array<DirectionalLight, MAX_DIRECTIONAL_LIGHTS>,
-    points: array<PointLight, MAX_POINT_LIGHTS>,
-    spots: array<SpotLight, MAX_SPOT_LIGHTS>,
+    _padding: array<vec4<f32>, 14>,
+    locals: array<LocalLight>,
 };
 
 // ============================================================================
@@ -35,6 +51,106 @@ struct Lights {
 // ============================================================================
 
 @group(2) @binding(0) var<storage, read> lights: Lights;
+// Which local lights reach each cluster of the view and each cell of the world grid
+// (src/renderer/light_culling.rs): (first, count) entries into a pool of light indices.
+@group(2) @binding(15) var<storage, read> light_lists: array<u32>;
+
+// The local lights that may reach a point: light_lists[first .. first + count] index
+// lights.locals.
+struct LightRange {
+    first: u32,
+    count: u32,
+};
+
+// Where the cluster entries start in light_lists (FIRST_CLUSTER_ENTRY in
+// light_culling.rs).
+const FIRST_CLUSTER_ENTRY: u32 = 4u;
+
+fn light_range_at(entry: u32) -> LightRange {
+    return LightRange(light_lists[entry], light_lists[entry + 1u]);
+}
+
+// The point and spot lights whose reach (and cone) touches the cluster of the camera's
+// view that holds `world_pos`.
+fn light_cluster(world_pos: vec3<f32>) -> LightRange {
+    if (lights.counts.y == 0u) {
+        return LightRange(0u, 0u);
+    }
+    let dims = lights.cluster_dims;
+    let clip = lights.cluster_view_proj * vec4<f32>(world_pos, 1.0);
+    let ndc = clip.xy / max(clip.w, 1e-6);
+    let tile = clamp(
+        floor(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * vec2<f32>(dims.xy)),
+        vec2<f32>(0.0),
+        vec2<f32>(dims.xy) - 1.0,
+    );
+    let depth = dot(lights.cluster_depth_axis.xyz, world_pos) + lights.cluster_depth_axis.w;
+    let slices = lights.cluster_slices;
+    let slice_f = select(
+        log(max(depth, 1e-4)) * slices.x + slices.y,
+        depth * slices.x + slices.y,
+        slices.w > 0.5,
+    );
+    let slice = u32(clamp(floor(slice_f), 0.0, f32(dims.z) - 1.0));
+    let cluster = (slice * dims.y + u32(tile.y)) * dims.x + u32(tile.x);
+    return light_range_at(FIRST_CLUSTER_ENTRY + 2u * cluster);
+}
+
+// The point and spot lights whose reach touches the world grid cell holding `world_pos`,
+// for surfaces the camera's clusters do not describe (ray hits). Empty outside the grid,
+// which covers every light's reach near the camera.
+fn light_grid_cell(world_pos: vec3<f32>) -> LightRange {
+    let dims = lights.grid_dims;
+    if (lights.counts.y == 0u || lights.counts.z == 0u || dims.x == 0u) {
+        return LightRange(0u, 0u);
+    }
+    let cell_f = floor((world_pos - lights.grid_origin.xyz) * lights.grid_origin.w);
+    if (any(cell_f < vec3<f32>(0.0)) || any(cell_f >= vec3<f32>(dims.xyz))) {
+        return LightRange(0u, 0u);
+    }
+    let cell = vec3<u32>(cell_f);
+    return light_range_at(dims.w + 2u * ((cell.z * dims.y + cell.y) * dims.x + cell.x));
+}
+
+// Light `index` of `range`.
+fn light_in_range(range: LightRange, index: u32) -> LocalLight {
+    return lights.locals[light_lists[range.first + index]];
+}
+
+// How a local light arrives at a point: the direction toward it, its distance, and the
+// share of its intensity that gets there (inverse square falloff faded out toward its
+// range, times a spot light's cone; 0 where it does not reach).
+struct LocalLightArrival {
+    L: vec3<f32>,
+    distance: f32,
+    attenuation: f32,
+};
+
+fn local_light_arrival(light: LocalLight, world_pos: vec3<f32>) -> LocalLightArrival {
+    var out: LocalLightArrival;
+    let to_light = light.position_range.xyz - world_pos;
+    out.distance = length(to_light);
+    if (out.distance <= 0.0001) {
+        return out;
+    }
+    out.L = to_light / out.distance;
+    let range_factor = clamp(1.0 - out.distance / light.position_range.w, 0.0, 1.0);
+    var attenuation = range_factor * range_factor / max(out.distance * out.distance, 0.0001);
+    if (light.direction.w > -1.5) {
+        let cos_theta = dot(normalize(light.direction.xyz), -out.L);
+        let cos_outer = light.direction.w;
+        let cos_inner = light.params.x;
+        var spot_effect = 0.0;
+        if (cos_theta >= cos_outer) {
+            let denom = max(cos_inner - cos_outer, 0.0001);
+            spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
+            spot_effect = spot_effect * spot_effect;
+        }
+        attenuation = attenuation * spot_effect;
+    }
+    out.attenuation = attenuation;
+    return out;
+}
 
 // ============================================================================
 // PBR Helper Functions
@@ -162,67 +278,70 @@ fn calculate_scene_lighting_no_shadows(
         );
     }
 
-    // Point lights
-    let point_count = min(lights.counts.y, MAX_POINT_LIGHTS);
-    for (var i = 0u; i < point_count; i = i + 1u) {
-        let light = lights.points[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-        
-        if (distance > 0.0001) {
-            let L = to_light / distance;
-            var attenuation = 1.0 / max(distance * distance, 0.0001);
-            let range = light.position_range.w;
-            if (range > 0.0) {
-                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-                attenuation = attenuation * range_factor * range_factor;
-            }
-            let light_color = light.color_intensity.xyz;
-            let light_intensity = light.color_intensity.w * attenuation;
-            Lo += calculate_light_contribution(
-                N, V, L, base_color, metallic, roughness,
-                light_color, light_intensity
-            );
+    // Point and spot lights of the surface's cluster
+    let range = light_cluster(world_pos);
+    for (var i = 0u; i < range.count; i = i + 1u) {
+        let light = light_in_range(range, i);
+        let arrival = local_light_arrival(light, world_pos);
+        if (arrival.attenuation <= 0.0) {
+            continue;
         }
-    }
-
-    // Spot lights
-    let spot_count = min(lights.counts.z, MAX_SPOT_LIGHTS);
-    for (var i = 0u; i < spot_count; i = i + 1u) {
-        let light = lights.spots[i];
-        let to_light = light.position_range.xyz - world_pos;
-        let distance = length(to_light);
-        
-        if (distance > 0.0001) {
-            let L = to_light / distance;
-            var attenuation = 1.0 / max(distance * distance, 0.0001);
-            let range = light.position_range.w;
-            if (range > 0.0) {
-                let range_factor = clamp(1.0 - distance / range, 0.0, 1.0);
-                attenuation = attenuation * range_factor * range_factor;
-            }
-
-            let light_dir = normalize(light.direction.xyz);
-            let cos_theta = dot(light_dir, -L);
-            let cos_inner = light.cone_params.x;
-            let cos_outer = light.cone_params.y;
-            var spot_effect = 0.0;
-            if (cos_theta >= cos_outer) {
-                let denom = max(cos_inner - cos_outer, 0.0001);
-                spot_effect = clamp((cos_theta - cos_outer) / denom, 0.0, 1.0);
-                spot_effect = spot_effect * spot_effect;
-            }
-
-            if (spot_effect > 0.0) {
-                let light_color = light.color_intensity.xyz;
-                let light_intensity = light.color_intensity.w * attenuation * spot_effect;
-                Lo += calculate_light_contribution(
-                    N, V, L, base_color, metallic, roughness,
-                    light_color, light_intensity
-                );
-            }
-        }
+        Lo += calculate_light_contribution(
+            N, V, arrival.L, base_color, metallic, roughness,
+            light.color_intensity.xyz, light.color_intensity.w * arrival.attenuation
+        );
     }
 
     return Lo;
+}
+
+// ============================================================================
+// Lights for shader materials
+// ============================================================================
+
+// The lights that may reach a point, for custom lighting in shader materials:
+//
+//     let here = scene_lights_at(in.world_pos);
+//     for (var i = 0u; i < scene_light_count(here); i = i + 1u) {
+//         let light = scene_light(here, i, in.world_pos);
+//         lighting += my_brdf(N, V, light.direction) * light.radiance;
+//     }
+//
+// The directional lights come first, then the point and spot lights of the point's
+// cluster (lights out of reach are not listed). Shadows are not included; with
+// `// @include_shadows`, calculate_scene_lighting gives PBR lighting with them.
+struct SceneLights {
+    directional: u32,
+    locals: LightRange,
+};
+
+struct SceneLight {
+    // Toward the light (unit length).
+    direction: vec3<f32>,
+    // Colour times intensity that arrives at the point (falloff and cone included).
+    radiance: vec3<f32>,
+};
+
+fn scene_lights_at(world_pos: vec3<f32>) -> SceneLights {
+    return SceneLights(min(lights.counts.x, MAX_DIRECTIONAL_LIGHTS), light_cluster(world_pos));
+}
+
+fn scene_light_count(here: SceneLights) -> u32 {
+    return here.directional + here.locals.count;
+}
+
+fn scene_light(here: SceneLights, index: u32, world_pos: vec3<f32>) -> SceneLight {
+    if (index < here.directional) {
+        let light = lights.directionals[index];
+        return SceneLight(
+            normalize(-light.direction.xyz),
+            light.color_intensity.xyz * light.color_intensity.w,
+        );
+    }
+    let light = light_in_range(here.locals, index - here.directional);
+    let arrival = local_light_arrival(light, world_pos);
+    return SceneLight(
+        arrival.L,
+        light.color_intensity.xyz * light.color_intensity.w * arrival.attenuation,
+    );
 }

@@ -1,7 +1,5 @@
 use super::rendering::CameraVectors;
-use crate::renderer::{
-    DirectionalShadowData, LightsData, PointShadowData, SpotLightDescriptor, SpotShadowData,
-};
+use crate::renderer::{DirectionalShadowData, LightsData, LocalLight, SpotCone};
 use crate::scene::components::{
     CanCastShadow, DirectionalLight, PointLight, SpotLight, TransformComponent, WorldTransform,
 };
@@ -9,18 +7,30 @@ use crate::scene::transform::Transform;
 use glam::{Mat4, Quat, Vec3};
 use hecs::World;
 
+/// The lights of the scene node `world` (identified by `scene_key`, as for skinning)
+/// placed by `root_transform`.
 pub(crate) fn collect_lights(
     world: &World,
     camera: CameraVectors,
     root_transform: Transform,
+    scene_key: u64,
 ) -> LightsData {
     let mut lights = LightsData::default();
 
     collect_directional_lights(world, camera, &mut lights, root_transform);
-    collect_point_lights(world, &mut lights, root_transform);
-    collect_spot_lights(world, &mut lights, root_transform);
+    collect_point_lights(world, &mut lights, root_transform, scene_key);
+    collect_spot_lights(world, &mut lights, root_transform, scene_key);
 
     lights
+}
+
+/// A stable identity for one point or spot light in one scene node, for the renderer's
+/// shadow maps (see `LocalLight::key`).
+pub(crate) fn light_key(scene_key: u64, entity: hecs::Entity) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ("light", scene_key, entity.to_bits()).hash(&mut hasher);
+    hasher.finish()
 }
 
 fn collect_directional_lights(
@@ -57,8 +67,13 @@ fn collect_directional_lights(
     }
 }
 
-fn collect_point_lights(world: &World, lights: &mut LightsData, root_transform: Transform) {
-    for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
+fn collect_point_lights(
+    world: &World,
+    lights: &mut LightsData,
+    root_transform: Transform,
+    scene_key: u64,
+) {
+    for (entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &PointLight,
             Option<&WorldTransform>,
@@ -70,24 +85,26 @@ fn collect_point_lights(world: &World, lights: &mut LightsData, root_transform: 
         let mut transform = resolve_light_transform(world_transform, local_transform);
         transform = root_transform.mul_transform(&transform);
 
-        let shadow = if shadow_enabled(shadow_flag) {
-            Some(build_point_shadow(transform.translation, light.range))
-        } else {
-            None
-        };
-
-        lights.add_point(
-            transform.translation,
-            light.color,
-            light.intensity,
-            light.range,
-            shadow,
-        );
+        lights.add_local(LocalLight {
+            key: light_key(scene_key, entity),
+            position: transform.translation,
+            color: light.color,
+            intensity: light.intensity,
+            range: light.range,
+            cone: None,
+            casts_shadow: shadow_enabled(shadow_flag),
+            shadow_priority: light.shadow_priority,
+        });
     }
 }
 
-fn collect_spot_lights(world: &World, lights: &mut LightsData, root_transform: Transform) {
-    for (_entity, (light, world_transform, local_transform, shadow_flag)) in world
+fn collect_spot_lights(
+    world: &World,
+    lights: &mut LightsData,
+    root_transform: Transform,
+    scene_key: u64,
+) {
+    for (entity, (light, world_transform, local_transform, shadow_flag)) in world
         .query::<(
             &SpotLight,
             Option<&WorldTransform>,
@@ -100,21 +117,19 @@ fn collect_spot_lights(world: &World, lights: &mut LightsData, root_transform: T
         transform = root_transform.mul_transform(&transform);
         let direction = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::new(0.0, -1.0, 0.0));
 
-        let shadow = if shadow_enabled(shadow_flag) {
-            Some(build_spot_shadow(transform, light))
-        } else {
-            None
-        };
-
-        lights.add_spot(SpotLightDescriptor {
+        lights.add_local(LocalLight {
+            key: light_key(scene_key, entity),
             position: transform.translation,
-            direction,
             color: light.color,
             intensity: light.intensity,
             range: light.range,
-            inner_angle: light.inner_angle,
-            outer_angle: light.outer_angle,
-            shadow,
+            cone: Some(SpotCone {
+                direction,
+                inner_angle: light.inner_angle,
+                outer_angle: light.outer_angle,
+            }),
+            casts_shadow: shadow_enabled(shadow_flag),
+            shadow_priority: light.shadow_priority,
         });
     }
 }
@@ -203,66 +218,6 @@ pub(crate) fn build_directional_shadow(
 
     DirectionalShadowData {
         view_proj: projection * view,
-    }
-}
-
-pub(crate) fn build_point_shadow(position: Vec3, range: f32) -> PointShadowData {
-    use std::f32::consts::FRAC_PI_2;
-
-    let near = 0.1f32;
-    let far = range.max(near + 0.1);
-    let projection = Mat4::perspective_rh(FRAC_PI_2, 1.0, near, far);
-
-    let dirs = [
-        Vec3::X,
-        Vec3::NEG_X,
-        Vec3::Y,
-        Vec3::NEG_Y,
-        Vec3::Z,
-        Vec3::NEG_Z,
-    ];
-    let ups = [Vec3::Y, Vec3::Y, Vec3::Z, Vec3::NEG_Z, Vec3::Y, Vec3::Y];
-
-    let mut matrices = [Mat4::IDENTITY; 6];
-    for ((matrix, dir), up) in matrices.iter_mut().zip(dirs.iter()).zip(ups.iter()) {
-        let view = Mat4::look_at_rh(position, position + *dir, *up);
-        *matrix = projection * view;
-    }
-
-    PointShadowData {
-        view_proj: matrices,
-        near,
-        far,
-    }
-}
-
-pub(crate) fn build_spot_shadow(transform: Transform, light: &SpotLight) -> SpotShadowData {
-    let near = 0.1f32;
-    let far = light.range.max(near + 0.1);
-    let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
-
-    let position = transform.translation;
-    let forward = safe_normalize(transform.rotation * Vec3::NEG_Z, Vec3::NEG_Z);
-    let mut up = safe_normalize(transform.rotation * Vec3::Y, Vec3::Y);
-
-    let mut right = forward.cross(up);
-    if right.length_squared() < 1e-8 {
-        let fallback = if forward.dot(Vec3::X).abs() < 0.9 {
-            Vec3::X
-        } else {
-            Vec3::Y
-        };
-        right = forward.cross(fallback);
-    }
-    right = right.normalize();
-    up = right.cross(forward).normalize();
-
-    let view = Mat4::look_at_rh(position, position + forward, up);
-    let projection = Mat4::perspective_rh(fov, 1.0, near, far);
-
-    SpotShadowData {
-        view_proj: projection * view,
-        far,
     }
 }
 
@@ -604,165 +559,5 @@ mod tests {
             large_uv.x <= 1.0 + 1e-4,
             "expected point within larger shadow extent, uv={large_uv:?}"
         );
-    }
-
-    #[test]
-    fn spot_shadow_view_matrix_uses_transform_basis() {
-        let rotation = Quat::from_euler(EulerRot::YXZ, 0.45, -0.35, 0.2);
-        let transform = Transform::from_trs(Vec3::new(2.0, 5.0, -1.0), rotation, Vec3::ONE);
-        let light = SpotLight {
-            color: Vec3::splat(1.0),
-            intensity: 10.0,
-            inner_angle: 0.3,
-            outer_angle: 0.6,
-            range: 25.0,
-        };
-
-        let shadow = build_spot_shadow(transform, &light);
-
-        let near = 0.1;
-        let far = light.range.max(near + 0.1);
-        let fov = (light.outer_angle * 2.0).clamp(0.1, std::f32::consts::PI - 0.1);
-        let expected_view = Mat4::look_at_rh(
-            transform.translation,
-            transform.translation + transform.rotation * Vec3::NEG_Z,
-            transform.rotation * Vec3::Y,
-        );
-        let projection = Mat4::perspective_rh(fov, 1.0, near, far);
-        let expected_view_proj = projection * expected_view;
-
-        assert!(shadow.view_proj.abs_diff_eq(expected_view_proj, EPS));
-
-        let actual_view = projection.inverse() * shadow.view_proj;
-        assert!(actual_view.abs_diff_eq(expected_view, EPS));
-
-        let forward = transform.rotation * Vec3::NEG_Z;
-        let up = transform.rotation * Vec3::Y;
-        let forward_in_view = (actual_view * forward.extend(0.0)).truncate().normalize();
-        let up_in_view = (actual_view * up.extend(0.0)).truncate().normalize();
-        assert!(forward_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
-        assert!(up_in_view.abs_diff_eq(Vec3::Y, EPS));
-    }
-
-    #[test]
-    fn spot_shadow_depth_maps_into_wgpu_range() {
-        let rotation = Quat::from_euler(EulerRot::YXZ, -0.35, 0.5, 0.1);
-        let transform = Transform::from_trs(Vec3::new(-4.0, 3.0, 6.0), rotation, Vec3::ONE);
-        let light = SpotLight {
-            color: Vec3::splat(1.0),
-            intensity: 5.0,
-            inner_angle: 0.4,
-            outer_angle: 0.7,
-            range: 30.0,
-        };
-
-        let shadow = build_spot_shadow(transform, &light);
-
-        let near = 0.1;
-        let far = light.range.max(near + 0.1);
-        let forward = (transform.rotation * Vec3::NEG_Z).normalize();
-        let position = transform.translation;
-
-        let near_world = position + forward * near;
-        let far_world = position + forward * far;
-
-        let clip_near = shadow.view_proj * near_world.extend(1.0);
-        let clip_far = shadow.view_proj * far_world.extend(1.0);
-        assert!(clip_near.w > 0.0 && clip_far.w > 0.0);
-
-        let ndc_near = clip_near.truncate() / clip_near.w;
-        let ndc_far = clip_far.truncate() / clip_far.w;
-
-        assert!(ndc_near.z >= -EPS && ndc_near.z <= 1.0 + EPS);
-        assert!(ndc_far.z >= -EPS && ndc_far.z <= 1.0 + EPS);
-
-        assert!((ndc_near.z - 0.0).abs() < 1e-4, "near depth {}", ndc_near.z);
-        assert!((ndc_far.z - 1.0).abs() < 1e-4, "far depth {}", ndc_far.z);
-    }
-
-    #[test]
-    fn point_shadow_view_matrices_cover_all_cubemap_faces() {
-        let position = Vec3::new(-3.0, 4.5, 1.0);
-        let range = 12.0;
-        let shadow = build_point_shadow(position, range);
-
-        let near = 0.1;
-        let far = range.max(near + 0.1);
-        let projection = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
-
-        let dirs = [
-            Vec3::X,
-            Vec3::NEG_X,
-            Vec3::Y,
-            Vec3::NEG_Y,
-            Vec3::Z,
-            Vec3::NEG_Z,
-        ];
-        let ups = [Vec3::Y, Vec3::Y, Vec3::Z, Vec3::NEG_Z, Vec3::Y, Vec3::Y];
-
-        for (((matrix, dir), up), face) in shadow
-            .view_proj
-            .iter()
-            .zip(dirs.iter())
-            .zip(ups.iter())
-            .zip(0usize..)
-        {
-            let expected_view = Mat4::look_at_rh(position, position + *dir, *up);
-            let expected_view_proj = projection * expected_view;
-            assert!(
-                matrix.abs_diff_eq(expected_view_proj, EPS),
-                "face {} mismatch",
-                face
-            );
-
-            let actual_view = projection.inverse() * *matrix;
-            assert!(actual_view.abs_diff_eq(expected_view, EPS));
-
-            let dir_in_view = (actual_view * dir.extend(0.0)).truncate().normalize();
-            assert!(dir_in_view.abs_diff_eq(Vec3::new(0.0, 0.0, -1.0), EPS));
-        }
-    }
-
-    #[test]
-    fn point_shadow_depth_maps_into_wgpu_range() {
-        let position = Vec3::new(2.5, -1.5, 7.0);
-        let range = 18.0;
-        let shadow = build_point_shadow(position, range);
-
-        for (matrix, dir) in shadow.view_proj.iter().zip([
-            Vec3::X,
-            Vec3::NEG_X,
-            Vec3::Y,
-            Vec3::NEG_Y,
-            Vec3::Z,
-            Vec3::NEG_Z,
-        ]) {
-            let forward = dir.normalize();
-            let near_world = position + forward * shadow.near;
-            let far_world = position + forward * shadow.far;
-
-            let clip_near = *matrix * near_world.extend(1.0);
-            let clip_far = *matrix * far_world.extend(1.0);
-            assert!(clip_near.w > 0.0 && clip_far.w > 0.0);
-
-            let ndc_near = clip_near.truncate() / clip_near.w;
-            let ndc_far = clip_far.truncate() / clip_far.w;
-
-            assert!(ndc_near.z >= -EPS && ndc_near.z <= 1.0 + EPS);
-            assert!(ndc_far.z >= -EPS && ndc_far.z <= 1.0 + EPS);
-
-            assert!(
-                (ndc_near.z - 0.0).abs() < 1e-4,
-                "face dir {:?} near {}",
-                dir,
-                ndc_near.z
-            );
-            assert!(
-                (ndc_far.z - 1.0).abs() < 1e-4,
-                "face dir {:?} far {}",
-                dir,
-                ndc_far.z
-            );
-        }
     }
 }

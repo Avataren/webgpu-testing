@@ -156,6 +156,8 @@ pub struct EditorSharedState {
     pub(super) last_pixels_per_point: Option<f32>,
     /// The renderer's light probe state for the inspector (LightProbeSystem).
     pub(super) light_probe_status: crate::inspector::LightProbePanelStatus,
+    /// The point and spot lights' shadow states for the inspector (LightProbeSystem).
+    pub(super) light_shadow_status: crate::inspector::LightShadowPanelStatus,
     /// The selected entity's clips and animation state for the inspector
     /// (AnimationPanelSystem).
     pub(super) animation_status: crate::inspector::AnimationPanelStatus,
@@ -431,6 +433,7 @@ impl EditorApplicationBuilder {
             last_pixels_per_point: None,
             plugin_window_sizes: HashMap::new(),
             light_probe_status: Default::default(),
+            light_shadow_status: Default::default(),
             animation_status: Default::default(),
             library_panel: Default::default(),
             light_probe_requests: Vec::new(),

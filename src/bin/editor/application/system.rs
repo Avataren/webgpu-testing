@@ -187,6 +187,12 @@ impl<'shared> EditorAppAccess<'shared> {
         &mut self.shared.light_probe_status
     }
 
+    pub(super) fn light_shadow_status_mut(
+        &mut self,
+    ) -> &mut crate::inspector::LightShadowPanelStatus {
+        &mut self.shared.light_shadow_status
+    }
+
     #[cfg(feature = "navigation")]
     pub(super) fn navigation_status_mut(&mut self) -> &mut crate::inspector::NavigationPanelStatus {
         &mut self.shared.navigation_status

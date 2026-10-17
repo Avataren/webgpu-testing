@@ -3,7 +3,7 @@ use crate::asset::{Assets, Handle, MaterialAsset, Mesh};
 use crate::environment::Environment;
 #[path = "passes/mod.rs"]
 pub(crate) mod passes;
-use crate::renderer::internal::culling::Frustum;
+use crate::renderer::internal::culling::{frustum_corners, Frustum};
 use crate::renderer::internal::pick::PickState;
 use crate::renderer::internal::shadows::ShadowInvocation;
 use crate::renderer::internal::{
@@ -11,6 +11,7 @@ use crate::renderer::internal::{
     PipelineKey, PreparedBatches, RenderContext, RenderPipeline, ShadowResources,
     TextureBindingModel,
 };
+use crate::renderer::light_culling::{ClusterCamera, FrameClusters, LightCulling};
 use crate::renderer::{
     postprocess::{PostProcess, PostProcessCamera, PostProcessSettings, TracedLighting},
     CameraUniform, CustomRenderRequest, CustomRenderStage, LightsData, Material, RenderBatcher,
@@ -24,6 +25,20 @@ use std::sync::Arc;
 use winit::{dpi::PhysicalSize, window::Window};
 
 const INITIAL_OBJECTS_CAPACITY: u32 = 1024 * 100;
+/// A skinned mesh's joints' bind-pose boxes, and its data (held weakly, to tell when the
+/// mesh is gone).
+type JointBounds = (
+    std::sync::Weak<crate::asset::MeshData>,
+    Arc<[Option<crate::asset::LocalBounds>]>,
+);
+
+/// The largest the point and spot lights' shadow atlas grows to, in texels across: two
+/// atlases (the shadow maps and their static casters) of 256 MiB natively, 64 MiB on the
+/// web.
+#[cfg(not(target_arch = "wasm32"))]
+const DEFAULT_SHADOW_ATLAS_SIZE: u32 = 8192;
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_SHADOW_ATLAS_SIZE: u32 = 4096;
 
 /// Why a frame could not be acquired from the surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +94,9 @@ pub struct RendererStats {
     /// changed.
     pub shadow_views_rendered: u32,
     pub shadow_views_cached: u32,
+    /// Point and spot light shadow views that wanted an update this frame but wait for a
+    /// later one (the update budget, [`Renderer::set_shadow_updates_per_frame`]).
+    pub shadow_views_deferred: u32,
     /// Instances outside the camera's view this frame, left out of the scene passes.
     pub culled_instances: u32,
     /// The pick pass's, on frames that resolve a pick.
@@ -92,6 +110,43 @@ pub struct RendererStats {
     pub path_traced: bool,
     /// The frame's indirect diffuse light was ray traced (global illumination).
     pub global_illumination: bool,
+    /// The frame's lights and their shadows.
+    pub lights: LightStats,
+}
+
+/// How a shadow-casting point or spot light got its shadow in the last frame
+/// ([`Renderer::light_shadow_state`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LightShadowState {
+    /// Shadow map tiles `size` texels across; `rank` is its place in the shadow budget
+    /// (1 first).
+    ShadowMap { size: u32, rank: u32 },
+    /// Traced into the ray-traced shadow mask.
+    RayTraced,
+    /// Its reach is outside the view, so it lights nothing visible.
+    OutOfView,
+    /// Unshadowed: the shadow budget ran out before its turn.
+    OverBudget { rank: u32 },
+}
+
+/// The lights a frame drew with, and how their shadows were made.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LightStats {
+    pub directional: u32,
+    /// Point and spot lights.
+    pub local: u32,
+    /// Point and spot lights that cast shadows: with a shadow map this frame, from the
+    /// ray-traced mask, and left unshadowed for lack of room in the shadow budget.
+    pub shadowed: u32,
+    pub ray_traced: u32,
+    pub over_budget: u32,
+    /// Texels across the shadow atlas, and the share of it in use.
+    pub shadow_atlas_size: u32,
+    pub shadow_atlas_used: f32,
+    /// Light indices the cluster and grid lists needed when last read back, and lights
+    /// they left out for lack of room (the lists then grow).
+    pub cluster_light_indices: u32,
+    pub cluster_lights_dropped: u32,
 }
 
 impl RendererStats {
@@ -124,6 +179,9 @@ struct FrameState {
     depth_view: wgpu::TextureView,
     resolved_depth_view: Option<wgpu::TextureView>,
     shadow_invocations: Vec<ShadowInvocation>,
+    /// Local lights traced into the ray-traced shadow mask (indices into the frame's
+    /// lights, in mask bit order from `RT_SHADOW_LOCAL_BIT`).
+    rt_shadow_lights: Vec<usize>,
 }
 
 /// What a frame runs, decided once before its passes are recorded (and `ray_traced`
@@ -194,6 +252,8 @@ pub struct Renderer {
     objects_buffer: DynamicObjectsBuffer,
     camera_buffer: CameraBuffer,
     lights_buffer: LightsBuffer,
+    /// Sorts the point and spot lights into the view's clusters (`light_culling.rs`).
+    light_culling: LightCulling,
     light_probes: crate::renderer::light_probes::LightProbes,
     environment: EnvironmentResources,
     shadows: ShadowResources,
@@ -234,6 +294,11 @@ pub struct Renderer {
     camera_projection: CameraProjection,
     camera_fov_y: f32,
     camera_aspect: f32,
+    /// The camera the light clusters are cut for (without TAA jitter).
+    cluster_camera: ClusterCamera,
+    /// Each skinned mesh's joints' bind-pose boxes (by its data), for culling posed
+    /// instances.
+    skinned_joint_bounds: std::collections::HashMap<usize, JointBounds>,
     /// Whether editor-only overlays (the viewport grid) are drawn this frame. Off while a
     /// screenshot renders through a game camera.
     editor_overlays: bool,
@@ -279,8 +344,12 @@ impl Renderer {
         let camera_buffer = CameraBuffer::new(&context.device);
         let environment = EnvironmentResources::new(&context.device, &context.queue);
         let objects_buffer = DynamicObjectsBuffer::new(&context.device, INITIAL_OBJECTS_CAPACITY);
-        let shadows =
-            ShadowResources::new(&context.device, &objects_buffer, settings.shadow_map_size);
+        let shadows = ShadowResources::new(
+            &context.device,
+            &objects_buffer,
+            settings.shadow_map_size,
+            DEFAULT_SHADOW_ATLAS_SIZE,
+        );
         let mut light_probes = crate::renderer::light_probes::LightProbes::new(&context.device);
         let lights_buffer = LightsBuffer::new(
             &context.device,
@@ -289,6 +358,7 @@ impl Renderer {
             &environment,
             &light_probes,
         );
+        let light_culling = LightCulling::new(&context.device);
         let (pipeline, texture_binder) = RenderPipeline::new(
             &context,
             &camera_buffer,
@@ -399,6 +469,7 @@ impl Renderer {
             objects_buffer,
             camera_buffer,
             lights_buffer,
+            light_culling,
             light_probes,
             environment,
             shadows,
@@ -421,6 +492,8 @@ impl Renderer {
             camera_projection: CameraProjection::default(),
             camera_fov_y: 60f32.to_radians(),
             camera_aspect: aspect,
+            cluster_camera: ClusterCamera::default(),
+            skinned_joint_bounds: std::collections::HashMap::new(),
             editor_overlays: true,
             settings,
             pick_state: PickState::default(),
@@ -883,6 +956,17 @@ impl Renderer {
             jitter.x * scene_size.0 as f32 * 0.5,
             -jitter.y * scene_size.1 as f32 * 0.5,
         );
+        self.cluster_camera = ClusterCamera {
+            view,
+            projection: proj,
+            near: camera.near(),
+            far: camera.far(),
+            orthographic: matches!(
+                self.camera_projection,
+                CameraProjection::Orthographic { .. }
+            ),
+            aspect,
+        };
         let vp = Mat4::from_translation(jitter.extend(0.0)) * unjittered_vp;
         self.camera_frustum = Some(Frustum::from_view_proj(vp));
         let inv_vp = vp.inverse();
@@ -987,10 +1071,6 @@ impl Renderer {
         self.editor_overlays = visible;
     }
 
-    pub fn set_lights(&mut self, lights: &LightsData) {
-        self.lights_buffer.update(&self.context.queue, lights);
-    }
-
     pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u32]) -> crate::asset::Mesh {
         crate::asset::Mesh::from_vertices(&self.context.device, vertices, indices)
     }
@@ -1046,7 +1126,7 @@ impl Renderer {
             None => (surface_view.clone(), surface_view),
         };
         let mut frame_state =
-            self.prepare_frame_state(batcher, assets, environment, &lights, target_view, ui_view)?;
+            self.prepare_frame_state(batcher, assets, environment, target_view, ui_view)?;
         self.gpu_timer.begin_frame(&mut frame_state.encoder);
         if let Some(stage) = self.present_stage.as_ref() {
             stage.clear_ui(&mut frame_state.encoder);
@@ -1075,9 +1155,14 @@ impl Renderer {
         self.gpu_timer
             .mark(&mut frame_state.encoder, "acceleration_structures");
 
-        // Shadow maps the ray-traced mask replaces, when nothing else reads them.
+        // The lights, their clusters and which of them get shadow maps; directional maps
+        // the ray-traced mask replaces are skipped when nothing else reads them.
+        self.prepare_lights(&mut frame_state, &mut lights, &plan);
         let skip_maps = match self.rt_shadows.as_ref() {
-            Some(stage) if plan.may_skip_shadow_maps() => stage.traced_bits(&lights),
+            Some(stage) if plan.may_skip_shadow_maps() => {
+                stage.traced_bits(&lights, &frame_state.rt_shadow_lights)
+                    & ((1 << crate::renderer::raytracing::RT_SHADOW_LOCAL_BIT) - 1)
+            }
             _ => 0,
         };
         self.run_shadow_pass(
@@ -1334,7 +1419,6 @@ impl Renderer {
         batcher: &RenderBatcher,
         assets: &Assets,
         environment: &Environment,
-        lights: &LightsData,
         surface_view: wgpu::TextureView,
         ui_view: wgpu::TextureView,
     ) -> Result<FrameState, SurfaceError> {
@@ -1345,10 +1429,39 @@ impl Renderer {
                 label: Some("Encoder"),
             });
 
-        let mut prepared_batches =
-            PreparedBatches::from_batcher(batcher, self.camera_position, &|mesh| {
-                assets.meshes.get(mesh).map(Mesh::local_bounds)
-            });
+        // Each skinned mesh's joints' bind-pose boxes, for its posed bounds.
+        for job in batcher.skin_jobs().values() {
+            let Some(mesh) = assets.meshes.get(job.mesh) else {
+                continue;
+            };
+            let data = mesh.shared_data();
+            let key = Arc::as_ptr(data) as usize;
+            let fresh = self
+                .skinned_joint_bounds
+                .get(&key)
+                .is_some_and(|(weak, _)| {
+                    weak.upgrade().is_some_and(|live| Arc::ptr_eq(&live, data))
+                });
+            if !fresh {
+                let joints = crate::renderer::internal::culling::joint_bounds(data);
+                self.skinned_joint_bounds
+                    .insert(key, (Arc::downgrade(data), joints.into()));
+            }
+        }
+        self.skinned_joint_bounds
+            .retain(|_, (weak, _)| weak.strong_count() > 0);
+        let joint_bounds = &self.skinned_joint_bounds;
+        let mut prepared_batches = PreparedBatches::from_batcher(
+            batcher,
+            self.camera_position,
+            &|mesh| assets.meshes.get(mesh).map(Mesh::local_bounds),
+            &|mesh, key| {
+                let job = batcher.skin_jobs().get(&key)?;
+                let data = assets.meshes.get(mesh)?.shared_data();
+                let (_, joints) = joint_bounds.get(&(Arc::as_ptr(data) as usize))?;
+                crate::renderer::internal::culling::skinned_bounds(joints, &job.palette)
+            },
+        );
         let culled_instances = match self.camera_frustum.as_ref() {
             Some(frustum) => prepared_batches.cull_for_camera(frustum),
             None => 0,
@@ -1385,8 +1498,6 @@ impl Renderer {
             prepared_batches.all(),
             prepared_batches.materials(),
         )?;
-        self.lights_buffer.update(&self.context.queue, lights);
-
         let render_region = self.display_region();
         let scale = self.render_scale();
         let scene_region = render_region.map(|region| region.scaled(scale));
@@ -1412,6 +1523,202 @@ impl Renderer {
             depth_view: self.context.depth.view.clone(),
             resolved_depth_view: None,
             shadow_invocations: Vec::new(),
+            rt_shadow_lights: Vec::new(),
+        })
+    }
+
+    /// Settle the frame's lights: keep the [`MAX_LOCAL_LIGHTS`] nearest local lights,
+    /// give the highest-ranked shadow casters bits of the ray-traced shadow mask (when it
+    /// is traced) and the rest shadow map tiles (`ShadowResources::plan_local`), upload
+    /// them, and record the culling dispatch that sorts them into the view's clusters.
+    fn prepare_lights(
+        &mut self,
+        frame: &mut FrameState,
+        lights: &mut LightsData,
+        plan: &FramePlan,
+    ) {
+        use crate::renderer::lights::{
+            LightsHeader, LocalLightRaw, ShadowsUniform, MAX_LOCAL_LIGHTS,
+        };
+        use crate::renderer::raytracing::{RT_SHADOW_LOCAL_BIT, RT_SHADOW_LOCAL_LIGHTS};
+        use bytemuck::Zeroable;
+        let camera = self.cluster_camera;
+        lights.limit_local_lights(self.camera_position, MAX_LOCAL_LIGHTS);
+        let local = lights.local_lights();
+
+        let unjittered = camera.projection * camera.view;
+        let viewport_height = self.viewport_height() as f32;
+        let pixels_per_unit = match self.camera_projection {
+            CameraProjection::Orthographic { top, bottom, .. } => {
+                viewport_height / (top - bottom).abs().max(1e-3)
+            }
+            CameraProjection::Perspective { fov_y_radians, .. } => {
+                viewport_height / (2.0 * (fov_y_radians * 0.5).tan().max(1e-3))
+            }
+        };
+        let shadow_camera = crate::renderer::internal::shadow_atlas::ShadowCamera {
+            position: self.camera_position,
+            frustum: Frustum::from_view_proj(unjittered),
+            pixels_per_unit,
+            orthographic: camera.orthographic,
+            viewport_height,
+        };
+
+        // The ray-traced mask takes the highest-ranked shadow casters it has bits for;
+        // their maps are skipped when only the main pass reads the maps.
+        frame.rt_shadow_lights.clear();
+        if plan.trace_rt_shadows() {
+            frame.rt_shadow_lights.extend(
+                crate::renderer::internal::shadow_atlas::rank_shadow_casters(local, &shadow_camera)
+                    .into_iter()
+                    .take(RT_SHADOW_LOCAL_LIGHTS),
+            );
+        }
+        let mut skip = vec![false; local.len()];
+        if plan.may_skip_shadow_maps() {
+            for &index in &frame.rt_shadow_lights {
+                skip[index] = true;
+            }
+        }
+        let corners = frustum_corners(unjittered);
+        if self.shadows.plan_local(
+            &self.context.device,
+            lights,
+            &shadow_camera,
+            &corners,
+            &skip,
+        ) {
+            self.lights_buffer.rebuild_bind_group(
+                &self.context.device,
+                &self.shadows,
+                &self.environment,
+            );
+        }
+
+        let local = lights.local_lights();
+        let local_shadows = self.shadows.local_frame();
+        let mut rt_bits = vec![None; local.len()];
+        for (bit, &index) in frame.rt_shadow_lights.iter().enumerate() {
+            rt_bits[index] = Some(RT_SHADOW_LOCAL_BIT + bit as u32);
+        }
+        let raw: Vec<LocalLightRaw> = local
+            .iter()
+            .enumerate()
+            .map(|(index, light)| {
+                LocalLightRaw::new(light, local_shadows.slots[index], rt_bits[index])
+            })
+            .collect();
+
+        let clusters = FrameClusters::new(camera, lights, plan.ray_traced);
+        let fields = clusters.header_fields();
+        let mut header = LightsHeader::zeroed();
+        let directional = lights.directional_lights();
+        header.counts = [
+            directional.len() as u32,
+            local.len() as u32,
+            u32::from(clusters.world.is_some()),
+            0,
+        ];
+        header.directionals[..directional.len()].copy_from_slice(directional);
+        header.cluster_view_proj = fields.view_proj;
+        header.cluster_depth_axis = fields.depth_axis;
+        header.cluster_dims = fields.dims;
+        header.cluster_slices = fields.slices;
+        header.grid_origin = fields.grid_origin;
+        header.grid_dims = fields.grid_dims;
+        let shadows_uniform = ShadowsUniform::new(lights, &local_shadows.uniforms);
+        self.lights_buffer.upload(
+            &self.context.device,
+            &self.context.queue,
+            &header,
+            &raw,
+            &shadows_uniform,
+            &self.shadows,
+            &self.environment,
+        );
+
+        if let Some(pool) = self
+            .light_culling
+            .poll(&self.context.device, self.lights_buffer.pool)
+        {
+            self.lights_buffer.resize_lists(
+                &self.context.device,
+                pool,
+                &self.shadows,
+                &self.environment,
+            );
+            self.light_culling.reset_readback();
+        }
+        self.light_culling.dispatch(
+            &self.context.device,
+            &self.context.queue,
+            &mut frame.encoder,
+            &self.lights_buffer.buffer,
+            &self.lights_buffer.lists,
+            self.lights_buffer.pool,
+            &clusters,
+        );
+        self.gpu_timer.mark(&mut frame.encoder, "light_culling");
+
+        let atlas = self.shadows.atlas_stats();
+        frame.stats.lights = LightStats {
+            directional: directional.len() as u32,
+            local: local.len() as u32,
+            shadowed: atlas.shadowed,
+            ray_traced: frame.rt_shadow_lights.len() as u32,
+            over_budget: atlas.over_budget,
+            shadow_atlas_size: atlas.size,
+            shadow_atlas_used: atlas.used,
+            cluster_light_indices: self.light_culling.last_needed,
+            cluster_lights_dropped: self.light_culling.last_dropped,
+        };
+    }
+
+    /// The largest the point and spot lights' shadow atlas grows to, in texels across.
+    pub fn shadow_atlas_max_size(&self) -> u32 {
+        self.shadows.max_atlas_size()
+    }
+
+    /// Let the point and spot lights' shadow atlas grow to `size` texels across (a power
+    /// of two from 1024, within the GPU's texture limit; 0: the default, 8192 natively and
+    /// 4096 on the web). Each atlas texel is 8 bytes (the shadow maps and their static
+    /// casters). A bigger atlas holds more shadowed lights at higher resolution.
+    pub fn set_shadow_atlas_size(&mut self, size: u32) {
+        let size = if size == 0 {
+            DEFAULT_SHADOW_ATLAS_SIZE
+        } else {
+            size
+        };
+        self.shadows.set_max_atlas_size(&self.context.device, size);
+    }
+
+    /// Rebuild at most `faces` point and spot light shadow views a frame (0: the default,
+    /// 48). The highest-ranked lights' come first, and every view waits at most a few
+    /// frames; views over the budget keep last frame's map (a moving character's shadow
+    /// trails a frame or two).
+    pub fn set_shadow_updates_per_frame(&mut self, faces: u32) {
+        let faces = if faces == 0 {
+            crate::renderer::internal::shadows::DEFAULT_SHADOW_UPDATES_PER_FRAME
+        } else {
+            faces
+        };
+        self.shadows.set_update_budget(faces);
+    }
+
+    pub fn shadow_updates_per_frame(&self) -> u32 {
+        self.shadows.update_budget()
+    }
+
+    /// The shadow state of the point or spot light with key `key` (see
+    /// `LocalLight::key`) in the last frame: `None` for a light that casts no shadow (or
+    /// was not drawn).
+    pub fn light_shadow_state(&self, key: u64) -> Option<LightShadowState> {
+        use crate::renderer::internal::shadow_atlas::ShadowState;
+        Some(match self.shadows.light_state(key)? {
+            ShadowState::Atlas { size, rank } => LightShadowState::ShadowMap { size, rank },
+            ShadowState::RayTraced => LightShadowState::RayTraced,
+            ShadowState::OutOfView => LightShadowState::OutOfView,
+            ShadowState::OverBudget { rank } => LightShadowState::OverBudget { rank },
         })
     }
 
@@ -1443,6 +1750,7 @@ impl Renderer {
         frame.stats.shadow_draw_calls += outcome.draw_calls;
         frame.stats.shadow_views_rendered += outcome.views_rendered;
         frame.stats.shadow_views_cached += outcome.views_cached;
+        frame.stats.shadow_views_deferred += outcome.views_deferred;
     }
 
     fn run_depth_prepass(&mut self, frame: &mut FrameState, assets: &Assets) {
@@ -1640,6 +1948,7 @@ impl Renderer {
                 scene,
                 self.texture_binder.global_bind_group(),
                 lights,
+                &frame.rt_shadow_lights,
                 self.postprocess.settings().rt_shadows.softness,
                 self.postprocess.settings().rt_shadows.light_radius,
                 self.jitter_index,

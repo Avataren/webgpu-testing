@@ -1369,6 +1369,10 @@ pub struct PointLight {
     pub color: Vec3,
     pub intensity: f32,
     pub range: f32,
+    /// Weighs the light's claim on the shadow budget against other lights' (with
+    /// `CanCastShadow`): 1 ranks it by its size on screen and brightness alone, higher
+    /// keeps its shadows (and their resolution) ahead of others, 0 gives them up first.
+    pub shadow_priority: f32,
 }
 
 impl Default for PointLight {
@@ -1377,6 +1381,7 @@ impl Default for PointLight {
             color: Vec3::splat(1.0),
             intensity: 120.0,
             range: 12.0,
+            shadow_priority: 1.0,
         }
     }
 }
@@ -1425,6 +1430,8 @@ pub struct SpotLight {
     pub inner_angle: f32,
     pub outer_angle: f32,
     pub range: f32,
+    /// See [`PointLight::shadow_priority`].
+    pub shadow_priority: f32,
 }
 
 impl Default for SpotLight {
@@ -1435,6 +1442,7 @@ impl Default for SpotLight {
             inner_angle: 0.35,
             outer_angle: 0.6,
             range: 18.0,
+            shadow_priority: 1.0,
         }
     }
 }

@@ -17,7 +17,8 @@
 //! - `graphics_settings()` returns the settings as the page shows them (`anti_aliasing`,
 //!   `render_scale`, `upscaler`, `ray_tracing` (off: every effect raster, light probes
 //!   baked), `ray_traced_shadows`, `reflections`, `ambient_occlusion`,
-//!   `global_illumination`, `path_tracing`, `vsync`, ...) plus `capabilities`
+//!   `global_illumination`, `path_tracing`, `vsync`, `shadow_atlas_size`,
+//!   `shadow_updates_per_frame`, ...) plus `capabilities`
 //!   (`ray_tracing`, `path_tracing`, `upscaling`), e.g. for a benchmark's report
 //! - `set_graphics_settings(fields[, { save = false }])` changes the named settings like
 //!   the page does (unknown names and values are errors). They are saved as the player's
