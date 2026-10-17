@@ -151,9 +151,16 @@ starts (`build_on_start`), which suits small scenes and procedurally built level
   stuck within two radii of its destination (someone stands on the spot) has arrived.
 - **Obstacles**: carving rebuilds the touched tiles from a cache of their voxels, at most
   six a frame; agents whose corridor crossed a rebuilt tile replan.
+- **Steered by a player**: `nav_steer(entity, vx, vz[, yaw])` drives an agent by velocity
+  instead of toward a destination (send it every frame). It keeps to the navmesh (walls and
+  edges stop it, stairs and ramps carry it), it avoids nobody, and everyone else makes way
+  for it, standing or walking. `engine.third_person` drives an agent this way with
+  `drive = "navigation"`, which is how a game hands an AI character to the player for a
+  while (Lantern Market's possession). `nav_stop` or a destination ends it.
 
 States: `idle`, `planning`, `moving`, `arrived`, `failed` (no path at all), `off_mesh`
-(crossing a link), `lost` (off every navmesh). Scripts on an agent get `on_nav_arrived(self)`,
+(crossing a link), `lost` (off every navmesh); a steered agent is `moving`, with `steering`
+set in `nav_agent_state`. Scripts on an agent get `on_nav_arrived(self)`,
 `on_nav_failed(self, reason)`, `on_nav_link_start(self, {start, finish, link})` and
 `on_nav_link_end(self)`.
 

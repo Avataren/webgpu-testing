@@ -312,6 +312,8 @@ pub struct CrowdAgent {
     pub requested_target: Option<Vec3>,
     /// The path ends short of the target (unreachable for now).
     pub partial: bool,
+    /// Driven by a velocity (a player's input) instead of toward a target: that velocity.
+    pub steer: Option<Vec3>,
     boundary: LocalBoundary,
     neighbours: Vec<usize>,
     traversal: Option<OffMeshTraversal>,
@@ -423,6 +425,7 @@ impl Crowd {
             target: None,
             requested_target: None,
             partial: false,
+            steer: None,
             boundary: LocalBoundary::default(),
             neighbours: Vec::new(),
             traversal: None,
@@ -469,6 +472,7 @@ impl Crowd {
         let Some(agent) = self.agents.get_mut(id).and_then(Option::as_mut) else {
             return false;
         };
+        agent.steer = None;
         agent.requested_target = Some(target);
         let extents = Vec3::new(2.0, agent.params.height.max(2.0), 2.0);
         match mesh.find_nearest_poly(target, extents) {
@@ -496,6 +500,7 @@ impl Crowd {
             agent.target = None;
             agent.requested_target = None;
             agent.partial = false;
+            agent.steer = None;
             let r = agent.corridor.first_poly();
             let pos = agent.corridor.pos;
             agent.corridor.reset(r, pos);
@@ -505,6 +510,26 @@ impl Crowd {
             }
         }
         self.path_queue.retain(|&queued| queued != id);
+    }
+
+    /// Move at `velocity` (world space, m/s; its height is ignored) instead of toward a
+    /// target, the way a player's input drives a character: it keeps to the navmesh (walls
+    /// and edges stop it), the others make way for it, and it avoids nobody itself. It
+    /// lasts until a target or `reset_move_target`; ask again every update.
+    pub fn request_move_velocity(&mut self, id: usize, velocity: Vec3) -> bool {
+        let Some(agent) = self.agents.get_mut(id).and_then(Option::as_mut) else {
+            return false;
+        };
+        agent.steer = Some(Vec3::new(velocity.x, 0.0, velocity.z));
+        agent.target = None;
+        agent.requested_target = None;
+        agent.partial = false;
+        agent.corners.clear();
+        if agent.state != AgentState::OffMesh && agent.state != AgentState::Lost {
+            agent.state = AgentState::Moving;
+        }
+        self.path_queue.retain(|&queued| queued != id);
+        true
     }
 
     /// Put an agent somewhere else at once.
@@ -520,7 +545,9 @@ impl Crowd {
         agent.vel = Vec3::ZERO;
         agent.traversal = None;
         agent.boundary.valid = false;
-        if let Some(target) = agent.requested_target {
+        if agent.steer.is_some() {
+            agent.state = AgentState::Moving;
+        } else if let Some(target) = agent.requested_target {
             agent.state = AgentState::Planning;
             let _ = target;
             if !self.path_queue.contains(&id) {
@@ -798,11 +825,19 @@ impl Crowd {
             agent.desired_vel = Vec3::ZERO;
             return;
         }
+        let first = agent.corridor.first_poly();
+        // Driven by a velocity: the corridor is only the polygon it stands on (moving on
+        // the mesh grows it), and it goes the way it is sent.
+        if let Some(velocity) = agent.steer {
+            let pos = agent.corridor.pos;
+            agent.corridor.reset(first, pos);
+            agent.desired_vel = velocity;
+            return;
+        }
         let filter = agent.params.filter.clone();
 
         // Walls nearby.
         let range = agent.params.collision_query_range;
-        let first = agent.corridor.first_poly();
         if !agent.boundary.valid
             || agent.boundary.first_poly != first
             || dist_xz(agent.boundary.center, agent.pos) > range * 0.25
@@ -932,7 +967,8 @@ impl Crowd {
         if agent.state == AgentState::OffMesh || agent.state == AgentState::Lost {
             return agent.vel;
         }
-        if !agent.params.avoidance {
+        // A steered agent goes where it is sent; the others make way.
+        if !agent.params.avoidance || agent.steer.is_some() {
             return agent.desired_vel;
         }
         let moving = agent.state == AgentState::Moving;
@@ -947,8 +983,9 @@ impl Crowd {
                 xz(o.pos - agent.pos).dot(heading) > 0.0 && xz(o.desired_vel).dot(heading) < 0.0;
             let other_moving = o.state == AgentState::Moving || o.state == AgentState::OffMesh;
             // Standing agents leave most of the avoiding to those walking; priority
-            // shifts the share between walkers.
+            // shifts the share between walkers. Everyone makes way for a steered agent.
             let responsibility = match (moving, other_moving) {
+                _ if o.steer.is_some() => 1.0,
                 (true, false) => 0.85,
                 (false, true) => 0.15,
                 _ => (0.5 + (o.params.priority - agent.params.priority) * 0.5).clamp(0.1, 0.9),
@@ -1135,7 +1172,7 @@ impl Crowd {
                 agent.pos = traversal.end;
                 agent.traversal = None;
                 agent.vel = Vec3::ZERO;
-                agent.state = if agent.target.is_some() {
+                agent.state = if agent.target.is_some() || agent.steer.is_some() {
                     AgentState::Moving
                 } else {
                     AgentState::Idle
@@ -1161,8 +1198,15 @@ fn update_boundary(mesh: &NavMesh, agent: &mut CrowdAgent, filter: &QueryFilter)
     let mut walls: Vec<(f32, Vec2, Vec2)> = Vec::new();
     let center = xz(agent.pos);
     for r in polys {
+        let verts = mesh.poly_vertices(r);
+        let inside =
+            verts.iter().fold(Vec2::ZERO, |sum, v| sum + xz(*v)) / verts.len().max(1) as f32;
         for (a, b) in poly_wall_segments(mesh, r, filter) {
-            let (a2, b2) = (xz(a), xz(b));
+            let (mut a2, mut b2) = (xz(a), xz(b));
+            // The walkable side on the right, as avoidance takes walls.
+            if (a2 - inside).perp_dot(b2 - a2) > 0.0 {
+                std::mem::swap(&mut a2, &mut b2);
+            }
             let ab = b2 - a2;
             let t = if ab.length_squared() > 0.0 {
                 ((center - a2).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
@@ -1435,6 +1479,64 @@ mod tests {
         assert!(events.contains(&CrowdEvent::OffMeshEnd(id)));
         assert!(events.contains(&CrowdEvent::Arrived(id)), "{events:?}");
         assert!(crowd.agent(id).unwrap().pos.y.abs() < 0.3);
+    }
+
+    #[test]
+    fn a_steered_agent_goes_where_it_is_sent_and_keeps_to_the_mesh() {
+        let mesh = mesh_with(&[(Vec3::new(0.0, 0.0, 9.5), Vec3::new(16.0, 3.0, 10.5))]);
+        let mut crowd = Crowd::new();
+        let id = crowd.add_agent(&mesh, Vec3::new(4.0, 0.0, 4.0), AgentParams::default());
+        let steer = |crowd: &mut Crowd, velocity: Vec3, seconds: f32| {
+            for _ in 0..(seconds * 60.0) as usize {
+                assert!(crowd.request_move_velocity(id, velocity));
+                crowd.update(&mesh, 1.0 / 60.0, &[]);
+            }
+        };
+        // Faster than its max_speed, which only walks to targets.
+        steer(&mut crowd, Vec3::new(0.0, 0.0, 3.0), 1.0);
+        let agent = crowd.agent(id).unwrap();
+        assert_eq!(agent.state, AgentState::Moving);
+        assert!((agent.vel.z - 3.0).abs() < 0.05, "{:?}", agent.vel);
+        // On into the wall: it stops at the mesh's edge.
+        steer(&mut crowd, Vec3::new(0.0, 0.0, 3.0), 3.0);
+        let pos = crowd.agent(id).unwrap().pos;
+        assert!(pos.z > 8.5 && pos.z < 9.5, "{pos:?}");
+        assert!((pos.x - 4.0).abs() < 0.05, "{pos:?}");
+        // Along the wall and off the end of the floor.
+        steer(&mut crowd, Vec3::new(-3.0, 0.0, 0.0), 4.0);
+        let agent = crowd.agent(id).unwrap();
+        assert!(agent.pos.x > 0.0 && agent.pos.x < 0.8, "{:?}", agent.pos);
+        assert!(agent.corridor.path.len() <= 2, "{:?}", agent.corridor.path);
+        // A target ends the steering.
+        assert!(crowd.request_move_target(&mesh, id, Vec3::new(4.0, 0.0, 4.0)));
+        let events = run(&mut crowd, &mesh, 10.0);
+        assert!(events.contains(&CrowdEvent::Arrived(id)), "{events:?}");
+        assert!(crowd.agent(id).unwrap().steer.is_none());
+    }
+
+    #[test]
+    fn everyone_makes_way_for_a_steered_agent() {
+        let mesh = mesh_with(&[]);
+        let mut crowd = Crowd::new();
+        let player = crowd.add_agent(&mesh, Vec3::new(3.0, 0.0, 10.0), AgentParams::default());
+        // Someone standing in the way, and someone walking straight at it.
+        let standing = crowd.add_agent(&mesh, Vec3::new(9.0, 0.0, 10.0), AgentParams::default());
+        let walker = crowd.add_agent(&mesh, Vec3::new(17.0, 0.0, 10.0), AgentParams::default());
+        crowd.request_move_target(&mesh, walker, Vec3::new(2.0, 0.0, 10.0));
+        let mut closest = f32::MAX;
+        let mut drift = 0.0f32;
+        for _ in 0..(5 * 60) {
+            crowd.request_move_velocity(player, Vec3::new(2.5, 0.0, 0.0));
+            crowd.update(&mesh, 1.0 / 60.0, &[]);
+            let p = crowd.agent(player).unwrap().pos;
+            drift = drift.max((p.z - 10.0).abs());
+            for other in [standing, walker] {
+                closest = closest.min(dist_xz(p, crowd.agent(other).unwrap().pos));
+            }
+        }
+        assert!(crowd.agent(player).unwrap().pos.x > 14.0);
+        assert!(drift < 0.1, "the steered agent was pushed {drift} m aside");
+        assert!(closest > 0.6, "came within {closest}");
     }
 
     #[test]

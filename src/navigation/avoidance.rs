@@ -38,12 +38,16 @@ pub struct AvoidanceInput<'a> {
     /// The length of the simulation step (for agents already overlapping).
     pub time_step: f32,
     pub neighbours: &'a [Neighbour],
-    /// Wall segments (navmesh edges with nothing beyond them).
+    /// Wall segments (navmesh edges with nothing beyond them), walkable side on the right
+    /// going from the first point to the second (it decides for an agent on the line).
     pub walls: &'a [(Vec2, Vec2)],
     /// How far the agent keeps from walls: the navmesh already stops an agent radius
     /// short of what it bounds, so this is a sliver, not the agent's radius.
     pub wall_radius: f32,
 }
+
+/// Within this of a wall's line (m), an agent counts as standing on it.
+const ON_WALL: f32 = 0.01;
 
 fn det(a: Vec2, b: Vec2) -> f32 {
     a.x * b.y - a.y * b.x
@@ -70,9 +74,16 @@ pub fn compute_velocity(input: &AvoidanceInput) -> Vec2 {
             continue;
         }
         let radius = input.wall_radius.max(0.01);
-        // Walk the segment so the agent is on its right (RVO2 only sees that side).
+        // Walk the segment so the agent is on its right (RVO2 only sees that side). On
+        // the line (pushed to the navmesh's edge) it is on the walkable side: otherwise
+        // the wall would only let it move off the navmesh.
         let left_of = det(a - position, b - a);
-        let (p1, p2) = if left_of < 0.0 { (a, b) } else { (b, a) };
+        let on_line = left_of.abs() <= ON_WALL * (b - a).length();
+        let (p1, p2) = if left_of < 0.0 || on_line {
+            (a, b)
+        } else {
+            (b, a)
+        };
         let obstacle1 = ObstacleVertex {
             point: p1,
             unit_dir: (p2 - p1).normalize(),
@@ -508,5 +519,16 @@ mod tests {
         let walls = [(Vec2::new(1.0, -5.0), Vec2::new(1.0, 5.0))];
         let v = compute_velocity(&input(Vec2::ZERO, Vec2::new(1.5, 0.0), &[], &walls));
         assert!(v.x < 1.5 * 0.9, "slows before the wall: {v:?}");
+    }
+
+    #[test]
+    fn an_agent_on_a_wall_walks_away_from_it() {
+        // Pushed onto the navmesh's edge (x = 0, walkable toward -x: on the right going
+        // down -y), it can leave the wall but not cross it.
+        let walls = [(Vec2::new(0.0, 5.0), Vec2::new(0.0, -5.0))];
+        let away = compute_velocity(&input(Vec2::ZERO, Vec2::new(-1.5, 0.5), &[], &walls));
+        assert!(away.x < -1.0, "walks away: {away:?}");
+        let into = compute_velocity(&input(Vec2::ZERO, Vec2::new(1.5, 0.5), &[], &walls));
+        assert!(into.x <= 1e-3, "stays out of the wall: {into:?}");
     }
 }

@@ -52,6 +52,15 @@ pub enum NavCommand {
         entity: Entity,
         yaw: f32,
     },
+    /// Drive the agent by `velocity` (world, m/s) instead of toward a destination, as a
+    /// player's input does: see `Crowd::request_move_velocity`. It turns to face `yaw`
+    /// (radians about +Y; 0 faces +Z) when given, else the way it moves. Send it every
+    /// frame; `Stop` or `SetDestination` end it.
+    Steer {
+        entity: Entity,
+        velocity: Vec3,
+        yaw: Option<f32>,
+    },
     SetDebugDraw(NavDebugDraw),
     /// Build the navmeshes again from the scene (all, or one surface's).
     Rebuild {
@@ -111,6 +120,8 @@ pub struct AgentStatus {
     /// Its path stops short of the target (blocked for now).
     pub partial: bool,
     pub corners: Vec<Vec3>,
+    /// Driven by velocity (`NavCommand::Steer`), not toward a target.
+    pub steering: bool,
 }
 
 /// A navmesh as the inspector and tools see it.
@@ -263,6 +274,8 @@ struct AgentRuntime {
     yaw: f32,
     /// A facing to turn to while standing (`NavCommand::Face`).
     face: Option<f32>,
+    /// A facing held while steered (`NavCommand::Steer` with a yaw), walking or not.
+    steer_face: Option<f32>,
     jumped: bool,
     landed: bool,
 }
@@ -1117,6 +1130,7 @@ impl SceneNavigation {
                     component,
                     character,
                     face: None,
+                    steer_face: None,
                     jumped: false,
                     landed: false,
                 },
@@ -1130,12 +1144,13 @@ impl SceneNavigation {
                 NavCommand::SetDebugDraw(debug) => self.set_debug_draw(debug),
                 NavCommand::Rebuild { surface } => self.rebuild_now(world, assets, surface),
                 NavCommand::SetDestination { entity, target } => {
-                    let Some(agent) = self.agents.get(&entity) else {
+                    let Some(agent) = self.agents.get_mut(&entity) else {
                         log::warn!(
                             "Navigation: {entity:?} is not a NavAgent (or has no navmesh to walk)"
                         );
                         continue;
                     };
+                    agent.steer_face = None;
                     let (surface, id) = (agent.surface, agent.id);
                     let Some(index) = self.surface_index(surface) else {
                         continue;
@@ -1153,10 +1168,32 @@ impl SceneNavigation {
                     }
                 }
                 NavCommand::Stop { entity } => {
-                    if let Some(agent) = self.agents.get(&entity) {
-                        if let Some(index) = self.surface_index(agent.surface) {
-                            self.surfaces[index].crowd.reset_move_target(agent.id);
+                    if let Some(agent) = self.agents.get_mut(&entity) {
+                        agent.steer_face = None;
+                        let (surface, id) = (agent.surface, agent.id);
+                        if let Some(index) = self.surface_index(surface) {
+                            self.surfaces[index].crowd.reset_move_target(id);
                         }
+                    }
+                }
+                NavCommand::Steer {
+                    entity,
+                    velocity,
+                    yaw,
+                } => {
+                    let Some(agent) = self.agents.get_mut(&entity) else {
+                        log::warn!(
+                            "Navigation: {entity:?} is not a NavAgent (or has no navmesh to walk)"
+                        );
+                        continue;
+                    };
+                    agent.face = None;
+                    agent.steer_face = yaw.map(|yaw| yaw - agent.component.yaw_offset.to_radians());
+                    let (surface, id) = (agent.surface, agent.id);
+                    if let Some(index) = self.surface_index(surface) {
+                        self.surfaces[index]
+                            .crowd
+                            .request_move_velocity(id, velocity);
                     }
                 }
                 NavCommand::Face { entity, yaw } => {
@@ -1369,7 +1406,13 @@ impl SceneNavigation {
             if walking && runtime.face.is_some() && horizontal.length() > 0.3 {
                 runtime.face = None;
             }
-            if component.face_movement && horizontal.length() > 0.08 && runtime.face.is_none() {
+            if let Some(target) = runtime.steer_face.filter(|_| agent.steer.is_some()) {
+                runtime.yaw =
+                    turn_toward(runtime.yaw, target, component.turn_speed.to_radians() * dt);
+            } else if component.face_movement
+                && horizontal.length() > 0.08
+                && runtime.face.is_none()
+            {
                 let target = horizontal.x.atan2(horizontal.z);
                 runtime.yaw =
                     turn_toward(runtime.yaw, target, component.turn_speed.to_radians() * dt);
@@ -1530,6 +1573,7 @@ impl SceneNavigation {
             remaining_distance: agent.remaining_distance(),
             partial: agent.partial,
             corners: agent.corners.iter().map(|c| c.pos).collect(),
+            steering: agent.steer.is_some(),
         })
     }
 

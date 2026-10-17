@@ -120,6 +120,17 @@ pub(crate) fn register_navigation_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     globals.set(
+        "nav_steer",
+        lua.create_function(|_, (entity, vx, vz, yaw): (i64, f64, f64, Option<f64>)| {
+            queue(entity, |entity| NavCommand::Steer {
+                entity,
+                velocity: vector(vx, 0.0, vz),
+                yaw: yaw.map(|yaw| yaw as f32),
+            })
+        })?,
+    )?;
+
+    globals.set(
         "nav_face",
         lua.create_function(|_, (entity, yaw): (i64, f64)| {
             queue(entity, |entity| NavCommand::Face {
@@ -171,6 +182,7 @@ pub(crate) fn register_navigation_api(lua: &Lua) -> LuaResult<()> {
                 table.set("remaining_distance", remaining)?;
             }
             table.set("partial", status.partial)?;
+            table.set("steering", status.steering)?;
             let corners = lua.create_table()?;
             for (i, corner) in status.corners.iter().enumerate() {
                 corners.set(i + 1, vec3_table(lua, *corner)?)?;

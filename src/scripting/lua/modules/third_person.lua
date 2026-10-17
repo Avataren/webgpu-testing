@@ -13,6 +13,11 @@
 --   the right button steers: the character turns with the camera and A/D strafe. Both
 --   buttons together run forward. Up and down with either button tilts the camera.
 --
+-- It can drive a NavAgent instead (`drive = "navigation"`): the character then keeps to
+-- the navmesh, walking where agents walk (stairs, bridges; walls and edges stop it), and
+-- the crowd makes way for it. That is how a game hands an AI-driven character to the
+-- player for a while: stop its brain and its walk, and steer it with this.
+--
 -- It is built into the engine as `engine.third_person`; the editor's "Make Character"
 -- writes a script that uses it. To change it beyond what the options and methods below
 -- allow, copy this file to your scripts folder as engine/third_person.lua, which then
@@ -42,7 +47,9 @@
 -- true) or animation_trigger(self, "attack") and add states that use them.
 --
 -- How the body moves (speeds, jump height, slopes, steps) is the CharacterController
--- component's; change it with set_component(self, "CharacterController", { ... }).
+-- component's; change it with set_component(self, "CharacterController", { ... }). A
+-- NavAgent driven by this takes walk_speed and run_speed from the options and turns at
+-- its own turn_speed; it does not jump.
 
 local ThirdPerson = {}
 ThirdPerson.__index = ThirdPerson
@@ -82,6 +89,12 @@ ThirdPerson.defaults = {
     -- "mmo": the character has strafe animations, so strafing keeps it facing forward;
     -- without them it turns to run the way it strafes.
     strafes = true,
+    -- What it moves: "character" (the entity's CharacterController) or "navigation" (its
+    -- NavAgent, along the navmesh).
+    drive = "character",
+    -- "navigation": walking and running speeds (m/s).
+    walk_speed = 1.5,
+    run_speed = 3.5,
 }
 
 local function merged(defaults, options)
@@ -145,7 +158,7 @@ function ThirdPerson.new(entity, options)
         set_component(self.camera, "SpringCamera", { mouse_look = self.options.scheme ~= "mmo" })
     end
     if self.options.scheme ~= "mmo" then
-        character_face(entity, nil)
+        self:face(nil)
     end
     return self
 end
@@ -161,6 +174,31 @@ function ThirdPerson:update(dt)
         x, y, run, jump = self:read_input()
         dx, dz = self:move_direction(x, y)
         self.move = { x = 0, y = (x ~= 0 or y ~= 0) and 1 or 0 }
+    end
+    self:drive(dx, dz, run, jump)
+end
+
+-- ---------------------------------------------------------------------------------
+-- The body: a CharacterController, or a NavAgent on the navmesh
+-- ---------------------------------------------------------------------------------
+
+--- Turn the body to `yaw` (radians about +Y, 0 = the model's +Z; nil: the way it moves).
+function ThirdPerson:face(yaw, instant)
+    if self.options.drive == "navigation" then
+        self.nav_yaw = yaw
+    else
+        character_face(self.entity, yaw, instant)
+    end
+end
+
+--- Move the body along the ground direction (dx, dz) (length up to 1), running or not,
+--- and jump when asked (a NavAgent cannot).
+function ThirdPerson:drive(dx, dz, run, jump)
+    if self.options.drive == "navigation" then
+        local speed = run and self.options.run_speed or self.options.walk_speed
+        nav_steer(self.entity, dx * speed, dz * speed, self.nav_yaw)
+        self.state = nav_agent_state(self.entity)
+        return
     end
     character_move(self.entity, dx, dz, run)
     if jump then character_jump(self.entity) end
@@ -279,7 +317,7 @@ function ThirdPerson:mmo_steer(dt)
     elseif x ~= 0 and not o.strafes then
         offset = -x * math.pi / 2
     end
-    character_face(self.entity, self.facing + offset, steering and offset == self.body_offset)
+    self:face(self.facing + offset, steering and offset == self.body_offset)
     self.body_offset = offset
 
     self.move = { x = x, y = y }
@@ -304,10 +342,12 @@ function ThirdPerson:jumped() end
 --- Forward on_landed here; `speed` is the downward speed at impact (m/s).
 function ThirdPerson:landed(speed) end
 
---- Give the cursor back (when switching schemes, or before the script goes away).
+--- Give the cursor back (when switching schemes, or before the script goes away), and
+--- stop a NavAgent's steering where it stands.
 function ThirdPerson:release()
     if self.dragging and self.options.hide_cursor_while_dragging then set_cursor_locked(false) end
     self.dragging = false
+    if self.options.drive == "navigation" then nav_stop(self.entity) end
 end
 
 return ThirdPerson

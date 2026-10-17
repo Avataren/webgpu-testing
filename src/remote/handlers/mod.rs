@@ -452,10 +452,12 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "asset.reload" => rendering::asset_reload(params, ctx),
         "audio.play" => audio_play(params),
         "audio.stop" => match super::json::opt_u64(params, "id") {
-            Some(id) => Ok(json!({ "stopped": match super::json::opt_f64(params, "fade") {
+            Some(id) => Ok(
+                json!({ "stopped": match super::json::opt_f64(params, "fade") {
                 Some(seconds) => crate::audio::stop_after(id, seconds as f32),
                 None => crate::audio::stop(id),
-            } })),
+            } }),
+            ),
             None => {
                 crate::audio::stop_all();
                 Ok(json!({ "stopped": "all" }))

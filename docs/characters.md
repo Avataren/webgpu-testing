@@ -179,6 +179,11 @@ and the methods a game can replace are in the Lua guide, "Third-person controlle
 body moves (walk and run speed, jump height, slopes, steps, double jumps) belongs to the
 `CharacterController` in the inspector.
 
+The same controls can drive a `NavAgent` instead (`drive = "navigation"`, with `walk_speed`
+and `run_speed`): the character keeps to the navmesh like the crowd does and everyone makes
+way for it. Pause its brain (`ai_pause`) and stop its walk first; Lantern Market's
+possession (`market/possess.lua`) does exactly that.
+
 ## Other models
 
 Any rigged glTF/GLB, FBX or .blend works the same way. Clips bind to bones by name

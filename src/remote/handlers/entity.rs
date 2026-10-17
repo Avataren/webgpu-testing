@@ -1077,12 +1077,14 @@ pub(super) fn apply_patch(
             "ai_agent" => {
                 crate::ai::edit::patch_component(ctx.gpu.scene.main_world_mut(), entity, value)?
             }
-            "audio_source" | "audio_listener" | "audio_volume" => crate::audio::edit::patch_component(
-                ctx.gpu.scene.main_world_mut(),
-                entity,
-                key,
-                value,
-            )?,
+            "audio_source" | "audio_listener" | "audio_volume" => {
+                crate::audio::edit::patch_component(
+                    ctx.gpu.scene.main_world_mut(),
+                    entity,
+                    key,
+                    value,
+                )?
+            }
             "animation_tree" => patch_animation_tree(ctx, entity, value)?,
             "rotate_animation" => patch_component(
                 ctx.gpu.scene.main_world_mut(),

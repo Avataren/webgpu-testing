@@ -192,6 +192,7 @@ pub(super) fn agents(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "target": status.as_ref().and_then(|s| s.target).map(vec3_json),
             "remaining": status.as_ref().and_then(|s| s.remaining_distance).map(round),
             "partial": status.as_ref().map(|s| s.partial),
+            "steering": status.as_ref().map(|s| s.steering),
         }));
     }
     Ok(json!({
