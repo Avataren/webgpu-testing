@@ -607,7 +607,8 @@ pub fn tools() -> Vec<Tool> {
                 "path": { "type": "string" },
                 "volume": { "type": "number", "description": "Linear gain (default 1)" },
                 "pitch": { "type": "number", "description": "Playback speed and pitch (default 1)" },
-                "loop": { "type": "boolean" }
+                "loop": { "type": "boolean" },
+                "bus": { "type": "string", "description": "Mixer bus to play on (default sfx; the project's buses are listed by audio_status, by default master, music, sfx, ambience, ui, voice)" }
             }), &["path"]),
             action: Action::Engine("audio.play"),
         },
@@ -628,12 +629,34 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "audio_status",
-            description: "Sounds playing now and the recently played ones (id, path, volume, pitch, time, audible). You cannot hear the game, so use this (or playtest's sounds) to check that scripts play the right sounds at the right moments. A busy game plays the same few files hundreds of times; pass summary for one entry per file.",
+            description: "Sounds playing now and the recently played ones (id, path, bus, volume, pitch, time, audible), the mixer (device, sample rate, voices, audio-thread time per callback and load) and every bus with its fader, mute/solo and live peak/RMS meters in dBFS. You cannot hear the game, so use this (or playtest's sounds) to check that scripts play the right sounds at the right moments and that buses carry signal. A busy game plays the same few files hundreds of times; pass summary for one entry per file.",
             schema: object(json!({
                 "since": { "type": "integer", "description": "Only plays with an id at least this (next_id from an earlier call)" },
                 "summary": { "type": "boolean", "description": "Group the plays by file: count, first and last time, volume and pitch ranges, and how many were silent, instead of listing each play" }
             }), &[]),
             action: Action::Engine("audio.status"),
+        },
+        Tool {
+            name: "audio_bus",
+            description: "Change a mixer bus live: its fader (gain_db, -80 silent to +24), balance (pan -1..1), mute or solo. Changes are heard at once; save writes the project's bus layout (content/audio/mixer.json), as the editor's mixer window does. Returns audio_status's mixer view.",
+            schema: object(json!({
+                "bus": { "type": "string", "description": "master, music, sfx, ambience, ui, voice or a project bus" },
+                "gain_db": { "type": "number" },
+                "pan": { "type": "number" },
+                "mute": { "type": "boolean" },
+                "solo": { "type": "boolean" },
+                "save": { "type": "boolean", "description": "Also write content/audio/mixer.json" }
+            }), &["bus"]),
+            action: Action::Engine("audio.bus"),
+        },
+        Tool {
+            name: "audio_capture",
+            description: "Record the next N seconds of the engine's mixed output (what the speakers get) to a 32-bit float WAV, then inspect it with sound_inspect to check a mix without hearing it. Returns at once; wait the seconds, and audio_status lists the finished file under captures. Relative paths are under the project. Native builds only.",
+            schema: object(json!({
+                "path": { "type": "string", "description": "e.g. captures/mix.wav" },
+                "seconds": { "type": "number", "description": "Default 2, up to 600" }
+            }), &["path"]),
+            action: Action::Engine("audio.capture"),
         },
         // ---- Input ----
         Tool {

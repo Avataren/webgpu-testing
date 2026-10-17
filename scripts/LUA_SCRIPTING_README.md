@@ -889,17 +889,27 @@ Modules should only define things when loaded. Spawn entities and play sounds fr
 the script calls in its hooks.
 
 ### Audio
-- `play_sound(path[, {volume = 1, pitch = 1, loop = false}])` → `id` - Play a wav, ogg,
-  mp3 or flac file. Paths are relative to the project (`"content/audio/hit.wav"`) or
-  absolute. `pitch` is the playback speed.
-- `stop_sound(id)` - Stop one sound
+- `play_sound(path[, {volume = 1, pitch = 1, loop = false, bus = "sfx"}])` → `id` - Play a
+  wav, ogg, mp3 or flac file. Paths are relative to the project (`"content/audio/hit.wav"`)
+  or absolute. `pitch` is the playback speed. `bus` is the mixer bus it plays on.
+- `stop_sound(id)` - Stop one sound (with a 5 ms fade, so it does not click)
 - `stop_all_sounds()` - Stop everything
-- `set_master_volume(volume)` - Gain applied to every sound
+- `set_master_volume(volume)` - Gain applied to every sound, on top of the master fader
+- `set_bus_volume(bus, db)` - A bus's fader in dB (0 unchanged, -80 silent)
+- `set_bus_muted(bus, muted)` - Mute or unmute a bus
+
+Every sound plays on a bus of the project's mixer: `sfx` unless it names another. The
+default buses are `master`, `music`, `sfx`, `ambience`, `ui` and `voice`, each feeding
+master. The editor's Window > Mixer sets their faders, balance, mute and solo while the
+game plays and saves them in `content/audio/mixer.json`; changes from scripts last until
+the project reopens. Play music with `bus = "music"` so players (and the mix) can turn it
+down separately.
 
 Sounds stop when play mode ends. Without an audio device sounds are silent but still
 recorded, so automated tests can check what played (engine tool `audio_status`).
 
-In web builds, files are fetched relative to the page and decoded by the browser. The
+In web builds, files are fetched relative to the page and decoded by the browser, and
+bus settings are not applied yet. The
 first play of a file starts once it has loaded, and a missing file is logged instead of
 raising an error. Browsers hold audio back until the player first clicks or presses a
 key; sounds played before that start then.

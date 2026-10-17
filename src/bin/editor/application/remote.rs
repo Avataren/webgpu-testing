@@ -396,6 +396,17 @@ impl EditorApplication {
             "editor.show_pane" => (|| {
                 use crate::layout::EditorPane;
                 let name = str_param(params, "pane")?;
+                // Floating windows (Window menu) open rather than dock.
+                let window = match name {
+                    "mixer" => Some(&mut self.shared.windows.mixer),
+                    "statistics" => Some(&mut self.shared.windows.stats),
+                    "environment" => Some(&mut self.shared.windows.environment),
+                    _ => None,
+                };
+                if let Some(open) = window {
+                    *open = !matches!(params.get("open"), Some(Value::Bool(false)));
+                    return Ok(json!({ "window": name, "open": *open }));
+                }
                 let pane = match name {
                     "hierarchy" => EditorPane::SceneHierarchy,
                     "scene" => EditorPane::SceneViewport,
@@ -407,7 +418,8 @@ impl EditorApplication {
                     other => {
                         return Err(format!(
                             "unknown pane {other:?}; use hierarchy, scene, game, inspector, \
-                             assets, library or console"
+                             assets, library or console, or the windows mixer, statistics \
+                             or environment ({{open: false}} closes them)"
                         ))
                     }
                 };

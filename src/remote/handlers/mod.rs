@@ -228,7 +228,7 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "view.preview",
         "Lay the game out at another view shape ({aspect} or {size: [w, h]}; {} restores)",
     ),
-    ("audio.play", "Play a sound file (volume, pitch, loop)"),
+    ("audio.play", "Play a sound file (volume, pitch, loop, bus)"),
     ("audio.stop", "Stop one sound, or all"),
     (
         "audio.inspect",
@@ -236,7 +236,15 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     (
         "audio.status",
-        "Sounds playing now and recently played (with ids, paths, times)",
+        "Sounds playing now and recently played (with ids, paths, times), the mixer's device and timing, and every bus with its meter",
+    ),
+    (
+        "audio.bus",
+        "Change a mixer bus (gain_db, pan, mute, solo) live; save: true writes content/audio/mixer.json",
+    ),
+    (
+        "audio.capture",
+        "Record the next N seconds of the mixed output to a WAV (for audio.inspect)",
     ),
     (
         "input.send",
@@ -430,11 +438,18 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         },
         "audio.inspect" => audio_inspect(params),
         "view.preview" => super::preview::set_from_params(params),
+        "audio.bus" => audio_bus(params),
+        "audio.capture" => audio_capture(params),
         "audio.status" => {
             let recent = crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0));
             let mut status = json!({
                 "playing": crate::audio::playing(),
                 "next_id": crate::audio::next_id(),
+                "mixer": crate::audio::status(),
+                "captures": crate::audio::captures()
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>(),
             });
             if super::json::opt_bool(params, "summary").unwrap_or(false) {
                 status["summary"] = summarize_sounds(&recent);
@@ -571,16 +586,58 @@ fn shader_reload(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
 }
 
 fn audio_play(params: &Value) -> RemoteResult {
-    use super::json::{opt_bool, opt_f64, req_str};
+    use super::json::{opt_bool, opt_f64, opt_str, req_str};
     let path = req_str(params, "path")?;
     let options = crate::audio::PlayOptions {
         volume: opt_f64(params, "volume").unwrap_or(1.0).max(0.0) as f32,
         pitch: opt_f64(params, "pitch").unwrap_or(1.0) as f32,
         looped: opt_bool(params, "loop").unwrap_or(false),
+        bus: opt_str(params, "bus").map(str::to_string),
     };
     let since = crate::audio::next_id();
     let id = crate::audio::play(path, options)?;
     Ok(json!({ "id": id, "played": crate::audio::history(since)[0].clone() }))
+}
+
+/// `audio.bus {bus, gain_db?, pan?, mute?, solo?, save?}`
+fn audio_bus(params: &Value) -> RemoteResult {
+    use super::json::{opt_bool, opt_f64, req_str};
+    let name = req_str(params, "bus")?;
+    let gain_db = opt_f64(params, "gain_db").map(|v| v as f32);
+    let pan = opt_f64(params, "pan").map(|v| (v as f32).clamp(-1.0, 1.0));
+    let (mute, solo) = (opt_bool(params, "mute"), opt_bool(params, "solo"));
+    crate::audio::update_bus(name, |bus| {
+        if let Some(gain_db) = gain_db {
+            bus.gain_db = gain_db.clamp(cubed_mixer::MIN_DB, 24.0);
+        }
+        if let Some(pan) = pan {
+            bus.pan = pan;
+        }
+        if let Some(mute) = mute {
+            bus.mute = mute;
+        }
+        if let Some(solo) = solo {
+            bus.solo = solo;
+        }
+    })?;
+    let saved = if opt_bool(params, "save").unwrap_or(false) {
+        Some(crate::audio::save_layout()?.display().to_string())
+    } else {
+        None
+    };
+    Ok(json!({ "saved": saved, "mixer": crate::audio::status() }))
+}
+
+/// `audio.capture {path, seconds}`
+fn audio_capture(params: &Value) -> RemoteResult {
+    use super::json::{opt_f64, req_str};
+    let seconds = opt_f64(params, "seconds").unwrap_or(2.0) as f32;
+    let path = crate::audio::capture(req_str(params, "path")?, seconds)?;
+    Ok(json!({
+        "path": path.display().to_string(),
+        "seconds": seconds,
+        "note": "the file is written once the time has passed; audio.status lists finished captures",
+    }))
 }
 
 fn methods(ctx: &RemoteContext<'_, '_>) -> Value {

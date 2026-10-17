@@ -2,6 +2,8 @@
 //!
 //! Sound effects and music for game scripts. Paths are relative to the project (e.g.
 //! `"content/audio/hit.wav"`) or absolute; wav, ogg, mp3 and flac are supported.
+//! Sounds play on the project's mixer buses (`content/audio/mixer.json`): `sfx`
+//! unless they name another, such as `music`, `ambience`, `ui` or `voice`.
 
 use mlua::{Lua, Result as LuaResult, Table};
 
@@ -9,10 +11,15 @@ use crate::audio::{self, PlayOptions};
 
 /// Registers the audio functions:
 ///
-/// - `play_sound(path[, {volume, pitch, loop}])` - start a sound, returns its id
+/// - `play_sound(path[, {volume, pitch, loop, bus}])` - start a sound, returns its id
 /// - `stop_sound(id)` - stop one sound
 /// - `stop_all_sounds()` - stop everything
 /// - `set_master_volume(volume)` - gain applied to every sound
+/// - `set_bus_volume(bus, db)` - a bus's fader in dB (0 = unchanged, -80 = silent)
+/// - `set_bus_muted(bus, muted)` - mute or unmute a bus
+///
+/// Bus changes from scripts last until the project reopens; the editor's mixer
+/// window saves the layout.
 ///
 /// Sounds also stop when play mode ends.
 pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
@@ -32,6 +39,9 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
                 if let Some(looped) = options.get::<Option<bool>>("loop")? {
                     play.looped = looped;
                 }
+                if let Some(bus) = options.get::<Option<String>>("bus")? {
+                    play.bus = Some(bus);
+                }
             }
             audio::play(&path, play).map_err(mlua::Error::RuntimeError)
         })?,
@@ -47,6 +57,21 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
         lua.create_function(|_, ()| {
             audio::stop_all();
             Ok(())
+        })?,
+    )?;
+
+    globals.set(
+        "set_bus_volume",
+        lua.create_function(|_, (bus, db): (String, f32)| {
+            audio::update_bus(&bus, |b| b.gain_db = db.clamp(cubed_mixer::MIN_DB, 24.0))
+                .map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    globals.set(
+        "set_bus_muted",
+        lua.create_function(|_, (bus, muted): (String, bool)| {
+            audio::update_bus(&bus, |b| b.mute = muted).map_err(mlua::Error::RuntimeError)
         })?,
     )?;
 

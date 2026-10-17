@@ -193,9 +193,11 @@ engine you launched; save first).
   an image, sound, font, script or shader into the project's `content/` and returns the
   project-relative path to reference. After rewriting an image on disk, `asset_reload`
   (or the editor's file watcher) shows the new version under the same path.
-- `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it). A
-  busy game plays the same files hundreds of times, so pass `summary: true` for one entry
-  per file. Run `sound_inspect {path}` on every sound you generate or import: it reports
+- `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it) and
+  the mixer's buses with live meters. A busy game plays the same files hundreds of times,
+  so pass `summary: true` for one entry per file. `audio_bus` sets a bus's fader, mute or
+  solo; `audio_capture` records the mixed output to a WAV for `sound_inspect`, the way to
+  check a mix without speakers. Run `sound_inspect {path}` on every sound you generate or import: it reports
   length, peak/RMS, clipping, silence at either end and whether the loop seam clicks,
   with notes on problems and a waveform/spectrogram image.
 - Procedural geometry: `mesh_lathe {profile = [[radius, height], ...]}` turns a profile

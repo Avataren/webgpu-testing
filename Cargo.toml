@@ -51,6 +51,9 @@ egui-wgpu = { version = "0.36", optional = true, default-features = false, featu
 egui-winit = { version = "0.36", optional = true, default-features=false }
 once_cell = { version = "1.21", optional = true }
 egui_tiles = { version = "0.17", optional = true }
+# The audio mixer (buses, voices, effects), shared with the another_synth DAW.
+# .cargo/config.toml may patch it to a local checkout of cubed-synth.
+cubed-mixer = { git = "https://github.com/Avataren/cubed-synth" }
 
 [[bin]]
 name = "editor"
@@ -102,7 +105,9 @@ notify = "8.2"
 # RenderDoc's in-application API for `renderdoc.capture` (both already come with wgpu).
 libloading = "0.8"
 renderdoc-sys = "1.1"
-rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
+# Native audio output (cpal) for the mixer, and decoding of sound files.
+cubed-mixer = { git = "https://github.com/Avataren/cubed-synth", features = ["native"] }
+symphonia = { version = "0.5", default-features = false, features = ["wav", "pcm", "ogg", "vorbis", "mp3", "flac"] }
 
 [dev-dependencies]
 tempfile = "3.10"

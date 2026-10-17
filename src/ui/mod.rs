@@ -57,6 +57,12 @@ pub use scene_hierarchy_window::{
 pub use scene_tabs::{SceneTabDescriptor, SceneTabsHandle, SceneTabsState};
 
 #[cfg(feature = "egui")]
+mod mixer_window;
+
+#[cfg(feature = "egui")]
+pub use mixer_window::show_mixer_window;
+
+#[cfg(feature = "egui")]
 mod settings_page;
 
 #[cfg(feature = "egui")]

@@ -51,17 +51,11 @@ impl Clip {
 }
 
 fn decode(path: &Path) -> Result<Clip, String> {
-    use rodio::Source;
     let bytes =
         std::fs::read(path).map_err(|err| format!("cannot read {}: {err}", path.display()))?;
-    let decoder = rodio::Decoder::try_from(Cursor::new(bytes))
+    let extension = path.extension().and_then(|e| e.to_str());
+    let (channels, sample_rate, samples) = crate::audio::decode_pcm(bytes, extension)
         .map_err(|err| format!("cannot decode {}: {err}", path.display()))?;
-    let channels = usize::from(decoder.channels().get());
-    let sample_rate = decoder.sample_rate().get();
-    let samples: Vec<f32> = decoder.collect();
-    if samples.is_empty() {
-        return Err(format!("{} has no samples", path.display()));
-    }
     Ok(Clip {
         channels,
         sample_rate,
