@@ -3,6 +3,7 @@
 //! Every method takes a JSON object of parameters and returns a JSON value. See
 //! [`CORE_METHODS`] for the list and [`super::json`] for value conventions.
 
+mod ai;
 mod animation;
 mod diff;
 mod entity;
@@ -124,6 +125,34 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     ("navigation.closest", "The navmesh point nearest a point ({point, radius})"),
     ("navigation.agents", "Every NavAgent's state, position, speed and destination"),
+    (
+        "ai.status",
+        "Every AI agent's brain, state and action, counts by state, and the brains defined",
+    ),
+    (
+        "ai.inspect",
+        "One AI agent in depth: blackboards, its tree's nodes or machine's states, senses ({entity})",
+    ),
+    (
+        "ai.define",
+        "Define a brain from JSON, a tree's root node or a machine with states ({name, brain})",
+    ),
+    ("ai.validate", "Check a brain definition without defining it ({brain})"),
+    (
+        "ai.send",
+        "Send an AI event to an agent, or to all / those near a point ({entity | radius, center, tag, group; event, data})",
+    ),
+    (
+        "ai.set",
+        "Set a blackboard value ({entity, key, value}; group.key / global.key reach shared boards)",
+    ),
+    ("ai.noise", "Make a noise agents can hear ({position, radius, tag, data})"),
+    ("ai.restart", "Start an agent's brain again ({entity})"),
+    ("ai.pause", "Pause or resume an agent's brain ({entity, paused})"),
+    (
+        "ai.debug",
+        "Draw agents' senses, goals, what they perceive and their states ({senses, goals, percepts, states, all})",
+    ),
     ("mesh.lathe", "Revolve a radius/height profile into a UV-mapped mesh"),
     ("mesh.extrude", "Extrude a concave XY polygon with bevel, twist and taper"),
     ("mesh.compose", "Combine transformed procedural shapes into one reusable mesh"),
@@ -345,6 +374,16 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "navigation.closest" => navigation::closest(params, ctx),
         #[cfg(feature = "navigation")]
         "navigation.agents" => navigation::agents(ctx),
+        "ai.status" => ai::status(ctx),
+        "ai.inspect" => ai::inspect(params, ctx),
+        "ai.define" => ai::define(params, ctx),
+        "ai.validate" => ai::validate(params),
+        "ai.send" => ai::send(params, ctx),
+        "ai.set" => ai::set(params, ctx),
+        "ai.noise" => ai::noise(params, ctx),
+        "ai.restart" => ai::restart(params, ctx),
+        "ai.pause" => ai::pause(params, ctx),
+        "ai.debug" => ai::debug(params, ctx),
         "voxel.spawn" => voxel::spawn_voxels(params, ctx),
         "mesh.lathe" | "mesh.extrude" | "mesh.compose" | "mesh.sweep" | "mesh.heightfield" => {
             geometry::generate(method, params, ctx)

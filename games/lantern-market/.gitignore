@@ -3,3 +3,5 @@
 content/characters/
 content/animations/
 content/scripts/cast_data.lua
+# A smaller cast for test runs (see content/scripts/market/people.lua).
+content/scripts/market/cast_size_local.lua

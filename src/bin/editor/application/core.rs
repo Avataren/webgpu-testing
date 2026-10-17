@@ -171,6 +171,8 @@ pub struct EditorSharedState {
     /// The path test: whether clicks in the Scene view set its ends, and its ends.
     #[cfg(feature = "navigation")]
     pub(super) nav_path_tool: super::navigation_system::NavPathTool,
+    /// The AI state for the inspector (AiPanelSystem).
+    pub(super) ai_status: crate::inspector::AiPanelStatus,
 }
 
 impl EditorSharedState {
@@ -389,6 +391,7 @@ impl EditorApplicationBuilder {
             super::navigation_system::NavigationSystem::default(),
         ));
         systems.push(Box::new(AnimationPanelSystem::default()));
+        systems.push(Box::new(super::ai_panel_system::AiPanelSystem));
         let particle_system_index = {
             let system = EditorParticleSystem::default();
             let index = systems.len();
@@ -441,6 +444,7 @@ impl EditorApplicationBuilder {
             navigation_status: Default::default(),
             #[cfg(feature = "navigation")]
             nav_path_tool: Default::default(),
+            ai_status: Default::default(),
         };
 
         #[cfg(not(target_arch = "wasm32"))]

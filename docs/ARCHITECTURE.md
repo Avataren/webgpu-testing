@@ -44,6 +44,7 @@ Contribution rules (formatting, clippy, commits) are in [`Agents.md`](../Agents.
 | `src/procgen/` | Profile lathes, beveled polygon extrusions, mesh composition, voxel meshes, seeded height fields/PBR maps and PCM sound synthesis |
 | `src/physics/` | Rapier physics: `RigidBody`/`Collider`/`CharacterController`/`SpringCamera` components, the per-scene `ScenePhysics`, collider wireframes |
 | `src/navigation/` | Navmeshes (feature `navigation`): Recast-style generation, tiled navmesh and queries, the crowd (ORCA avoidance), components and the per-scene `SceneNavigation` |
+| `src/ai/` | AI: behaviour trees, state machines, blackboards, expressions, senses, the `AiAgent` component and the per-scene `SceneAi` |
 | `src/scripting/lua/` | Lua runtime: `state.rs` (`ScriptingState`), `api/` (functions exposed to Lua), `commands.rs` |
 | `src/gpu_particles/` | Compute-driven particle systems and behaviours |
 | `src/ui/` | egui integration (`egui_integration.rs`), shared windows (hierarchy, stats, log, environment) and widgets (`FineSlider`) |
@@ -531,6 +532,53 @@ guide is [`docs/navigation.md`](navigation.md).
   `application/input.rs` and picks the navmesh with `SceneNavigation::pick`.
 - **Lua and remote**: `scripting/lua/api/navigation.rs` (queries run against the scene's
   navigation through `NavigationGuard`, set while scripts run), `remote/handlers/navigation.rs`.
+
+## AI
+
+`src/ai/` (always built; its navigation actions need the `navigation` feature). The user
+guide is [`docs/ai.md`](ai.md).
+
+- **Definitions** (`def.rs`): brains are read from a `Def` (a Lua table or JSON, the same
+  parser for both) into immutable `TreeDef` (nodes depth-first in a flat list; shared node
+  parameters such as `when`, `cooldown` become wrapper decorators) and `MachineDef`, kept by
+  name in a `Library` with a revision per name (redefining restarts the agents running it).
+  Lua functions in definitions are registry keys with the script that defined them
+  (`LuaFn::owner`). Conditions, scores and values are `Expr`s (`expr.rs`) or callables.
+- **Runtimes**: `TreeRuntime` (`tree.rs`) keeps per-node state for one agent over a shared
+  `TreeDef` (enter on first tick, exit on finish or halt, halting recurses; guards with
+  `abort = lower` are checked by their selector before it resumes a later child; utility
+  nodes re-score at `interval`). Leaves are in `actions.rs` (walks keep a `Mover`; a walk's
+  result is trusted only on a frame after its command, since the navigation steps after
+  the AI). `MachineRuntime` (`machine.rs`) checks machine-wide then state transitions,
+  runs the state's `update`, tree and nested machine, then `on` transitions.
+- **`AiHost`** (`context.rs`) is everything a brain asks of the world. `SceneHost`
+  (`host.rs`) implements it over the world, `SceneNavigation` (commands go back in issue
+  order: scripts' first, then the AI's, including those Lua leaves make), `ScenePhysics`
+  (line of sight), animators (applied directly) and Lua: `ScriptingState::run_in_script`
+  runs a function with the full API in the defining script's context (its handle
+  registry, state, `get_self()`) or a shared AI scope, and applies its commands after.
+  Tests use a toy host (`src/ai/tests.rs`), and headless scenes for Lua brains, the
+  whole of Lantern Market (`lantern_market_simulation`, ignored by default) and the AI's
+  cost for crowds (`ai_crowd_benchmark`). Senses bucket agents on an 8 m grid
+  (`VisibleGrid`), and entity-keyed maps use `EntityMap` (a multiply hash), so a step
+  stays linear in the number of agents.
+- **`SceneAi`** (`scene_ai.rs`, one per `Scene`, reset on play start/stop) steps in
+  `Scene::step_ai` after the scripts and before the navigation: sync agents from
+  `AiAgent`s, resolve brains (library or JSON file, files re-read when their stamp
+  changes), apply script commands, look (perception at its own rate, `perception.rs`),
+  tick due agents (staggered by tick rate), then deliver events and noises for the next
+  tick. `on_ai_state` callbacks go to agents' scripts through `queue_callbacks`.
+- **Lua reach** (`scripting/lua/api/ai.rs`): `AiShared` (library, per-agent blackboards,
+  inboxes, state snapshots, group/global boards, a command queue) sits behind an `Rc`
+  that `AiGuard` puts in a thread-local while scene scripts, `on_ui`, the console and the
+  AI step run. Nothing holds a `RefCell` borrow of it across a Lua call (brains may define
+  brains or send events from inside a leaf). Blackboards are `Arc<Mutex<_>>` because
+  their Lua proxies are userdata, which mlua's `send` feature requires to be `Send`.
+- **Debug drawing** (`debug.rs`) joins the navigation's `DebugGeometry` in the render
+  bridge; the flags are process-wide like the navigation's.
+- **Editor and remote**: `src/bin/editor/inspector/ai.rs` and `application/ai_panel_system.rs`
+  (the selected agent's `SceneAi::inspect` each frame in play), `remote/handlers/ai.rs`
+  (`ai.*` methods).
 
 ## Scripting (Lua)
 

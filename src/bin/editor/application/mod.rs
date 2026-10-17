@@ -4,6 +4,7 @@ mod asset_browser_system;
 mod blender_convert;
 mod system;
 pub(crate) use system::*;
+mod ai_panel_system;
 mod animation_panel_system;
 mod camera_system;
 mod core;
@@ -483,6 +484,7 @@ impl EditorApplication {
             let animation_status = &shared.animation_status;
             #[cfg(feature = "navigation")]
             let navigation_status = &shared.navigation_status;
+            let ai_status = &shared.ai_status;
             let library = &mut shared.library_panel;
 
             egui::CentralPanel::default_margins()
@@ -497,6 +499,7 @@ impl EditorApplication {
                             animation_status,
                             #[cfg(feature = "navigation")]
                             navigation_status,
+                            ai_status,
                             library,
                             library_actions: &mut library_actions,
                             library_target,

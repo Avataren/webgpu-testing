@@ -1279,6 +1279,12 @@ impl ScriptCommands {
                 }
                 Ok(crate::navigation::edit::component_json(world, entity, name))
             }
+            ComponentKind::Ai => {
+                if !world.contains(entity) {
+                    return Err("Entity does not exist".to_string());
+                }
+                Ok(crate::ai::edit::component_json(world, entity))
+            }
         }
     }
 
@@ -1429,6 +1435,9 @@ impl ScriptCommands {
             Some(ComponentKind::Navigation(name)) => {
                 crate::navigation::edit::patch_component(world, entity, name, value)?;
             }
+            Some(ComponentKind::Ai) => {
+                crate::ai::edit::patch_component(world, entity, value)?;
+            }
             Some(_) => {
                 return Err(format!(
                     "Component type cannot be set from JSON: {}",
@@ -1542,6 +1551,9 @@ impl ScriptCommands {
                     &serde_json::Value::Null,
                 )?;
             }
+            Some(ComponentKind::Ai) => {
+                crate::ai::edit::patch_component(world, entity, &serde_json::Value::Null)?;
+            }
             None => {
                 return Err(format!(
                     "Unknown or unsupported component type: {}",
@@ -1575,6 +1587,8 @@ pub(crate) enum ComponentKind {
     /// A navigation component, by its snake_case name.
     #[cfg(feature = "navigation")]
     Navigation(&'static str),
+    /// `AiAgent`.
+    Ai,
 }
 
 pub(crate) fn component_kind_from_name(component_name: &str) -> Option<ComponentKind> {
@@ -1593,6 +1607,7 @@ pub(crate) fn component_kind_from_name(component_name: &str) -> Option<Component
         "MaterialComponent" | "Material" => Some(ComponentKind::Material),
         "PrimitiveMeshComponent" => Some(ComponentKind::PrimitiveMesh),
         "ParticleEmitterComponent" => Some(ComponentKind::ParticleEmitter),
+        "AiAgent" | "ai_agent" => Some(ComponentKind::Ai),
         #[cfg(feature = "navigation")]
         other if crate::navigation::edit::canonical_name(other).is_some() => {
             crate::navigation::edit::canonical_name(other).map(ComponentKind::Navigation)
@@ -1624,6 +1639,7 @@ pub(crate) fn component_matches(world: &World, entity: Entity, kind: ComponentKi
         ComponentKind::Navigation(name) => {
             Ok(crate::navigation::edit::has_component(world, entity, name))
         }
+        ComponentKind::Ai => Ok(crate::ai::edit::has_component(world, entity)),
     }
     .unwrap_or(false)
 }

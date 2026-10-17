@@ -322,6 +322,8 @@ pub struct ScriptingState {
     ui_responses: HashMap<Entity, HashMap<String, UiResponse>>,
     /// Environment used by [`Self::eval`] when no entity is given; created on first use.
     console: Option<ConsoleScope>,
+    /// Scope for AI calls that belong to no script (brains loaded from files).
+    ai_scope: Option<ConsoleScope>,
     /// Engine callbacks (`on_landed`, `on_trigger_enter`, ...) for the next frame's scripts.
     pending_callbacks: Vec<(Entity, &'static str, serde_json::Value)>,
 }
@@ -376,6 +378,7 @@ impl ScriptingState {
             deferred_ui_commands: Vec::new(),
             ui_responses: HashMap::new(),
             console: None,
+            ai_scope: None,
             pending_callbacks: Vec::new(),
         })
     }
@@ -546,6 +549,99 @@ impl ScriptingState {
             .collect();
         entries.sort_unstable_by_key(|(entity, ..)| entity.to_bits());
         entries
+    }
+
+    /// The function `name` in `entity`'s script environment, if it defines one.
+    pub(crate) fn script_function(&self, entity: Entity, name: &str) -> Option<mlua::Function> {
+        let instance = self.slots.get(&entity)?.instance.as_ref()?;
+        let env: mlua::Table = self
+            .runtime
+            .lua()
+            .registry_value(&instance.env_registry_key)
+            .ok()?;
+        env.raw_get::<Option<mlua::Function>>(name).ok().flatten()
+    }
+
+    /// Run `f` with the full scripting API in the context of `owner`'s script (its
+    /// entity handles, state and `get_self()`), or of a scope shared by AI calls that
+    /// belong to no script; then apply the commands it queued, as after a hook. Used by
+    /// AI brains to call their Lua functions.
+    pub(crate) fn run_in_script<R>(
+        &mut self,
+        world: &mut World,
+        owner: Option<Entity>,
+        f: impl FnOnce(&mlua::Lua) -> R,
+    ) -> R {
+        let owner = owner.filter(|entity| {
+            self.slots
+                .get(entity)
+                .is_some_and(|slot| slot.instance.is_some())
+        });
+        if owner.is_none() && self.ai_scope.is_none() {
+            let lua = self.runtime.lua();
+            let env = lua.create_table().expect("Lua table");
+            let metatable = lua.create_table().expect("Lua table");
+            let _ = metatable.set("__index", lua.globals());
+            env.set_metatable(Some(metatable));
+            self.ai_scope = Some(ConsoleScope {
+                env_registry_key: lua.create_registry_value(env).expect("Lua registry"),
+                handles: Rc::new(RefCell::new(EntityHandleRegistry::default())),
+                state_store: Rc::new(RefCell::new(HashMap::new())),
+                coroutines: Rc::new(RefCell::new(HashMap::new())),
+            });
+        }
+        let (handles, state_store, coroutines) =
+            match owner.and_then(|e| self.slots.get(&e)?.instance.as_ref()) {
+                Some(instance) => (
+                    instance.handles.clone(),
+                    instance.state_store.clone(),
+                    instance.coroutines.clone(),
+                ),
+                None => {
+                    let scope = self.ai_scope.as_ref().expect("AI scope created above");
+                    (
+                        scope.handles.clone(),
+                        scope.state_store.clone(),
+                        scope.coroutines.clone(),
+                    )
+                }
+            };
+        let bits = owner.map_or(0, entity_bits);
+        let commands = Rc::new(RefCell::new(ScriptCommands::new(handles)));
+        if bits != 0 {
+            commands
+                .borrow()
+                .registry
+                .borrow_mut()
+                .resolve_bits(bits, bits as u64);
+        }
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let result = {
+            let lua = self.runtime.lua();
+            let _world_guard = WorldGuard::enter(world);
+            let _commands_guard = CommandGuard::enter(commands.clone());
+            let _state_guard = StateGuard::enter(&state_store);
+            let _event_guard = EventQueueGuard::enter(&events);
+            let _entity_guard = EntityGuard::enter(bits);
+            let _coroutine_guard = CoroutineGuard::enter(&coroutines);
+            f(lua)
+        };
+        self.outputs.apply_commands(world, &commands);
+        self.outputs.pending_events.extend(events.take());
+        result
+    }
+
+    /// Queue a script event, as `emit_event` does (delivered with the next scripts).
+    pub(crate) fn queue_event(&mut self, name: &str, data: serde_json::Value) {
+        self.outputs.pending_events.push_back(ScriptEvent {
+            name: name.to_owned(),
+            data,
+        });
+    }
+
+    /// The Lua VM, for converting values outside a hook.
+    pub(crate) fn lua(&self) -> &mlua::Lua {
+        self.runtime.lua()
     }
 
     /// Entities whose script environment defines the global `name`.

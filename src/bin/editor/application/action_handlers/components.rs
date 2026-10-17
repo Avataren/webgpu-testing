@@ -200,6 +200,22 @@ pub fn handle_set_physics(
     value: serde_json::Value,
 ) -> ActionResult {
     let world = ctx.scene.main_world_mut();
+    if wgpu_cube::ai::edit::canonical_name(component).is_some() {
+        let before = wgpu_cube::ai::edit::component_json(world, entity);
+        if before.is_none() && value.is_null() {
+            return ActionResult::no_change();
+        }
+        return match wgpu_cube::ai::edit::patch_component(world, entity, &value) {
+            Ok(()) if wgpu_cube::ai::edit::component_json(world, entity) == before => {
+                ActionResult::no_change()
+            }
+            Ok(()) => ActionResult::scene_changed(),
+            Err(err) => {
+                log::warn!("Cannot change {component} of {entity:?}: {err}");
+                ActionResult::no_change()
+            }
+        };
+    }
     #[cfg(feature = "navigation")]
     if wgpu_cube::navigation::edit::canonical_name(component).is_some() {
         let before = wgpu_cube::navigation::edit::component_json(world, entity, component);

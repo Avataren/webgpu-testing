@@ -263,6 +263,15 @@ engine you launched; save first).
   `nav_set_destination` and gets `on_nav_arrived`; an animation tree on an agent is fed its
   speed. `navigation_debug {mesh, agents, paths}` draws it in screenshots,
   `navigation_path {from, to}` tests a path, `navigation_agents` lists states (play mode).
+- AI (`docs/ai.md`): `entity_update {ai_agent: {brain, tags, group, perception: {sight_range}}}`
+  gives an entity a brain (a behaviour tree or state machine a script defines with
+  `ai_tree` / `ai_machine`, or one from `ai_define {name, brain}` as JSON, or a project JSON
+  file). Brains think in play mode. `ai_status` lists every agent's state and action,
+  `ai_inspect {entity}` shows its blackboard, tree nodes (last results, utility scores),
+  machine transitions with history, and senses. Steer with `ai_send {entity, event}`,
+  `ai_set {entity, key, value}`, `ai_noise {position, radius, tag}`, `ai_control {entity,
+  restart, paused}`; `ai_debug {all: true}` draws view cones, goals, percepts and state
+  rings in screenshots. Lua errors in brains show in `ai_status` (error) and the log.
 - Procedural assets: `texture_generate {name, pattern, seed, colors, normal_strength}`
   writes tileable PNGs (noise, bricks, checker, wood, marble, voronoi) and matching
   normal, height, metallic/roughness and occlusion maps into `content/textures`.

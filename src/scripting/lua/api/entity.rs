@@ -108,6 +108,20 @@ pub(crate) fn register_entity_api(lua: &Lua) -> LuaResult<()> {
         })?,
     )?;
 
+    // entity_id(entity: number) -> number | nil: the entity's id, the number callbacks
+    // and AI brains (`ctx.agent`) use, also for a handle `spawn_entity` or `clone_entity`
+    // returned (once the entity exists, from the next hook on)
+    globals.set(
+        "entity_id",
+        lua.create_function(|_, entity: i64| {
+            with_active_world(|world| {
+                Ok(resolve_entity(entity)
+                    .filter(|entity| world.contains(*entity))
+                    .map(entity_bits))
+            })
+        })?,
+    )?;
+
     // set_name(entity: number, name: string)
     globals.set(
         "set_name",

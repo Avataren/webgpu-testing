@@ -58,6 +58,9 @@ pub struct Scene {
     /// scripts and before the physics.
     #[cfg(feature = "navigation")]
     navigation: crate::navigation::SceneNavigation,
+    /// Brains of the main world's `AiAgent`s; they think in play mode after scripts and
+    /// before the navigation.
+    ai: crate::ai::SceneAi,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -90,6 +93,7 @@ impl Scene {
             physics: crate::physics::ScenePhysics::new(),
             #[cfg(feature = "navigation")]
             navigation: crate::navigation::SceneNavigation::new(),
+            ai: crate::ai::SceneAi::new(),
         }
     }
 
@@ -171,6 +175,31 @@ impl Scene {
 
     pub fn physics_mut(&mut self) -> &mut crate::physics::ScenePhysics {
         &mut self.physics
+    }
+
+    /// The scene's AI (see [`crate::ai`]).
+    pub fn ai(&self) -> &crate::ai::SceneAi {
+        &self.ai
+    }
+
+    pub fn ai_mut(&mut self) -> &mut crate::ai::SceneAi {
+        &mut self.ai
+    }
+
+    /// The AI's debug drawing for this frame (with what `selected` entities are), or
+    /// `None` when there is nothing to draw.
+    pub(crate) fn ai_debug_geometry(
+        &self,
+        selected: &[hecs::Entity],
+    ) -> Option<crate::renderer::debug_draw::DebugGeometry> {
+        if !self.ai.wants_debug_geometry(selected) {
+            return None;
+        }
+        let main_node = self.nodes.get(self.main_scene)?;
+        Some(
+            self.ai
+                .debug_geometry(main_node.instance().world(), selected),
+        )
     }
 
     /// The scene's navigation (see [`crate::navigation`]).
@@ -329,6 +358,7 @@ impl Scene {
             .filter(|(width, height, _)| *width > 0.0 && *height > 0.0)
             .map_or(16.0 / 9.0, |(width, height, _)| width / height);
         let _camera_guard = UiCameraGuard::enter(self.camera().view_proj(aspect));
+        let _ai_guard = crate::scripting::lua::api::ai::AiGuard::enter(self.ai.shared());
         match self.nodes.get(self.main_scene) {
             Some(main_node) => {
                 let world = main_node.instance().world();
@@ -557,6 +587,7 @@ impl Scene {
         self.physics.reset();
         #[cfg(feature = "navigation")]
         self.navigation.reset();
+        self.ai.reset();
         self.script_effects_reset = true;
     }
 
@@ -870,6 +901,7 @@ impl Scene {
             #[cfg(feature = "navigation")]
             let _navigation_guard =
                 crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
+            let _ai_guard = crate::scripting::lua::api::ai::AiGuard::enter(self.ai.shared());
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, true));
         }
@@ -911,6 +943,7 @@ impl Scene {
         #[cfg(feature = "navigation")]
         let _navigation_guard =
             crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
+        let _ai_guard = crate::scripting::lua::api::ai::AiGuard::enter(self.ai.shared());
         self.runtime.scripting_mut().eval(world, code, entity)
     }
 
@@ -1039,15 +1072,73 @@ impl Scene {
             #[cfg(feature = "navigation")]
             let _navigation_guard =
                 crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
+            let _ai_guard = crate::scripting::lua::api::ai::AiGuard::enter(self.ai.shared());
             let runtime = &mut self.runtime;
             frame_timings::time("scripts", || runtime.run_scripts(world, dt, editor_mode));
         } else {
             error!("Cannot run scripts: main scene node is missing");
         }
 
+        self.step_ai(dt, editor_mode);
         #[cfg(feature = "navigation")]
         self.step_navigation(dt, editor_mode);
         self.step_physics(dt, editor_mode);
+    }
+
+    fn has_ai_agents(&self) -> bool {
+        self.nodes.get(self.main_scene).is_some_and(|node| {
+            node.instance()
+                .world()
+                .query::<&crate::ai::AiAgent>()
+                .iter()
+                .next()
+                .is_some()
+        })
+    }
+
+    /// Let the agents think (play mode, after scripts): their walks go to this frame's
+    /// navigation, `on_ai_state` callbacks to the next frame's scripts.
+    fn step_ai(&mut self, dt: f64, editor_mode: bool) {
+        if editor_mode || dt <= 0.0 {
+            return;
+        }
+        if self.ai.agent_count() == 0 && !self.has_ai_agents() {
+            return;
+        }
+        // What scripts asked of the navigation this frame goes before the AI's.
+        #[cfg(feature = "navigation")]
+        {
+            let commands = self.runtime.scripting_mut().take_navigation_commands();
+            self.navigation.queue(commands);
+        }
+        let Some(main_node) = self.nodes.get_mut(self.main_scene) else {
+            return;
+        };
+        let world = main_node.instance_mut().world_mut();
+        let output = {
+            let _input_guard = InputStateGuard::enter(&self.input_state);
+            let _physics_guard = PhysicsGuard::enter(&self.physics);
+            #[cfg(feature = "navigation")]
+            let _navigation_guard =
+                crate::scripting::lua::guards::NavigationGuard::enter(&self.navigation);
+            let _ai_guard = crate::scripting::lua::api::ai::AiGuard::enter(self.ai.shared());
+            let env = crate::ai::AiEnv {
+                world,
+                scripting: self.runtime.scripting_mut(),
+                #[cfg(feature = "navigation")]
+                navigation: &self.navigation,
+                physics: &self.physics,
+            };
+            let ai = &mut self.ai;
+            frame_timings::time("ai", || ai.step(env, dt as f32))
+        };
+        #[cfg(feature = "navigation")]
+        self.navigation.queue(output.nav_commands);
+        if !output.callbacks.is_empty() {
+            self.runtime
+                .scripting_mut()
+                .queue_callbacks(output.callbacks);
+        }
     }
 
     /// Run the navigation after scripts (taking their commands): agents walk, obstacles

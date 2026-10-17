@@ -85,6 +85,9 @@ pub struct SceneAssetEntity {
     pub spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation_tree: Option<crate::scene::skeletal::AnimationTree>,
+    /// A brain (behaviour tree or state machine) and senses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_agent: Option<crate::ai::AiAgent>,
     /// Navmesh surface, agent, obstacle and modifier.
     #[serde(skip)]
     pub navigation: super::navigation::NavigationData,
@@ -188,6 +191,8 @@ struct SceneAssetEntityData {
     spring_camera: Option<crate::physics::SpringCamera>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     animation_tree: Option<crate::scene::skeletal::AnimationTree>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ai_agent: Option<crate::ai::AiAgent>,
     #[cfg(feature = "navigation")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nav_mesh_surface: Option<crate::navigation::NavMeshSurface>,
@@ -261,6 +266,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             character_controller: data.character_controller,
             spring_camera: data.spring_camera,
             animation_tree: data.animation_tree,
+            ai_agent: data.ai_agent,
             #[cfg(feature = "navigation")]
             navigation: super::navigation::NavigationData {
                 nav_mesh_surface: data.nav_mesh_surface,
@@ -325,6 +331,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             character_controller: entity.character_controller,
             spring_camera: entity.spring_camera,
             animation_tree: entity.animation_tree,
+            ai_agent: entity.ai_agent,
             #[cfg(feature = "navigation")]
             nav_mesh_surface: entity.navigation.nav_mesh_surface,
             #[cfg(feature = "navigation")]
@@ -712,6 +719,10 @@ impl SceneAssetEntity {
             character_controller,
             spring_camera,
             animation_tree,
+            ai_agent: world
+                .get::<&crate::ai::AiAgent>(entity)
+                .ok()
+                .map(|agent| (*agent).clone()),
             navigation: super::navigation::NavigationData::capture(world, entity),
             camera,
             scene_ref: None,

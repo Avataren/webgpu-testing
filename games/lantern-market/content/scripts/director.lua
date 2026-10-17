@@ -1,21 +1,30 @@
--- Lantern Market's director: loads the cast, fills the market with people walking the
--- navmesh, runs the carts and the gate, the camera and the HUD.
+-- Lantern Market's director: loads the cast, defines the brains (market/brains/: every
+-- person, cart and the portcullis is an AiAgent running a behaviour tree or state
+-- machine), fills the market, and runs the camera, the HUD and the keys.
 --
 -- Steer it with lua_eval on this entity: MARKET holds the state, and RT.status(),
--- RT.gate(), RT.summon(x, y, z, n), RT.shot(n), RT.debug(on) are test hooks.
+-- RT.gate(), RT.summon(x, y, z, n), RT.shot(n), RT.debug(on), RT.ai(on), RT.theft(),
+-- RT.tag() are test hooks. Over MCP, ai_status / ai_inspect show what everyone thinks.
 
 local C = require("market/core")
 local People = require("market/people")
 local Props = require("market/props")
 local Camera = require("market/camera")
 local Hud = require("market/hud")
+local Townsfolk = require("market/brains/townsfolk")
+local Vendor = require("market/brains/vendor")
+local Guard = require("market/brains/guard")
+local Thief = require("market/brains/thief")
+local Child = require("market/brains/child")
+local Performer = require("market/brains/performer")
 
 -- Exports keep what scripts name as literals: the cast's folders (filled by
 -- tools/fetch_cast.py, listed in cast_data.lua).
 local CAST_FOLDERS = { "content/characters/", "content/animations/" }
 
-local CROWD = 80
 local IMPORTS_PER_FRAME = 2
+-- A game of tag starts this often (seconds), when none is on.
+local TAG_EVERY = { 35, 60 }
 
 MARKET = {
     mode = "boot",
@@ -24,8 +33,10 @@ MARKET = {
     importing = {},
     loaded = 0,
     debug = { mesh = false, agents = false, paths = false, obstacles = false, x_ray = false },
+    ai_debug = false,
     nav = { polys = 0, carving = 0 },
     frame = 0,
+    next_tag = 0,
 }
 RT = {}
 
@@ -34,12 +45,21 @@ local function boot()
         MARKET.mode = "nocast"
         return
     end
+    -- Only the characters someone plays get imported.
+    local wanted = {}
+    for _, group in ipairs({ "townsfolk", "vendor", "guard", "thief", "child", "performer", "puller" }) do
+        for _, char in ipairs(C.by_group[group] or {}) do
+            wanted[char.id] = char
+        end
+    end
     for _, char in ipairs(C.characters) do
-        local holder = spawn_entity("Template " .. char.name)
-        set_component(holder, "Visible", false)
-        set_translation(holder, 0, -60, 0)
-        MARKET.holders[char.id] = holder
-        table.insert(MARKET.queue, char)
+        if wanted[char.id] then
+            local holder = spawn_entity("Template " .. char.name)
+            set_component(holder, "Visible", false)
+            set_translation(holder, 0, -60, 0)
+            MARKET.holders[char.id] = holder
+            table.insert(MARKET.queue, char)
+        end
     end
     MARKET.total = #MARKET.queue
     MARKET.mode = "loading"
@@ -64,10 +84,22 @@ local function spawn_puller(cart, offset)
     return e
 end
 
+local function define_brains()
+    Townsfolk.define()
+    Vendor.define()
+    Guard.define()
+    Thief.define()
+    Child.define()
+    Performer.define()
+    Props.define()
+end
+
 local function start_market()
     MARKET.pullers = {}
-    People.spawn_all(CROWD)
+    define_brains()
+    People.spawn_all()
     Props.setup(spawn_puller)
+    MARKET.next_tag = get_time() + C.random(TAG_EVERY[1], TAG_EVERY[2])
     MARKET.mode = "running"
 end
 
@@ -111,6 +143,15 @@ local function apply_debug()
     nav_debug_draw(MARKET.debug)
 end
 
+-- Now and then the children start a game of tag.
+local function maybe_start_tag(force)
+    if not force and get_time() < MARKET.next_tag then
+        return nil
+    end
+    MARKET.next_tag = get_time() + C.random(TAG_EVERY[1], TAG_EVERY[2])
+    return Child.start_tag(People.ids("child"))
+end
+
 local function handle_input()
     if is_key_just_pressed("Tab") then
         Camera.auto = true
@@ -140,8 +181,18 @@ local function handle_input()
         MARKET.debug.x_ray = not MARKET.debug.x_ray
         apply_debug()
     end
+    if is_key_just_pressed("B") then
+        Hud.labels = not Hud.labels
+    end
+    if is_key_just_pressed("V") then
+        MARKET.ai_debug = not MARKET.ai_debug
+        ai_debug_draw(MARKET.ai_debug and { senses = true, goals = true, states = true } or false)
+    end
     if is_key_just_pressed("G") then
         Props.toggle_gate()
+    end
+    if is_key_just_pressed("T") and MARKET.mode == "running" then
+        maybe_start_tag(true)
     end
     if is_key_just_pressed("H") then
         Hud.hidden = not Hud.hidden
@@ -158,6 +209,7 @@ end
 
 function on_created(self)
     Camera.setup()
+    Hud.camera = Camera.e
 end
 
 function update(self, dt)
@@ -167,8 +219,11 @@ function update(self, dt)
     elseif MARKET.mode == "loading" then
         load_step()
     elseif MARKET.mode == "running" then
-        People.update(dt)
-        Props.update(dt)
+        People.resolve()
+        maybe_start_tag(false)
+        if MARKET.frame % 15 == 0 then
+            People.census()
+        end
         if MARKET.frame % 30 == 0 then
             local status = nav_status()
             local polys = 0
@@ -189,37 +244,41 @@ function on_ui(self, ui)
         info.nocast = true
     elseif MARKET.mode ~= "running" then
         info.loading = string.format("Waking the townsfolk... %d of %d", MARKET.loaded, MARKET.total or 0)
+    else
+        info.counts = People.counts
     end
-    info.people, info.walking, info.lingering = People.census()
     info.polys = MARKET.nav.polys
     info.carving = MARKET.nav.carving
-    Hud.draw(ui, info)
+    local shot = Camera.SHOTS[Camera.shot]
+    Hud.draw(ui, info, People, shot.follow and Camera.follow or nil)
 end
 
 function on_destroyed(self, reason)
     People.clear()
+    Props.clear()
     for _, holder in pairs(MARKET.holders) do
         despawn_entity(holder)
-    end
-    for _, e in ipairs(MARKET.pullers or {}) do
-        despawn_entity(e)
     end
 end
 
 -- Test hooks ---------------------------------------------------------------------
 
 function RT.status()
-    local people, walking, lingering = People.census()
+    local counts = People.counts
     return {
         mode = MARKET.mode,
         loaded = MARKET.loaded,
-        people = people,
-        walking = walking,
-        lingering = lingering,
+        people = counts.total,
+        walking = counts.walking,
+        states = counts.roles,
         gate = Props.gate_text(),
         carts = Props.cart_text(),
         shot = Camera.name(),
         nav = MARKET.nav,
+        thefts = ai_global().thefts or 0,
+        arrests = ai_global().arrests or 0,
+        wanted = ai_global().thief_wanted or false,
+        news = C.news,
     }
 end
 
@@ -241,4 +300,22 @@ end
 function RT.debug(on)
     MARKET.debug = { mesh = on, agents = on, paths = on, obstacles = on, x_ray = false }
     apply_debug()
+end
+
+function RT.ai(on)
+    MARKET.ai_debug = on
+    ai_debug_draw(on)
+    Hud.labels = on
+end
+
+-- Make the thief look for a purse to lift now (he still waits for no guard to be near).
+function RT.theft()
+    if People.thief and People.thief.id then
+        return ai_send(People.thief.id, "strike")
+    end
+    return false
+end
+
+function RT.tag()
+    return maybe_start_tag(true)
 end

@@ -34,7 +34,11 @@ Camera.SHOTS = {
     { name = "The gate", fov = 55, at = dolly({ 2.2, 1.9, 5.2 }, { -1.6, 2.3, 6.6 }, { 0, 1.5, 12.8 }, { 0, 1.7, 13.0 }) },
     { name = "Following", fov = 60, follow = true },
     { name = "Overhead", fov = 50, at = orbit(0, 0, 2, 9, 42, 0.02, 1.2) },
+    { name = "The chase", fov = 62, follow = true, chase = true },
 }
+
+-- The shot a theft cuts to (while the camera runs by itself).
+Camera.CHASE = 9
 
 function Camera.setup()
     Camera.e = find_entity_by_name("GameCamera")
@@ -56,10 +60,21 @@ end
 
 function Camera.name()
     local shot = Camera.SHOTS[Camera.shot]
-    if shot.follow and Camera.follow then
-        return "Following " .. Camera.follow.char.name
+    if shot.chase and Camera.follow then
+        return "The chase: " .. Camera.follow.name
+    elseif shot.follow and Camera.follow then
+        return "Following " .. Camera.follow.name
     end
     return shot.name
+end
+
+-- Who the chase shot follows: the thief (or, without one, the guard on a chase).
+local function chase_target(people)
+    if people.thief then
+        return people.thief
+    end
+    local chaser = ai_global().chase_by
+    return chaser and C.person(chaser)
 end
 
 function Camera.update(dt, people)
@@ -72,12 +87,26 @@ function Camera.update(dt, people)
         Camera.next()
         shot = Camera.SHOTS[Camera.shot]
     end
+    -- A theft: cut to the chase (and stay with it while the hue and cry lasts).
+    local wanted = ai_global().thief_wanted
+    if Camera.auto and wanted and not Camera.was_wanted and people.thief then
+        Camera.select(Camera.CHASE)
+        shot = Camera.SHOTS[Camera.shot]
+    end
+    Camera.was_wanted = wanted
+    if Camera.auto and shot.chase and wanted then
+        Camera.time = math.min(Camera.time, SHOT_TIME)
+    end
     local eye, target
-    if shot.follow then
+    if shot.chase then
+        Camera.follow = chase_target(people)
+    elseif shot.follow then
         if not Camera.follow or Camera.time > 12 * (Camera.follows or 1) then
             Camera.follow = people.walker(Camera.follow)
             Camera.follows = (Camera.follows or 0) + 1
         end
+    end
+    if shot.follow then
         local person = Camera.follow
         local p = person and get_world_translation(person.e)
         local f = person and get_forward(person.e)

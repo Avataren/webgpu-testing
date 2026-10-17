@@ -2,6 +2,7 @@
 //
 // This module contains all the API functions exposed to Lua scripts.
 
+pub(crate) mod ai;
 mod animation;
 mod audio;
 mod clipboard;
@@ -78,6 +79,7 @@ pub(crate) fn register_all_apis(lua: &Lua) -> LuaResult<()> {
     physics::register_physics_api(lua)?;
     #[cfg(feature = "navigation")]
     navigation::register_navigation_api(lua)?;
+    ai::register_ai_api(lua)?;
     view::register_view_api(lua)?;
     stats::register_stats_api(lua)?;
     query::register_query_api(lua)?;

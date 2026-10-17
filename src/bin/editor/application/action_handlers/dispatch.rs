@@ -192,6 +192,7 @@ pub fn dispatch_action(
         InspectorAction::Navigation(request) => {
             super::navigation::handle_navigation_request(&mut ctx, request)
         }
+        InspectorAction::Ai(request) => super::ai::handle_ai_request(&mut ctx, request),
 
         // Shader actions
         InspectorAction::EditShader {

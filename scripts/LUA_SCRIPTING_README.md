@@ -168,6 +168,9 @@ end
   entities get `on_destroyed`.
 - `entity_exists(entity)` - `true` if the entity is still in the world (handles of despawned
   entities never get reused, so a stale handle stays `false`)
+- `entity_id(entity)` - the entity's id (the number callbacks and AI brains' `ctx.agent`
+  use), also for a handle `spawn_entity` / `clone_entity` returned, once the entity exists;
+  `nil` otherwise
 - `set_name(entity, name)` - Set entity name
 - `find_entity_by_name(name)` - Find entity by name
 - `attach_inline_script(entity, name, source)` - Attach inline Lua script
@@ -725,6 +728,40 @@ function on_nav_arrived(self)
 end
 ```
 
+
+### AI
+Behaviour trees and state machines for `AiAgent`s (`docs/ai.md` is the full guide). Brains
+are tables; their functions get `ctx` (`ctx.agent`, `ctx.bb` its blackboard, `ctx.group`,
+`ctx.global`, `ctx.dt`, `ctx.state`, `ctx.memory`, `ctx.event`) and run in the context of the
+script that defined them.
+
+- `ai_tree(name, root)` / `ai_machine(name, {initial, states, transitions})` /
+  `ai_define(name, def)` - define a brain (redefining restarts its agents).
+- `ai_register(name, f)` - a function JSON brains can name; `ai_brains()` lists brains.
+- `ai_set_brain(entity, name[, {tags, group, tick_rate, run_speed, blackboard,
+  perception}])` - give an entity an `AiAgent` (or `set_component(e, "AiAgent", {...})`).
+- `ai_get(e, key)`, `ai_set(e, key, value)` (`group.key`, `global.key` reach shared
+  boards); `ai_blackboard(e)`, `ai_group_board(name)`, `ai_global()` return boards to
+  index and assign.
+- `ai_send(e, event[, data[, from]])` (`from`: the sender, e.g. `ctx.agent`), `ai_broadcast(event[, data[, {x, y, z, radius, tag,
+  group}]])`, `ai_noise(x, y, z, radius, tag[, data[, from]])`.
+- `ai_state(e)` (`"work/serve"`), `ai_action(e)`, `ai_status(e)`, `ai_senses(e)`,
+  `ai_sees(e[, tag])`, `ai_agents([{brain, tag, state, group}])`.
+- `ai_restart(e)`, `ai_pause(e, paused)`, `ai_debug_draw(true | {senses, goals, percepts,
+  states})`.
+
+Scripts on an agent get `on_ai_state(self, {from, to})`.
+
+```lua
+function on_created(self)
+    ai_tree("idler", { "selector",
+        { "sequence", when = "sees('cart')", abort = "lower",
+            { "flee", "nearest('cart')", 4 } },
+        { "sequence", { "wander", 6 }, { "play", "look-around", time = { 2, 5 } } },
+    })
+    ai_set_brain(self, "idler", { tags = { "townsfolk" }, perception = { sight_range = 8 } })
+end
+```
 ### Files a game ships
 
 A game's export (the editor's Build menu, web builds) carries only the content it uses,

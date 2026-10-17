@@ -226,6 +226,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "spring_camera": { "type": ["object", "null"], "description": "Third-person spring-arm camera (give the entity a camera too), or null to remove: {target: entity name (empty = parent), pivot_offset: [0,1.5,0], distance (4.5), min_distance, max_distance, yaw, pitch (deg, -15 looks down), min_pitch, max_pitch, shoulder_offset, mouse_look (true: turns while the cursor is locked or right mouse held), sensitivity (deg/pixel), invert_y, zoom_step (m per wheel notch), follow_lag (s), vertical_lag (s), collision (pull in before scenery), probe_radius, auto_follow (swing behind a moving target, 0 = off)}. Only given fields change." },
         "nav_mesh_surface": { "type": ["object", "null"], "description": "Navmesh built from the scene's static geometry (bake it with navmesh_bake; without a bake it is built when play starts), or null to remove. Floors over floors (bridges, tunnels, balconies) stay separate. Fields: agent_radius (0.4), agent_height (1.8), agent_max_climb (0.45), agent_max_slope (deg, 45), cell_size (0.2), cell_height (0.1), tile_size (cells, 48; obstacles rebuild the tiles they touch), min_region_area (m2, 1), merge_region_area (8), max_edge_length (12), max_edge_error (cells, 1.3), detail_sample_distance (m, 1.2; 0 = no height detail), detail_sample_max_error (0.1), geometry (render_meshes|colliders|both), collect (all|children), bounds ([x,y,z] box around the entity, zero = everything), baked (project path, set by a bake), build_on_start (true), agent_type (\"\"). Only given fields change." },
         "nav_agent": { "type": ["object", "null"], "description": "Walks the navmesh to destinations (Lua nav_set_destination(e, x, y, z), nav_stop, nav_agent_state; callbacks on_nav_arrived/on_nav_failed), steering around other agents (ORCA) and moving obstacles, replanning when the navmesh changes; or null to remove. The entity origin is the feet; models face +Z (else yaw_offset). Moves the transform, or steers a CharacterController when the entity has one (drive auto|transform|character). An AnimationTree with from_character gets its speeds. Fields: radius (0.35), height (1.8), speed (1.5 m/s), acceleration (8), turn_speed (deg/s, 540), stopping_distance (0.15), avoidance (true), priority (0..1, 0.5), separation (1), face_movement (true), yaw_offset, drive, agent_type, destination ([x,y,z] to head for at play start), area_costs ([{area, cost}])." },
+        "ai_agent": { "type": ["object", "null"], "description": "Gives the entity a brain, run in play mode (or null to remove): brain (a name a script defines with ai_tree / ai_machine, or ai_define / the ai_define tool, or a project JSON file like content/ai/guard.json), enabled, tick_rate (thinks per second, 10; 0 every frame), tags (what others perceive it as), group (shares the group. blackboard and group events), run_speed (m/s for run = true moves, 3.2), blackboard (starting values; [x,y,z] arrays are positions; merged key by key, null removes), perception {sight_range (0: blind), sight_angle (deg, 120), near_range (1.5), hearing_range (15), memory (s, 5), interests (tags it notices), line_of_sight (navmesh|physics|none), eye_height, rate (looks/s)}. Walking needs a nav_agent too. See docs/ai.md." },
         "nav_obstacle": { "type": ["object", "null"], "description": "Something that moves about on the navmesh (cart, door, crate): agents steer around it while it moves; standing still it carves a hole into the navmesh (tiles rebuilt, paths reroute). Or null to remove. Fields: shape ({kind: box, size: [x,y,z]} | {kind: cylinder, radius, height}; local units), offset, carve (true), carve_only_stationary (true), move_threshold (m, 0.1), stationary_time (s, 0.5)." },
         "nav_link": { "type": ["object", "null"], "description": "Off-mesh link from the entity to end (local offset): a jump down, a gap, a ladder; agents whose path uses it cross in an arc (Lua callbacks on_nav_link_start(self, {start, finish, link}) / on_nav_link_end). Or null to remove. Fields: end ([x,y,z], default [0,0,2]), bidirectional (false: only entity -> end), radius (m, 0.5: how far each end reaches for the floor), area (63)." },
         "nav_modifier": { "type": ["object", "null"], "description": "How an entity's geometry (and its children's, include_children) goes into navmeshes, or null to remove: ignore (leave it out), walkable (false: solid but never walked on, like rooftops), area (1..63; 63 plain ground; agents' area_costs make areas cheaper or dearer)." },
@@ -472,7 +473,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "nav_mesh_surface", "nav_agent", "nav_obstacle", "nav_modifier", "nav_link", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "nav_mesh_surface", "nav_agent", "nav_obstacle", "nav_modifier", "nav_link", "ai_agent", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -1166,6 +1167,91 @@ pub fn tools() -> Vec<Tool> {
             description: "Every nav_agent with its state (idle, planning, moving, arrived, failed, off_mesh, lost), position, speed, destination, distance left and whether its path is blocked (partial). Agents walk only in play mode.",
             schema: empty(),
             action: Action::Engine("navigation.agents"),
+        },
+        Tool {
+            name: "ai_status",
+            description: "Every AI agent (ai_agent component, play mode): its brain, state path (machines: outer/inner), current action (the running tree leaf), tags, group and last error; counts of agents per brain and state; the brains defined; and step stats (agents, ticked, looked, events, step_ms).",
+            schema: empty(),
+            action: Action::Engine("ai.status"),
+        },
+        Tool {
+            name: "ai_inspect",
+            description: "One AI agent in depth: its blackboard (and the group and global boards), its brain as it runs (a tree's nodes with their last results, what is running, utility scores and time left; a machine's states, transitions and recent transition history with reasons), its senses (what it sees, remembers and heard) and events waiting for its next tick.",
+            schema: object(json!({ "entity": entity_ref() }), &["entity"]),
+            action: Action::Engine("ai.inspect"),
+        },
+        Tool {
+            name: "ai_define",
+            description: "Define (or redefine) a brain from JSON; agents running that name start it again. A tree is its root node: {\"type\": \"selector\", \"children\": [...], \"name\", \"when\": \"expr\", \"abort\": \"self|lower|both\", \"cooldown\", \"timeout\", \"chance\", \"score\", \"weight\"} with composites sequence, selector, reactive_sequence, reactive_selector, parallel {success, failure}, shuffle_sequence, shuffle_selector, random, utility {interval, hysteresis}; decorators invert, force_success, force_failure, repeat {count, until}, retry {count}, timeout, delay, cooldown {time}, once, chance {p}, guard {when, abort}; leaves wait {time}, log, set {key, value | expr}, clear, add, check {expr}, wait_until, lua {run, enter, exit: function names}, send {event, to, data}, broadcast, noise {tag, radius}, emit, wait_event {event, store}, move_to {target, radius, speed, run}, wander, flee {from, distance}, follow {target, distance}, face {target | yaw}, stop, patrol {points}, pick_point, play {clip, layer, time, loop}, stop_animation, anim_param, anim_trigger, find {tag, store}, subtree {tree}. A machine is {\"initial\", \"states\": {name: {enter, update, exit, tree, machine, set, final, transitions: [{to, event, when, after, on, chance, store, store_from, store_position}]}}, \"transitions\": [machine-wide, with except]}. Expressions read the blackboard (hunger > 0.5 and not group.alarm) and call dist, sees, heard, count, nearest, in_state, time, state_time, random, chance. Lives until play stops (scripts usually define brains in on_created). See docs/ai.md.",
+            schema: object(json!({
+                "name": { "type": "string" },
+                "brain": { "type": "object", "description": "A tree's root node or a machine" }
+            }), &["name", "brain"]),
+            action: Action::Engine("ai.define"),
+        },
+        Tool {
+            name: "ai_validate",
+            description: "Check a brain definition (as for ai_define) without defining it: its nodes or states, or what is wrong and where.",
+            schema: object(json!({ "brain": { "type": "object" } }), &["brain"]),
+            action: Action::Engine("ai.validate"),
+        },
+        Tool {
+            name: "ai_send",
+            description: "Send an AI event: to one agent (entity), or to every agent, to those within radius of center (with tag), or to a group. Machines take transitions with event = name; wait_event leaves finish. data becomes the event's data (stored by transitions with store).",
+            schema: object(json!({
+                "entity": entity_ref(),
+                "event": { "type": "string" },
+                "data": {},
+                "radius": { "type": "number" },
+                "center": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+                "tag": { "type": "string" },
+                "group": { "type": "string" }
+            }), &["event"]),
+            action: Action::Engine("ai.send"),
+        },
+        Tool {
+            name: "ai_set",
+            description: "Set a blackboard value of an agent (entity, key, value); key group.x sets its group's board, global.x the scene's (no entity needed), or pass group to set that group's board. [x,y,z] arrays become positions. Returns the board.",
+            schema: object(json!({
+                "entity": entity_ref(),
+                "key": { "type": "string" },
+                "value": {},
+                "group": { "type": "string" }
+            }), &["key"]),
+            action: Action::Engine("ai.set"),
+        },
+        Tool {
+            name: "ai_noise",
+            description: "Make a noise at a point: agents within radius and their hearing range get hear and hear:<tag> events and remember it (heard('tag') in expressions).",
+            schema: object(json!({
+                "position": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+                "radius": { "type": "number" },
+                "tag": { "type": "string" },
+                "data": {}
+            }), &["position"]),
+            action: Action::Engine("ai.noise"),
+        },
+        Tool {
+            name: "ai_control",
+            description: "Restart an agent's brain (restart: true), pause or resume it (paused).",
+            schema: object(json!({
+                "entity": entity_ref(),
+                "restart": { "type": "boolean" },
+                "paused": { "type": "boolean" }
+            }), &["entity"]),
+            action: Action::Local,
+        },
+        Tool {
+            name: "ai_debug",
+            description: "Draw what agents think, in the view and screenshots: senses (view cones, near range; the selected agent's hearing range), goals (lines to where they walk), percepts (lines to what they see, green, or remember, grey; heard noises), states (a ring at each agent's feet in its state's colour). all: true or false sets every layer. Selected agents always show theirs.",
+            schema: object(json!({
+                "all": { "type": "boolean" },
+                "senses": { "type": "boolean" },
+                "goals": { "type": "boolean" },
+                "percepts": { "type": "boolean" },
+                "states": { "type": "boolean" }
+            }), &[]),
+            action: Action::Engine("ai.debug"),
         },
         Tool {
             name: "asset_reload",

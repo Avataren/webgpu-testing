@@ -63,6 +63,7 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "nav_obstacle",
     "nav_modifier",
     "nav_link",
+    "ai_agent",
     "animation_tree",
     "billboard",
     "depth_state",
@@ -100,6 +101,7 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
         "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {
             crate::navigation::edit::has_component(world, entity, name)
         }
+        "ai_agent" => crate::ai::edit::has_component(world, entity),
         "animation_tree" => has::<AnimationTree>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
@@ -428,6 +430,18 @@ pub(super) fn get(params: &Value, ctx: &mut RemoteContext<'_, '_>) -> RemoteResu
         if let Some(value) = crate::navigation::edit::component_json(world, entity, name) {
             out[name] = value;
         }
+    }
+    if let Some(mut value) = crate::ai::edit::component_json(world, entity) {
+        // In play, what it is thinking.
+        if let Some(info) = scene.ai().shared().agents.borrow().get(&entity) {
+            value["thinking"] = json!({
+                "state": info.state_path(),
+                "action": info.action,
+                "error": info.error,
+                "blackboard": info.board.lock().to_json(),
+            });
+        }
+        out["ai_agent"] = value;
     }
     if let Ok(tree) = world.get::<&AnimationTree>(entity) {
         let mut value = serde_json::to_value(&*tree).unwrap_or(Value::Null);
@@ -1002,6 +1016,9 @@ pub(super) fn apply_patch(
                     key,
                     value,
                 )?
+            }
+            "ai_agent" => {
+                crate::ai::edit::patch_component(ctx.gpu.scene.main_world_mut(), entity, value)?
             }
             "animation_tree" => patch_animation_tree(ctx, entity, value)?,
             "rotate_animation" => patch_component(
@@ -1902,6 +1919,7 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         // Built without navigation: there is nothing of the kind to remove.
         #[cfg(not(feature = "navigation"))]
         "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {}
+        "ai_agent" => remove::<crate::ai::AiAgent>(world, entity),
         "animation_tree" => remove::<AnimationTree>(world, entity),
         "billboard" => remove::<Billboard>(world, entity),
         "depth_state" => remove::<DepthState>(world, entity),

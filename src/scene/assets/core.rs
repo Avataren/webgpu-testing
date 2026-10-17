@@ -521,6 +521,9 @@ impl SceneAsset {
             if let Some(component) = &entity.animation_tree {
                 builder.add(component.clone());
             }
+            if let Some(component) = &entity.ai_agent {
+                builder.add(component.clone());
+            }
             entity.navigation.add_to(&mut builder);
 
             builders.push(builder);

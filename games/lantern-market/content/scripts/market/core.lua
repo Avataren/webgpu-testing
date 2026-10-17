@@ -11,6 +11,12 @@ local C = {
     TAU = math.pi * 2,
     -- The heights the clones are scaled to (the library's models range from 1.3 to 2.4 m).
     HEIGHT = { min = 1.62, max = 1.86 },
+    -- Entity id -> the person (filled in once clones exist; brains get ids).
+    by_id = {},
+    -- What just happened, for the HUD: { text, time }.
+    news = {},
+    -- Stall index -> its vendor's entity id.
+    vendors = {},
 }
 
 -- Every clip a character can play: locomotion for the animation tree, the rest for the
@@ -117,6 +123,29 @@ function C.add_clips(e)
     for name, clip in pairs(C.clips) do
         animator_add_clips(e, clip.path)
     end
+end
+
+-- Something worth telling (a theft, an arrest, a game of tag).
+function C.tell(text)
+    table.insert(C.news, 1, { text = text, time = get_time() })
+    while #C.news > 5 do
+        table.remove(C.news)
+    end
+    log_info("[market] " .. text)
+end
+
+-- The person an entity id belongs to, and their name.
+function C.person(id)
+    return C.by_id[id]
+end
+
+function C.name_of(id)
+    local person = C.by_id[id]
+    return person and person.name or ("someone " .. tostring(id))
+end
+
+function C.clamp01(v)
+    return math.max(0, math.min(1, v))
 end
 
 return C

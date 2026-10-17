@@ -89,6 +89,7 @@ pub mod icons {
     pub const NAV_MODIFIER: &str = "🔧";
     #[cfg(feature = "navigation")]
     pub const NAV_LINK: &str = "🔗";
+    pub const AI: &str = "🧠";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

@@ -38,11 +38,13 @@ use wgpu_cube::{InspectorMaterial, SceneEntityComponentsSummary, SceneEntityInsp
 
 use crate::theme::{self, icons};
 
+mod ai;
 mod animation;
 #[cfg(feature = "navigation")]
 mod navigation;
 mod physics;
 
+pub use ai::{AiPanelStatus, AiRequest};
 #[cfg(feature = "navigation")]
 pub use navigation::{NavigationPanelStatus, NavigationRequest, PathTestStatus};
 
@@ -225,6 +227,8 @@ pub enum InspectorAction {
     /// Bake a navmesh, change the navigation debug view or the path test.
     #[cfg(feature = "navigation")]
     Navigation(NavigationRequest),
+    /// Change the AI debug view, restart or pause an agent.
+    Ai(AiRequest),
 }
 
 /// What the light probe section asks of the renderer.
@@ -321,6 +325,7 @@ enum MaterialKindChoice {
     Shader,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show_entity_inspector(
     ui: &mut egui::Ui,
     data: &SceneEntityInspectorData,
@@ -329,6 +334,7 @@ pub fn show_entity_inspector(
     light_shadows: &LightShadowPanelStatus,
     animation: &AnimationPanelStatus,
     #[cfg(feature = "navigation")] navigation_status: &NavigationPanelStatus,
+    ai_status: &AiPanelStatus,
 ) -> Vec<InspectorAction> {
     let mut actions = Vec::new();
     let entity = data.entity;
@@ -430,6 +436,7 @@ pub fn show_entity_inspector(
     physics::show_physics_sections(ui, entity, components, &mut actions);
     #[cfg(feature = "navigation")]
     navigation::show_navigation_sections(ui, entity, components, navigation_status, &mut actions);
+    ai::show_ai_section(ui, entity, components, ai_status, &mut actions);
 
     animation::show_animation_sections(
         ui,
@@ -590,6 +597,7 @@ fn add_component_menu(
     physics::add_physics_menu(ui, entity, components, actions);
     #[cfg(feature = "navigation")]
     navigation::add_navigation_menu(ui, entity, components, actions);
+    ai::add_ai_menu(ui, entity, components, actions);
     animation::add_animation_menu(ui, entity, components, actions);
 }
 

@@ -7,6 +7,9 @@
 //! Usage: `engine-mcp [--repo DIR] [--port PORT]`. The repository defaults to the one
 //! this binary was built in; the port defaults to `ENGINE_REMOTE_PORT` or 47811.
 
+// The tool schemas are large json! literals.
+#![recursion_limit = "256"]
+
 mod engine;
 mod guide;
 mod tools;
@@ -645,6 +648,23 @@ impl Server {
             }
             "project_save" => self.save_project(args).map(Output::Json),
             "playtest" => self.playtest(args),
+            "ai_control" => {
+                let entity = args.get("entity").cloned().unwrap_or(Value::Null);
+                let mut out = json!({});
+                if let Some(paused) = args.get("paused").and_then(Value::as_bool) {
+                    out["pause"] = self
+                        .engine
+                        .call("ai.pause", json!({ "entity": entity, "paused": paused }))
+                        .map_err(|err| err.to_string())?;
+                }
+                if args.get("restart").and_then(Value::as_bool) == Some(true) {
+                    out["restart"] = self
+                        .engine
+                        .call("ai.restart", json!({ "entity": entity }))
+                        .map_err(|err| err.to_string())?;
+                }
+                Ok(Output::Json(out))
+            }
             "navmesh_bake" => {
                 let mut params = json!({});
                 if let Some(entity) = args.get("entity") {

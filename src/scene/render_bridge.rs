@@ -107,8 +107,8 @@ impl RenderBridge {
             volume_shapes.extend(crate::physics::simulation_gizmos(scene.physics(), &node));
         }
 
-        // Navmeshes, agents and paths (and what the editor has selected of them).
-        #[cfg(feature = "navigation")]
+        // Navmeshes, agents and paths, and what agents think (and what the editor has
+        // selected of them).
         {
             let selected: Vec<hecs::Entity> = if gizmos_enabled {
                 scene
@@ -120,7 +120,18 @@ impl RenderBridge {
             } else {
                 Vec::new()
             };
-            if let Some(geometry) = scene.navigation_debug_geometry(&selected) {
+            #[cfg(feature = "navigation")]
+            let navigation = scene.navigation_debug_geometry(&selected);
+            #[cfg(not(feature = "navigation"))]
+            let navigation: Option<crate::renderer::debug_draw::DebugGeometry> = None;
+            let geometry = match (navigation, scene.ai_debug_geometry(&selected)) {
+                (Some(mut navigation), Some(ai)) => {
+                    navigation.append(ai);
+                    Some(navigation)
+                }
+                (navigation, ai) => navigation.or(ai),
+            };
+            if let Some(geometry) = geometry {
                 renderer.set_debug_geometry(geometry);
             }
         }

@@ -31,7 +31,6 @@ pub(crate) use debug::fixed_collider_triangles;
 pub(crate) use debug::{selected_collider_gizmos, simulation_gizmos};
 pub use setup::{make_character, MadeCharacter, MakeCharacterOptions};
 pub use spring_camera::SpringCameraStatus;
-#[cfg(feature = "navigation")]
 pub(crate) use world::world_transform;
 pub use world::{PhysicsCommand, PhysicsEvent, QueryOptions, RayHit, ScenePhysics};
 

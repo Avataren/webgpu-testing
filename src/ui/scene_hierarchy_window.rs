@@ -217,6 +217,7 @@ pub struct SceneEntityComponentsSummary {
     pub nav_modifier: Option<crate::navigation::NavModifier>,
     #[cfg(feature = "navigation")]
     pub nav_link: Option<crate::navigation::NavLink>,
+    pub ai_agent: Option<crate::ai::AiAgent>,
 }
 
 #[cfg(feature = "egui")]
@@ -385,6 +386,9 @@ impl SceneHierarchySnapshot {
                     #[cfg(feature = "navigation")]
                     nav_link: entity_ref
                         .get::<&crate::navigation::NavLink>()
+                        .map(|component| (*component).clone()),
+                    ai_agent: entity_ref
+                        .get::<&crate::ai::AiAgent>()
                         .map(|component| (*component).clone()),
                 },
             );

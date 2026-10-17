@@ -203,6 +203,10 @@ impl<'shared> EditorAppAccess<'shared> {
         &mut self.shared.nav_path_tool
     }
 
+    pub(super) fn ai_status_mut(&mut self) -> &mut crate::inspector::AiPanelStatus {
+        &mut self.shared.ai_status
+    }
+
     pub fn record_scene_change(&mut self, scene: &mut SceneWorkspaceSceneMut<'_>) {
         let (selected, highlighted) = self.selection_entities();
         scene.mark_dirty();
