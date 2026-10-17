@@ -77,7 +77,7 @@ example `return { townsfolk = 12, vendors = 2, guards = 2, children = 3 }`.
 | Key | |
 |---|---|
 | Tab, 1-9 | next camera shot, or a shot: the square, under the arcade, the towpath, from the terrace, the stage, the gate, following someone, overhead, the chase (the camera cuts to it when a purse is lifted) |
-| F | follow someone walking (their state, what they are doing and their needs show) |
+| F | follow someone walking (their state, what they are doing and their needs show); the camera rides a spring arm that pulls in before walls; right-drag to look around, the wheel zooms |
 | B | what everyone is doing, over their heads |
 | V | the AI's view: view cones, where people are going, a ring in each state's colour |
 | T | start a game of tag |
@@ -118,6 +118,10 @@ costs about 0.3 ms a frame for the ninety.
   and adds the navigation: a `NavMeshSurface` (baked to `content/navigation/navmesh.navmesh`),
   `NavModifier`s on what nobody walks on (water, roofs, awnings, foliage, lantern heads),
   `NavObstacle`s on the carts and the gate, and three `NavLink`s off the stage.
+- Physics is only there for the camera: mesh `Collider`s on the buildings, roofs, awnings,
+  bridges, ground, trees, the gate and the carts (not on thin or small things: iron posts
+  and railings, fruit, lanterns, foliage), which `GameCamera`'s `SpringCamera` sweeps
+  against in the follow shots.
 - Lighting: a dusk sky (`qwantani_dusk_2`, Poly Haven, CC0), a low sun, glowing lanterns,
   twenty lantern point lights (shadowed through the shadow atlas), and light probe volumes
   baked to `content/lighting/` for the web and GPUs without ray tracing.
@@ -137,7 +141,7 @@ costs about 0.3 ms a frame for the ninety.
   spots people go and what they do there, vendor posts, hideouts, from the level's
   numbers), `people.lua` (spawning each role with its brain, senses and blackboard; the
   cast size), `props.lua` (the carts and the gate as state machines), `camera.lua` (the
-  shots) and `hud.lua`.
+  shots; the follow shots hand the spring arm its target) and `hud.lua`.
 
 People are `NavAgent`s with `drive: transform` (the crowd moves them along the navmesh; no
 physics) and `AiAgent`s, spawned with `clone_entity` from templates, given their clips with

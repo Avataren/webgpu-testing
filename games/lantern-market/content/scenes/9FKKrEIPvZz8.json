@@ -615,6 +615,31 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "spring_camera": {
+        "target": "",
+        "pivot_offset": [
+          0.0,
+          1.6,
+          0.0
+        ],
+        "distance": 3.8,
+        "min_distance": 1.5,
+        "max_distance": 7.0,
+        "yaw": 0.0,
+        "pitch": -14.0,
+        "min_pitch": -60.0,
+        "max_pitch": 30.0,
+        "shoulder_offset": 0.0,
+        "mouse_look": true,
+        "sensitivity": 0.15,
+        "invert_y": false,
+        "zoom_step": 0.5,
+        "follow_lag": 0.2,
+        "vertical_lag": 0.4,
+        "collision": true,
+        "probe_radius": 0.25,
+        "auto_follow": 2.5
+      },
       "camera": {
         "projection": {
           "kind": "perspective",
@@ -2133,6 +2158,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "nav_modifier": {
         "ignore": false,
         "walkable": false,
@@ -2194,6 +2234,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "nav_modifier": {
         "ignore": false,
         "walkable": false,
@@ -2255,6 +2310,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "nav_modifier": {
         "ignore": false,
         "walkable": false,
@@ -2316,6 +2386,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "nav_modifier": {
         "ignore": false,
         "walkable": false,
@@ -2499,6 +2584,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -2554,6 +2654,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -2664,6 +2779,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -2994,6 +3124,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3269,6 +3414,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3324,6 +3484,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3379,6 +3554,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3434,6 +3624,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3489,6 +3694,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": false
+      },
       "camera": null
     },
     {
@@ -3549,6 +3769,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": true
+      },
       "nav_obstacle": {
         "shape": {
           "kind": "box",
@@ -3628,6 +3863,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": true
+      },
       "nav_obstacle": {
         "shape": {
           "kind": "box",
@@ -3820,6 +4070,21 @@
       "particle_emitter": null,
       "particle_behavior": null,
       "environment": null,
+      "collider": {
+        "shape": {
+          "kind": "mesh"
+        },
+        "offset": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "friction": 0.6,
+        "restitution": 0.0,
+        "density": 1.0,
+        "sensor": false,
+        "include_children": true
+      },
       "nav_obstacle": {
         "shape": {
           "kind": "box",

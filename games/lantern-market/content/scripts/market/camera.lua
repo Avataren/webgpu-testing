@@ -2,6 +2,11 @@
 -- under the arcade with people on the terrace overhead, the towpath passing under the
 -- bridges, the stage the children jump off, the gate), and a follow camera behind
 -- whoever is walking.
+--
+-- The follow shots ride GameCamera's spring arm (its SpringCamera component): it trails
+-- the person, swings round behind them as they walk, and pulls in before the buildings
+-- (their colliders) instead of passing through walls. Right-drag looks around, the
+-- wheel zooms. The other shots hand the arm no target and place the camera themselves.
 
 local C = require("market/core")
 
@@ -32,9 +37,9 @@ Camera.SHOTS = {
     { name = "From the terrace", fov = 55, at = dolly({ -10, 6.4, -13.3 }, { 8, 6.6, -13.3 }, { -2, 0.4, 3 }, { 4, 0.4, 3 }) },
     { name = "The stage", fov = 52, at = dolly({ -2.0, 2.7, 9.0 }, { -5.5, 2.4, -3.5 }, { -15, 1.6, 4.5 }, { -15, 1.6, 1.5 }) },
     { name = "The gate", fov = 55, at = dolly({ 2.2, 1.9, 5.2 }, { -1.6, 2.3, 6.6 }, { 0, 1.5, 12.8 }, { 0, 1.7, 13.0 }) },
-    { name = "Following", fov = 60, follow = true },
+    { name = "Following", fov = 60, follow = true, distance = 3.8, pitch = -14 },
     { name = "Overhead", fov = 50, at = orbit(0, 0, 2, 9, 42, 0.02, 1.2) },
-    { name = "The chase", fov = 62, follow = true, chase = true },
+    { name = "The chase", fov = 62, follow = true, chase = true, distance = 4.6, pitch = -12 },
 }
 
 -- The shot a theft cuts to (while the camera runs by itself).
@@ -68,6 +73,28 @@ function Camera.name()
     return shot.name
 end
 
+-- Put the spring arm on `person` for `shot` (nil lets go of it): cut to behind them,
+-- looking the way they face. Models face +Z, so that is against their forward (-Z) axis;
+-- yaw 0 looks along -Z.
+local function ride(person, shot)
+    if person == Camera.riding and shot == Camera.riding_shot then
+        return
+    end
+    Camera.riding, Camera.riding_shot = person, shot
+    if not person then
+        spring_camera_set(Camera.e, { target = false })
+        return
+    end
+    local f = get_forward(person.e)
+    spring_camera_set(Camera.e, {
+        target = person.e,
+        yaw = f and math.deg(math.atan(f.x, f.z)) or nil,
+        pitch = shot.pitch,
+        distance = shot.distance,
+        snap = true,
+    })
+end
+
 -- Who the chase shot follows: the thief (or, without one, the guard on a chase).
 local function chase_target(people)
     if people.thief then
@@ -97,7 +124,6 @@ function Camera.update(dt, people)
     if Camera.auto and shot.chase and wanted then
         Camera.time = math.min(Camera.time, SHOT_TIME)
     end
-    local eye, target
     if shot.chase then
         Camera.follow = chase_target(people)
     elseif shot.follow then
@@ -107,32 +133,17 @@ function Camera.update(dt, people)
         end
     end
     if shot.follow then
+        -- The spring arm places the camera after the scripts run (without anyone to
+        -- follow, it stays where it is).
         local person = Camera.follow
-        local p = person and get_world_translation(person.e)
-        local f = person and get_forward(person.e)
-        if not p or not f then
-            return
-        end
-        -- Models face +Z, so behind them is along their forward (-Z) axis.
-        local back = { f.x, 0, f.z }
-        local want_eye = { p.x + back[1] * 3.6, p.y + 2.1, p.z + back[3] * 3.6 }
-        local want_target = { p.x - back[1] * 2.0, p.y + 1.3, p.z - back[3] * 2.0 }
-        local k = 1 - math.exp(-dt * 3)
-        Camera.eye = Camera.eye or want_eye
-        Camera.target = Camera.target or want_target
-        for i = 1, 3 do
-            Camera.eye[i] = C.lerp(Camera.eye[i], want_eye[i], k)
-            Camera.target[i] = C.lerp(Camera.target[i], want_target[i], k)
-        end
-        eye, target = Camera.eye, Camera.target
+        ride(person and get_world_translation(person.e) and person, shot)
     else
         Camera.follows = nil
-        eye, target = shot.at(Camera.time)
-        Camera.eye = { eye[1], eye[2], eye[3] }
-        Camera.target = { target[1], target[2], target[3] }
+        ride(nil)
+        local eye, target = shot.at(Camera.time)
+        set_translation(Camera.e, eye[1], eye[2], eye[3])
+        look_at(Camera.e, target[1], target[2], target[3])
     end
-    set_translation(Camera.e, eye[1], eye[2], eye[3])
-    look_at(Camera.e, target[1], target[2], target[3])
     if shot.fov ~= Camera.fov then
         Camera.fov = shot.fov
         set_camera(Camera.e, { fov_deg = shot.fov })

@@ -174,7 +174,7 @@ function Hud.draw(ui, info, people, follow)
         "bottom_left",
         16,
         12,
-        "Tab next shot   1-9 shots   F follow   B states   V senses   N navmesh   P paths   X x-ray   G gate   T tag   Click: call people over   H hide",
+        "Tab next shot   1-9 shots   F follow (right-drag looks, wheel zooms)   B states   V senses   N navmesh   P paths   X x-ray   G gate   T tag   Click: call people over   H hide",
         { color = SOFT, size = 13 }
     )
 end
