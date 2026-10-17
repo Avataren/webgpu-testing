@@ -136,6 +136,20 @@ Clippy, a wasm32 library check, the MCP server's tests, and the release editor o
 RT Lab driven through the MCP (`engine_call` for the new parameters, since the running MCP server
 predated them); see each wish for what was measured.
 
+Marionette round (2026-10-17): a skeletal animation show and crowd benchmark,
+[`games/marionette`](../../games/marionette/README.md), built from the asset library's 47
+characters (Mixamo and Quaternius) and 94 clips: up to 1,051 characters at once (2,933 skinned
+meshes, 14.5M skinned vertices, 80k entities). The arena was authored over MCP (`mesh_lathe`,
+`mesh_compose`, spots, a baked light probe volume); the show is Lua. Crowds exposed eight
+engine bugs, all fixed here (B25 to B32), and the benchmark drove a crowd performance pass:
+the stadium part went from 15 to 29 fps on raster, measured both times with the user's game
+running alongside (animators pose on the thread pool, transform propagation walks one hecs
+view, a character's meshes share one palette, passes borrow meshes, despawns share one index).
+With nothing else running it reaches 35 fps, and the whole show averages 141 fps. New Lua: `clone_entity`, `frame_stats`, `graphics_settings`,
+`set_graphics_settings`; MCP `graphics_set {save: false}`. Checked with the full Rust test
+suite (6 new tests), strict Clippy, and the release player and editor driven over MCP, with
+the benchmark's own before/after numbers.
+
 How to read the sections:
 
 - **Bugs**: something behaves wrongly or contradicts the docs. Each entry has a status:
@@ -493,6 +507,80 @@ How to read the sections:
   On a copy of RT Lab, adding a cube and saving changed only the main scene (a 1-line diff in its
   compact file) plus the cube's new material; `meta.json` was not touched.
 
+### B25. The player never imported models a script asked for (fixed, engine)
+
+- `import_gltf(entity, path, scale)` queued the import, but only an editor system drained the
+  queue, so in the player (and web builds) nothing ever appeared. Marionette's loading screen
+  waited forever at 0 of 47 with no error.
+- **Fixed:** the scheduler's GPU stage processes pending imports for every app, next to the
+  scripts' mesh and material commands; the editor's own call is gone.
+
+### B26. Ray tracing crashed past 128 MiB of geometry (fixed, engine)
+
+- With about 900 skinned characters the ray-traced scene's vertex pool doubled to 256 MiB, more
+  than the device's `max_storage_buffer_binding_size`, and wgpu panicked creating
+  `RayTracingSceneBindGroup` ("Buffer binding 1 range 268435456 exceeds ... limit 134217728").
+- **Fixed:** the pool never grows past what the device can bind (geometry that does not fit is
+  left out of ray-traced effects, warned once), and the ray tracing device asks for the
+  adapter's limit up to 1 GiB. 900 castle guards then ran without errors.
+
+### B27. A copied character kept posing the original (confirmed, fixed, engine)
+
+- `entity.duplicate` copied a playing `Animator` with its cached bone binding;
+  `Binding::is_valid` only checks that the bones exist, so in play mode the copy kept driving
+  the original's bones. Read in source while adding Lua `clone_entity`.
+- **Fixed:** duplication is one function (`scene::duplicate::duplicate_subtree`) used by the
+  remote duplicate and `clone_entity`; copies start animator and animation tree playback afresh.
+
+### B28. Spawned handles never worked with reading functions (fixed, engine)
+
+- `local h = spawn_entity("X")` then, in any later hook, `get_children(h)`, `entity_exists(h)`,
+  `get_component(h, ...)` or `animator_state(h)` saw nothing: they decoded the negative handle as
+  an entity id. Only `find_entity_by_name` recovered the real id.
+- **Fixed:** reading functions resolve handles through the script's registry
+  (`guards::resolve_entity`). Test: `reading_functions_accept_spawned_handles_in_later_hooks`.
+
+### B29. Double-sided materials were drawn single-sided (fixed, engine)
+
+- `MaterialFlags::DOUBLE_SIDED` was stored, saved and reported by `entity_get`, but every
+  render object used back-face culling. The arena's stands (a lathe seen from inside) vanished,
+  and all 47 characters in the asset library (Blender exports glTF materials double-sided by
+  default) lost the back faces of hair cards, capes and lashes.
+- **Fixed:** the cull mode comes from the material; the depth prepass and shadow maps have
+  no-culling pipelines for double-sided batches, and the PBR shader flips the normal on back
+  faces (`front_facing`).
+
+### B30. A script's graphics settings were overwritten on the first render (fixed, engine)
+
+- The project's saved graphics settings were loaded lazily in the first render, after the first
+  script update, so `set_graphics_settings` in `on_created` or the first `update` was replaced:
+  the show asked for screen-space reflections and still rendered ray-traced ones.
+- **Fixed:** `graphics_settings()` loads the open project's settings whenever it is used.
+
+### B31. Importing a model again uploaded it again, for good (fixed, engine)
+
+- Each `import_gltf` of the same file registered new meshes and textures, and nothing frees
+  textures. After one hot reload of a script that imports in `on_created`, the stadium filled
+  the 24 GB of VRAM (24.4 GB used, 3.4 GB spilled to system memory) and its GPU time went from
+  about 10 to 98 ms a frame (paging), on a GPU shared with the user's game; the texture count
+  had doubled (190 to 376).
+- **Fixed:** each scene keeps the models it imported (by path and scale, reloaded when the file
+  changes): importing again only instantiates. Across a reload of all 47 characters: textures 190
+  and meshes 139 before and after, VRAM unchanged (14.6 GB at the title screen). Still open: textures and meshes of models no longer used are
+  never released (see the wish list).
+
+### B32. Every `despawn_entity` scanned the whole world (fixed, engine)
+
+- To catch children missing from a child list, each despawn indexed every entity's `Parent`
+  before walking its subtree, so a hook despawning many things cost (despawns x world size):
+  clearing the battle's 300 characters with about 25k other entities alive took one 4.2 s frame,
+  and the visited check was a linear `Vec::contains`. The show's benchmark caught it as a
+  mysterious 5 ms "scripts" average in the stadium (the stall frame carried the part's clock past
+  its warm-up and was measured).
+- **Fixed:** the index is built once per batch of commands and shared by its despawns, visited
+  sets are hashed (also in `duplicate_subtree`), and the benchmark leaves out frames that began
+  in a part's warm-up. Test: `despawning_many_subtrees_in_one_hook_removes_every_descendant`.
+
 ## Pain points
 
 - **No bulk creation.** A grid of 72 bricks costs 72 `entity_spawn`/`entity_duplicate`
@@ -835,6 +923,29 @@ How to read the sections:
   between variants, but there is no way to read a pixel's or a region's HDR value from one frame.
   **Done:** see the offscreen texture fetch and pixel probe wishes.
 
+- **Long runs outlast `wait`.** A full benchmark takes five minutes; `wait` moves to the
+  background after 120 s and caps at 240 s, so finishing meant guessing durations and polling
+  `lua_eval` for `SHOW.mode == "results"`. See the wait-until wish.
+- **GPU memory was invisible.** The 2 fps stadium (B26's ray tracing, then B31) was paging:
+  visible only in `/sys/class/drm/card1/device/mem_info_vram_used`, not in `engine_stats`, whose
+  GPU timings just showed a huge `acceleration_structures` stage.
+- **CPU profiles had no callers.** `engine_profile_cpu {callers: true}` and `perf report -G` on
+  its data showed no call stacks for hot symbols (`Mesh::clone`, `Path::components`, SipHash);
+  finding their callers meant reading code.
+- **`graphics_set` always saved.** Trying configurations changed the user's saved settings.
+  **Done:** `graphics_set {save: false}` applies a change to this run only (and Lua's
+  `set_graphics_settings(fields, { save = false })`).
+- **Flat lathes are rejected.** A floor ring (`[[17, 0.006], [24.8, 0.006]]`) fails with
+  `lathe profile must have positive height`; a 2 mm slope works around it.
+- **`library_add` instances characters into the scene.** For a game that spawns its cast at run
+  time the files only needed copying into `content/`; the game got its own
+  `tools/fetch_cast.py` (copying 47 characters and 94 clips by id from `library.json`).
+- **The editor slows down with crowds.** With 41k entities `ui_build` took 35 ms and with 80k
+  86 ms: the hierarchy panel copied its whole snapshot every frame. **Partly done:** the
+  snapshot is shared (`Arc`); rows are still built for every entity.
+- **A failed `lua_eval` still applies what ran.** `T = spawn_entity("Template")` followed by an
+  erroring `import_gltf(T, ...)` returned the error but left the entity spawned (observed).
+
 ## Wish list
 
 - ✅ `entity_duplicate {count, step}` for a linear/grid array, or a generic `batch` tool that
@@ -1092,6 +1203,20 @@ How to read the sections:
   none sees that camera. With path tracing on, the same pose without settling shows unconverged
   grain and with 64 settle frames the denoised image. Test:
   `held_screenshots_settle_before_capturing_and_report_displayed_pixels`.
+
+- ⬜ **Wait for a condition:** `wait {until: "<Lua expression>", entity, timeout}` that returns
+  when a script's state says so (`SHOW.mode == "results"`), for benchmarks, loading screens
+  and scripted sequences longer than a tool call.
+- ⬜ **GPU memory in `engine_stats`:** bytes the engine holds by kind (textures, meshes, skinned
+  outputs, ray tracing pool and acceleration structures, render targets), so paging shows up
+  where the timings do.
+- ⬜ **Call stacks in `engine_profile_cpu`:** record with call graphs (frame pointers or DWARF)
+  so `callers` attributes hot leaves.
+- ⬜ **`library_add {ids, copy_only: true}`** (or a `library_export {ids, dest}`): copy characters
+  and clips into `content/` without instancing them, for games that spawn at run time.
+- ⬜ **Flat lathes:** allow profiles whose points share one height (discs and annuli).
+- ⬜ **Release unused imported resources:** textures and meshes of models nothing uses any more
+  stay on the GPU for the scene's life (B31's cache only stops them multiplying).
 
 ## Tide Observatory: what worked well
 

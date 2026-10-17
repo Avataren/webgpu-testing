@@ -12,6 +12,7 @@ repository root, or open a saved project directory in the editor and press Play.
 | [Breakout](breakout/project.json) | `cargo run --all-features --bin player -- games/breakout` |
 | [Neon Rift](neon-rift/project.json) | `cargo run --all-features --bin player -- games/neon-rift` |
 | [RT Lab](rt-lab/README.md) — test room for ray-traced reflections | `cargo run --release --all-features --bin player -- games/rt-lab` |
+| [Marionette](marionette/README.md) — skeletal animation show and crowd benchmark (needs the asset library: `games/marionette/tools/fetch_cast.py`) | `cargo run --release --all-features --bin player -- games/marionette` |
 
 Package a saved project for the web using
 `./build_web.sh --project games/<demo-name>`. Chess uses its own native spectator

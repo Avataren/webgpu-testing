@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "marionette",
+    "description": ""
+  },
+  "scenes": [
+    {
+      "id": "XeCrENvKtAYA",
+      "name": "marionette",
+      "relative_path": "content/scenes/XeCrENvKtAYA.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.019607843831181526,
+      0.0235294122248888,
+      0.04313725605607033,
+      1.0
+    ],
+    "ambient_intensity": 0.12,
+    "hdr": null
+  },
+  "engine_camera": {
+    "eye": [
+      0.0,
+      14.0,
+      12.0
+    ],
+    "target": [
+      0.0,
+      13.240744,
+      11.349209
+    ],
+    "up": [
+      0.0,
+      0.65079135,
+      -0.7592566
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 0.87266463,
+      "near": 0.3,
+      "far": 300.0
+    }
+  },
+  "imports": []
+}
