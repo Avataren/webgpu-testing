@@ -1,19 +1,32 @@
 {
   "base_color": [
-    255,
-    178,
-    91,
+    236,
+    240,
+    222,
     255
   ],
-  "flags": 0,
-  "base_color_texture": 0,
-  "metallic_roughness_texture": 0,
+  "flags": 2059,
+  "base_color_texture": {
+    "path": "content/textures/window_lead_base_color.png",
+    "name": "window_lead_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/window_lead_orm.png",
+    "name": "window_lead_orm.png"
+  },
   "normal_texture": 0,
-  "emissive_texture": 0,
+  "emissive_texture": {
+    "path": "content/textures/interiors.png",
+    "name": "interiors.png"
+  },
   "occlusion_texture": 0,
-  "metallic_factor": 0,
-  "roughness_factor": 127,
-  "emissive_strength": 638,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 2040,
+  "interior_atlas": 49,
+  "interior_depth": 94,
+  "interior_lights": 204,
+  "interior_curtains": 115,
   "kind": {
     "type": "pbr"
   }

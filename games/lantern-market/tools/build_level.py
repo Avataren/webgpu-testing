@@ -15,7 +15,9 @@ pieces (two handcarts and the bridge's portcullis) as separate objects.
 
 Static geometry is joined into one object per material; materials are plain colours
 here and get their textures in the engine. UVs are box-mapped in world space, so the
-tileable textures run on across pieces.
+tileable textures run on across pieces, except on the window panes: each window is one
+uv cell of its own (window k spans u k..k+1, v 0..1 from the top), the room the
+engine's interior mapping shows behind it.
 """
 
 import math
@@ -87,7 +89,7 @@ class Part:
     def __init__(self, name):
         self.name = name
         self.verts = []
-        self.faces = []  # (vertex indices, material, smooth)
+        self.faces = []  # (vertex indices, material, smooth, engine uvs or None)
 
     def add_verts(self, points):
         base = len(self.verts)
@@ -104,7 +106,7 @@ class Part:
             flip = dot(n, sub(centroid(points), ref)) < 0
         if flip:
             idx = list(reversed(idx))
-        self.faces.append((idx, mat, smooth))
+        self.faces.append((idx, mat, smooth, None))
 
     def face(self, points, mat, ref=None, out=None, smooth=False):
         self.face_idx(self.add_verts(points), mat, smooth, ref, out)
@@ -126,6 +128,47 @@ def box(part, mat, lo, hi, top=None, bottom=None):
     ]
     for ids, m in faces:
         part.face([p[i] for i in ids], m, ref=c)
+
+
+WINDOWS = [0]
+
+
+def window(part, lo, hi, out):
+    """A window: a box from lo to hi standing out of a wall toward `out` (a unit axis
+    vector), its pane facing out in WindowGlow with a uv cell of its own, its four sides
+    timber. The side against the wall is left out."""
+    axis = next(a for a in range(3) if out[a])
+    x0, y0, z0 = lo
+    x1, y1, z1 = hi
+    c = ((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)
+    p = [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1), (x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1)]
+    faces = {
+        (1, 1): [4, 5, 6, 7],
+        (1, -1): [0, 1, 2, 3],
+        (2, -1): [0, 1, 5, 4],
+        (2, 1): [3, 2, 6, 7],
+        (0, -1): [0, 3, 7, 4],
+        (0, 1): [1, 2, 6, 5],
+    }
+    for (a, sign), ids in faces.items():
+        if a == axis and sign != out[axis]:
+            continue
+        points = [p[i] for i in ids]
+        if a != axis:
+            part.face(points, "Timber", ref=c)
+            continue
+        # The pane: u across as seen from outside (right = -out x up), v down from the top.
+        right = (out[2], 0.0, -out[0])
+        across = [dot(q, right) for q in points]
+        left, width = min(across), max(across) - min(across)
+        k = WINDOWS[0]
+        WINDOWS[0] += 1
+        uvs = [(k + (dot(q, right) - left) / width, (y1 - q[1]) / (y1 - y0)) for q in points]
+        base = len(part.verts)
+        part.face(points, "WindowGlow", ref=c)
+        # face() may have turned the corners round to face out; the uvs follow them.
+        idx, mat, smooth, _ = part.faces[-1]
+        part.faces[-1] = (idx, mat, smooth, [uvs[i - base] for i in idx])
 
 
 def rot_y(deg):
@@ -393,7 +436,7 @@ def build_bridges():
     box(S, "Stone", (-2.5, 2.9, CANAL_N - 0.6), (2.5, 6.0, CANAL_N + 0.6))
     box(S, "Stone", (-3.6, 6.0, CANAL_N - 0.8), (3.6, 6.3, CANAL_N + 0.8))
     gable_roof(ROOFS, "Roof", -3.6, 3.6, CANAL_N - 0.8, CANAL_N + 0.8, 6.3, 7.6, along="x", overhang=0.2)
-    box(S, "WindowGlow", (-0.5, 4.0, CANAL_N + 0.6), (0.5, 5.2, CANAL_N + 0.64))
+    window(S, (-0.5, 4.0, CANAL_N + 0.6), (0.5, 5.2, CANAL_N + 0.64), (0, 0, 1))
     # The wooden footbridge to the west.
     box(S, "Wood", (-15.0, -0.25, CANAL_N), (-13.0, 0.0, CANAL_S))
     for z in (CANAL_N + 0.3, (CANAL_N + CANAL_S) / 2, CANAL_S - 0.3):
@@ -414,7 +457,7 @@ def build_terrace():
         x = -20.0 + 8.0 * k
         box(S, "Timber", (x - 0.8, 0.0, -16.05), (x + 0.8, 2.4, -15.95))
         box(S, "Timber", (x + 2.2, 1.2, -16.05), (x + 3.4, 2.2, -15.95))
-        box(S, "WindowGlow", (x + 2.3, 1.3, -16.08), (x + 3.3, 2.1, -16.04))
+        window(S, (x + 2.3, 1.3, -15.95), (x + 3.3, 2.1, -15.93), (0, 0, 1))
     columns = [-24.0 + 4.0 * k for k in range(13)]
     for x in columns:
         cylinder(S, "Stone", (x, 0.0, -12.4), 0.32, 3.4, seg=14)
@@ -476,7 +519,7 @@ def house(x0, x1, z0, z1, base, eave, along, plaster, windows_on, seed):
     gable_wall(S, plaster, x0, x1, z0, z1, base, eave, ridge, along=along)
     gable_roof(ROOFS, "Roof", x0, x1, z0, z1, eave, ridge + 0.05, along=along)
     # Timber framing (corner posts, a band per floor at this house's own floor height)
-    # and lit windows on the side facing the plaza.
+    # and windows onto rooms on the side facing the plaza.
     face, sign = windows_on
     storey = 2.45 + 0.15 * (seed % 4)
     floors = int((eave - base - 1.2) // storey)
@@ -497,9 +540,9 @@ def house(x0, x1, z0, z1, base, eave, along, plaster, windows_on, seed):
                 if (k * 7 + f * 3 + seed) % 5 == 0 or (f == 0 and not clear_of_doors(face, x, 0.55)):
                     continue
                 y = base + 1.2 + storey * f + (0.4 if f == 0 else 0.3)
-                glow = "WindowGlow" if (k + f + seed) % 3 else "Timber"
                 top = window_top(y, base, storey, f, eave)
-                box(S, glow, (x - 0.4, y, min(z, z + dz)), (x + 0.4, top, max(z, z + dz)))
+                lo, hi = (x - 0.4, y, min(z, z + dz)), (x + 0.4, top, max(z, z + dz))
+                window(S, lo, hi, (0, 0, -sign))
                 box(S, "Timber", (x - 0.55, y - 0.12, min(z, z + dz * 1.5)), (x + 0.55, y, max(z, z + dz * 1.5)))
     else:
         x = x0 if face == "x0" else x1
@@ -517,9 +560,9 @@ def house(x0, x1, z0, z1, base, eave, along, plaster, windows_on, seed):
                 if (k * 5 + f * 3 + seed) % 4 == 0 or (f == 0 and not clear_of_doors(face, z, 0.4)):
                     continue
                 y = base + 1.2 + storey * f + (0.4 if f == 0 else 0.3)
-                glow = "WindowGlow" if (k + f + seed) % 3 else "Timber"
                 top = window_top(y, base, storey, f, eave)
-                box(S, glow, (min(x, x + dx), y, z - 0.4), (max(x, x + dx), top, z + 0.4))
+                lo, hi = (min(x, x + dx), y, z - 0.4), (max(x, x + dx), top, z + 0.4)
+                window(S, lo, hi, (-sign, 0, 0))
 
 
 def build_houses():
@@ -697,9 +740,14 @@ def make_object(part, location=(0.0, 0.0, 0.0), only=None):
     for m in mats:
         mesh.materials.append(material(m))
     uv = mesh.uv_layers.new(name="UVMap")
-    for poly, (idx, mat, smooth) in zip(mesh.polygons, faces):
+    for poly, (idx, mat, smooth, own_uvs) in zip(mesh.polygons, faces):
         poly.material_index = mats.index(mat)
         poly.use_smooth = smooth
+        if own_uvs:
+            # Engine uvs; the glTF export flips v (the engine's v is 1 - Blender's).
+            for loop_index, (u, v) in zip(poly.loop_indices, own_uvs):
+                uv.data[loop_index].uv = (u, 1.0 - v)
+            continue
         tile = MATERIALS[mat][2]
         pts = [part.verts[i] for i in idx]
         n = newell(pts)

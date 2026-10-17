@@ -118,9 +118,16 @@ costs about 0.3 ms a frame for the ninety.
   and adds the navigation: a `NavMeshSurface` (baked to `content/navigation/navmesh.navmesh`),
   `NavModifier`s on what nobody walks on (water, roofs, awnings, foliage, lantern heads),
   `NavObstacle`s on the carts and the gate, and three `NavLink`s off the stage.
-- Lighting: a dusk sky (`qwantani_dusk_2`, Poly Haven, CC0), a low sun, glowing lanterns
-  and windows, twenty lantern point lights (shadowed through the shadow atlas), and light
-  probe volumes baked to `content/lighting/` for the web and GPUs without ray tracing.
+- Lighting: a dusk sky (`qwantani_dusk_2`, Poly Haven, CC0), a low sun, glowing lanterns,
+  twenty lantern point lights (shadowed through the shadow atlas), and light probe volumes
+  baked to `content/lighting/` for the web and GPUs without ray tracing.
+- The windows look into rooms (the engine's interior mapping, `interior.wgsl`): each of
+  the 168 windows' panes is a uv cell of its own in `Market_WindowGlow`, and the material
+  traces a room behind it from `content/textures/interiors.png`, eight townhouse rooms (a
+  kitchen, a bedroom, a workshop, a hall, a study, a storeroom, a tavern room, a parlour)
+  that each window picks from, mirrors, lights or leaves dark, and curtains, behind leaded
+  glass (`window_lead_*.png`). `tools/build_interiors.py` models and renders the rooms and
+  draws the glazing in Blender (headless works, about a minute).
 - `content/scripts/director.lua`: loading the cast, defining the brains, spawning, the
   keys and the test hooks.
 - `content/scripts/market/brains/`: one module per role (`townsfolk.lua`, `vendor.lua`,
