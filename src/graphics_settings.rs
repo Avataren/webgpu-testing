@@ -108,7 +108,7 @@ pub struct GraphicsSettings {
     pub path_tracing_denoiser: bool,
     /// Light focused through glass and off mirrors (caustic photons).
     pub path_tracing_caustics: bool,
-    /// The frame rate in the corner of the view.
+    /// The frame rate at the top centre of the view.
     pub show_fps: bool,
 }
 
