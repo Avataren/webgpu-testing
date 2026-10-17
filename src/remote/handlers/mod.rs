@@ -269,6 +269,10 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
         "render.freeze_noise",
         "Hold the per-frame noise still ({enabled}): TAA jitter phase, grain and dither, live light probe updates; for exact captures",
     ),
+    (
+        "renderdoc.capture",
+        "Capture the next frame with RenderDoc when the engine runs under it; answers with the .rdc path",
+    ),
     ("wait", "Answer after a number of frames and/or seconds, or until an absolute frame ({until_frame})"),
 ];
 

@@ -69,7 +69,7 @@ Options and environment:
 | Asset library | `library_search`, `library_info`, `library_add` (editor), `library_fetch`, `library_ingest`, `mixamo_catalog` (no editor needed) |
 | Input | `input_send`, `input_state`, `input_clear` |
 | View | `screenshot` (`overlays`), `visual_capture` (`freeze_noise`, `overlays`), `visual_compare`, `render_freeze_noise`, `camera_get`, `camera_set`, `environment_get`, `environment_set`, `postprocess_get`, `postprocess_set`, `logs` |
-| Render debugging | `texture_fetch`, `shader_reload` |
+| Render debugging | `texture_fetch`, `shader_reload`, `renderdoc_capture` (with `engine_launch {renderdoc: true}`) |
 | Global illumination | `entity_spawn {kind: "light_probe_volume"}`, `light_probes_bake`, `light_probes_status`, `light_probes_debug` |
 | Editor | `editor_state`, `project_create`, `project_open`, `project_save`, `scene_new`, `scene_activate`, `scene_close`, `scene_rename`, `scene_instance`, `asset_import`, `asset_reload`, `editor_select`, `editor_undo`, `editor_redo` |
 | Spatial | `scene_query`, `scene_raycast`, `entity_place`, `scene_scatter` |
@@ -458,6 +458,16 @@ symbols. `visual_compare {a, b}` compares saved captures (files or `visual_captu
 directories) with `visual_capture`'s metrics; capture with `freeze_noise: true` (or
 `render_freeze_noise` then `screenshot {overlays: false}`) so unchanged views match exactly.
 `engine_launch {binary, window_size}` runs a build from another tree in a small window.
+
+`renderdoc_capture` captures the next frame with RenderDoc and returns the `.rdc` path, for
+the `renderdoc` MCP server (`tools/renderdoc-mcp`): passes named after wgpu's labels, every
+draw and dispatch with its state, WGSL source, uniform values, pixel history, shader
+debugging, per-pass GPU time and overdraw. The engine has to run under RenderDoc:
+`engine_launch {renderdoc: true}` loads RenderDoc's Vulkan layer, sets `WGPU_DEBUG=1` so
+labels and shader source reach the capture, and writes captures to
+`target/engine-mcp/captures/`. RenderDoc hides Vulkan features it cannot capture and adds
+CPU overhead, so don't measure frame rates in such a session. See
+`tools/renderdoc-mcp/README.md` for setup.
 
 ## Troubleshooting
 

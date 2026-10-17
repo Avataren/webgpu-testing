@@ -1320,6 +1320,10 @@ impl Server {
             .get("restart")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let renderdoc = args
+            .get("renderdoc")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let timeout = Duration::from_secs_f64(
             args.get("timeout_seconds")
                 .and_then(Value::as_f64)
@@ -1349,6 +1353,12 @@ impl Server {
                     "an engine started outside this server is already listening; attached to it"
                 }),
             );
+            if renderdoc {
+                report.insert(
+                    "renderdoc".into(),
+                    json!("ignored: the running engine keeps how it was started; pass restart: true to relaunch it under RenderDoc"),
+                );
+            }
         } else {
             if target == "player" && project.is_none() {
                 return Err("the player needs a project directory (project)".into());
@@ -1356,6 +1366,20 @@ impl Server {
             let mut env = engine::launch_environment(args.get("env"))?;
             if let Some((width, height)) = window_size {
                 env.insert("ENGINE_WINDOW_SIZE".into(), format!("{width}x{height}"));
+            }
+            if renderdoc {
+                // RenderDoc's implicit Vulkan layer loads it into the process; it reads
+                // the capture path template from RENDERDOC_CAPFILE as it loads. WGPU_DEBUG
+                // passes wgpu's labels on, so captures name passes and resources.
+                let captures = self.engine.repo.join("target/engine-mcp/captures");
+                env.insert("ENABLE_VULKAN_RENDERDOC_CAPTURE".into(), "1".into());
+                env.entry("WGPU_DEBUG".into()).or_insert_with(|| "1".into());
+                env.entry("RENDERDOC_CAPFILE".into())
+                    .or_insert_with(|| captures.join(target).display().to_string());
+                report.insert(
+                    "renderdoc".into(),
+                    json!({ "captures": captures.display().to_string() }),
+                );
             }
             let binary = if let Some(binary) = binary_override {
                 if !binary.is_file() {
@@ -1675,6 +1699,7 @@ const QUIET_KEEPS: &[&str] = &[
     "light_probes_status",
     "visual_compare",
     "engine_profile_cpu",
+    "renderdoc_capture",
     "input_state",
     "script_status",
 ];

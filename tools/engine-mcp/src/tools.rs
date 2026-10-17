@@ -84,10 +84,11 @@ impl Tool {
                 | "profile_capture"
                 | "visual_compare"
                 | "engine_profile_cpu"
+                | "renderdoc_capture"
         );
         json!({"readOnlyHint": read_only, "destructiveHint": !read_only,
             "openWorldHint": matches!(self.name, "web_playtest" | "engine_call"),
-            "idempotentHint": read_only && !matches!(self.name, "profile_capture" | "engine_profile_cpu")})
+            "idempotentHint": read_only && !matches!(self.name, "profile_capture" | "engine_profile_cpu" | "renderdoc_capture")})
     }
 }
 
@@ -323,6 +324,7 @@ pub fn tools() -> Vec<Tool> {
                 "monitor": { "anyOf": [{ "type": "integer" }, { "type": "string" }], "description": "Monitor for the window: 1-based number, output name (e.g. HDMI-A-0) or primary. Defaults to settings.json / ENGINE_MONITOR; respect the user's choice and don't override it without reason." },
                 "window_size": { "type": "array", "items": { "type": "integer", "minimum": 16 }, "minItems": 2, "maxItems": 2, "description": "[width, height] the window opens at (ENGINE_WINDOW_SIZE), e.g. [800, 450] for a light test window; the default is settings.json's resolution" },
                 "binary": { "type": "string", "description": "Run this executable instead of building target: an engine built elsewhere, e.g. a baseline commit's target/baseline/release/editor or examples/sponza, for A/B comparisons. Launched with the same environment and port handling (ENGINE_SHADER_RELOAD=0, so it keeps its built-in shaders); target still names what it is (editor, player or an example) and build is ignored" },
+                "renderdoc": { "type": "boolean", "description": "Run under RenderDoc (its Vulkan layer) so renderdoc_capture can capture frames into target/engine-mcp/captures. Needs RenderDoc installed. RenderDoc hides Vulkan features it cannot capture and adds CPU overhead, so leave it off for performance measurements" },
                 "timeout_seconds": { "type": "number", "description": "How long to wait for the engine to start (default 120)" }
             }), &[]),
             action: Action::Local,
@@ -1339,6 +1341,7 @@ fn additional_tools() -> Vec<Tool> {
         Tool{name:"prefab_inspect",description:"Editor: inspect a prefab source, linked instance entities and serialized instance overrides.",schema:object(json!({"document_id":{"type":"string"}}),&["document_id"]),action:Action::Engine("prefab.inspect")},
         Tool{name:"prefab_update",description:"Editor: replace a prefab source with a selected hierarchy. New instances use the new source; existing instances keep current values until recreated or reopened. Save the project to persist registration.",schema:object(json!({"entity":entity_ref(),"document_id":{"type":"string"}}),&["entity","document_id"]),action:Action::Engine("prefab.update")},
         Tool{name:"profile_capture",description:"Sample consecutive engine frames and report median/p95/p99/max of CPU frame and stage times, of the GPU time per render stage and in total (gpu_stages_ms, gpu_total_ms, from timestamp queries; native only), the renderer counters' min/max/last (draw calls, shadow views rendered/cached, culled instances), script cost and entity/asset growth. Optional baseline compares frame latency. Prefer the GPU percentiles over a single engine_stats reading when another process shares the GPU.",schema:object(json!({"frames":{"type":"integer","minimum":2,"maximum":10000,"default":300},"baseline":{"type":"object"}}),&[]),action:Action::Engine("profile.capture")},
+        Tool{name:"renderdoc_capture",description:"Capture the next frame with RenderDoc and return the .rdc path: every pass, draw and dispatch with its pipeline state, bound resources, shaders and buffer/texture contents, for the renderdoc MCP server (open_capture, then e.g. get_frame_overview, get_draw_call_state, pixel_history) or qrenderdoc. Use it when a screenshot shows something wrong but not why. The engine must run under RenderDoc: engine_launch with renderdoc: true. Captures are tens to hundreds of MB; delete them when done.",schema:empty(),action:Action::Engine("renderdoc.capture")},
         Tool{name:"mesh_sweep",description:"Sweep a circular or polygon cross-section along an open 3D polyline, with transported frames, UVs, normals, tangents and caps. Sharp bends may self-intersect. Geometry is persisted by project_save.",schema:object(Value::Object(sweep),&["path"]),action:Action::Engine("mesh.sweep")},
         Tool{name:"mesh_heightfield",description:"Generate XZ terrain with upward slope normals from explicit heights, an image or seeded fractal noise. UVs/tangents and embedded geometry persist with project_save. Shares the procedural vertex budget.",schema:object(Value::Object(terrain),&[]),action:Action::Engine("mesh.heightfield")},
         Tool{name:"project_validate",description:"Through the running native engine: validate a saved project's scene JSON, asset references, portable paths, camera configuration and Lua syntax. Reports errors and warnings with file locations; does not execute scripts or write files. The browser block is a preflight for web builds: assets web_build would not serve (only project.json and content/ are staged), files differing only in case, and Lua calls that need a file system.",schema:object(json!({"path":{"type":"string","description":"Project directory; defaults to running engine's active project"}}),&[]),action:Action::Engine("project.validate")},

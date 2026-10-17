@@ -265,6 +265,9 @@ pub struct RemoteHub {
     waiters: Vec<Waiter>,
     scene_baseline: Option<SceneBaseline>,
     profile: Option<ProfileCapture>,
+    /// A `renderdoc.capture` waiting for RenderDoc to write the file.
+    #[cfg(not(target_arch = "wasm32"))]
+    renderdoc_capture: Option<super::renderdoc::PendingCapture>,
     /// A `visual.capture` in progress.
     pub(super) visual: Option<Box<VisualCapture>>,
     /// Post-processing every frame is rendered with, over what the scene's volumes blend
@@ -304,6 +307,8 @@ impl RemoteHub {
             waiters: Vec::new(),
             scene_baseline: None,
             profile: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            renderdoc_capture: None,
             visual: None,
             post_process_override: None,
             history: VecDeque::with_capacity(HISTORY_FRAMES),
@@ -557,6 +562,10 @@ impl RemoteHub {
     pub fn end_frame(&mut self, dt: f64) {
         self.frame += 1;
         self.last_dt = dt;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(capture) = self.renderdoc_capture.take() {
+            self.renderdoc_capture = capture.poll(self.frame);
+        }
         if self.waiters.is_empty() {
             return;
         }
@@ -676,6 +685,22 @@ impl RemoteHub {
             }
             "visual.capture" => {
                 self.begin_visual_capture(&request.params, request.reply);
+                None
+            }
+            "renderdoc.capture" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if self.renderdoc_capture.is_some() {
+                    request
+                        .reply
+                        .send(Err("a RenderDoc capture is already being taken".into()));
+                } else {
+                    self.renderdoc_capture =
+                        super::renderdoc::PendingCapture::start(request.reply, self.frame);
+                }
+                #[cfg(target_arch = "wasm32")]
+                request
+                    .reply
+                    .send(Err("RenderDoc captures need the native engine".into()));
                 None
             }
             "wait" => {

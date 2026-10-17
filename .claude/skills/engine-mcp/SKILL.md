@@ -433,6 +433,13 @@ Facts that change how you write scripts:
 - `engine_profile_cpu {seconds, top}` samples the engine with Linux `perf` and returns the
   hottest symbols (self time by shared object; `callers: true` attributes to callers too),
   for when `render_gpu` or `ui_build` look high. `pid` samples an engine not launched here.
+- `renderdoc_capture` (engine started with `engine_launch {renderdoc: true}`) captures the
+  next frame and returns an `.rdc` path; open it with the `renderdoc` MCP server
+  (`open_capture`, then `get_frame_overview`, `get_pass_timing`, `get_draw_call_state`,
+  `disassemble_shader`, `pixel_history`, `debug_shader_at_pixel` / `debug_compute_thread`).
+  Use it when a screenshot or `texture_fetch` shows something wrong but not why, or to see
+  which pass or draw costs GPU time. Restart without `renderdoc` before measuring frame
+  rates; delete captures (tens to hundreds of MB) when done.
 - `engine_launch {binary, window_size}` runs a binary built elsewhere (a baseline commit in a
   worktree, see the test-bed notes) with the same port handling and `ENGINE_SHADER_RELOAD=0`,
   and opens the window at `[width, height]` (`ENGINE_WINDOW_SIZE`), e.g. `[800, 450]` to

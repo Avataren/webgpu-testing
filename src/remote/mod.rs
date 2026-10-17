@@ -42,6 +42,8 @@ pub mod log_tap;
 pub mod preview;
 mod profile;
 #[cfg(not(target_arch = "wasm32"))]
+mod renderdoc;
+#[cfg(not(target_arch = "wasm32"))]
 mod server;
 mod texture_fetch;
 #[cfg(not(target_arch = "wasm32"))]

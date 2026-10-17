@@ -100,6 +100,9 @@ impl RenderContext {
 
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = backends;
+        // WGPU_DEBUG=1 passes labels on to the driver in release builds too, so RenderDoc
+        // captures name passes and resources (WGPU_VALIDATION etc. work the same way).
+        descriptor.flags = descriptor.flags.with_env();
         // The GL backend needs the display connection (e.g. on Wayland).
         #[cfg(not(target_arch = "wasm32"))]
         let descriptor = descriptor.with_display_handle(Box::new(window_handle.window.clone()));

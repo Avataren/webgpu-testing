@@ -99,6 +99,9 @@ image = { version = "0.25", features = ["default-formats", "rayon"] }
 egui = { version = "0.36", optional = true, features = ["default_fonts"] }
 rfd = "0.15"
 notify = "8.2"
+# RenderDoc's in-application API for `renderdoc.capture` (both already come with wgpu).
+libloading = "0.8"
+renderdoc-sys = "1.1"
 rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "vorbis", "mp3", "flac"] }
 
 [dev-dependencies]
