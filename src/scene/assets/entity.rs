@@ -215,6 +215,8 @@ struct SceneAssetEntityData {
     audio_source: Option<crate::audio::AudioSource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     audio_listener: Option<crate::audio::AudioListener>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    audio_volume: Option<crate::audio::AudioVolume>,
     #[serde(default)]
     camera: Option<CameraComponent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +289,7 @@ impl From<SceneAssetEntityData> for SceneAssetEntity {
             audio: super::audio::AudioData {
                 audio_source: data.audio_source,
                 audio_listener: data.audio_listener,
+                audio_volume: data.audio_volume,
             },
             camera: data.camera,
             scene_ref: data.scene_ref,
@@ -355,6 +358,7 @@ impl From<SceneAssetEntity> for SceneAssetEntityData {
             nav_link: entity.navigation.nav_link,
             audio_source: entity.audio.audio_source,
             audio_listener: entity.audio.audio_listener,
+            audio_volume: entity.audio.audio_volume,
             camera: entity.camera,
             scene_ref: entity.scene_ref,
             skin: entity.skin,

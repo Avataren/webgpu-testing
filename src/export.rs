@@ -9,7 +9,8 @@
 //! - a model import (`*.glb.import`) brings its whole package folder (meshes, textures);
 //! - Lua scripts: string literals naming project files (`play_sound("content/audio/x.wav")`)
 //!   and modules they `require` or `include`. A literal naming a folder
-//!   (`"content/audio/"`, for paths a script builds at run time) brings the whole folder.
+//!   (`"content/audio/"`, for paths a script builds at run time) brings the whole folder;
+//! - the mixer's layout (`content/audio/mixer.json`), which nothing names.
 //!
 //! Everything else in `content/` (assets imported or taken from the asset library and
 //! not used, the documents of models not placed in the scene) stays out.
@@ -234,6 +235,10 @@ pub fn used_content(project_root: &Path) -> Result<UsedContent, String> {
         problems: BTreeSet::new(),
     };
     walker.add_scene(&main);
+    // The mixer's buses and effects, which nothing names.
+    if root.join(crate::audio::LAYOUT_FILE).is_file() {
+        walker.add_file(PathBuf::from(crate::audio::LAYOUT_FILE));
+    }
     // project.json's own references (the environment's sky), not its scene list.
     let mut strings = Vec::new();
     for (key, value) in manifest.as_object().into_iter().flatten() {
@@ -607,6 +612,7 @@ mod tests {
         write(&root, "content/audio/jump.wav", "wav");
         write(&root, "content/audio/steps/1.wav", "wav");
         write(&root, "content/audio/music.ogg", "ogg");
+        write(&root, "content/audio/mixer.json", "{}");
 
         let used = used_content(&root).unwrap();
         let files: Vec<String> = used
@@ -619,6 +625,7 @@ mod tests {
             [
                 "content/animations/Walk.glb",
                 "content/audio/jump.wav",
+                "content/audio/mixer.json",
                 "content/audio/steps/1.wav",
                 "content/gltf/robot/meshes/mesh_0000.json",
                 "content/gltf/robot/robot.glb.import",

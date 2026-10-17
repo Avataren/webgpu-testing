@@ -5,6 +5,7 @@
 
 mod ai;
 mod animation;
+mod audio;
 mod diff;
 mod entity;
 mod geometry;
@@ -249,7 +250,17 @@ pub const CORE_METHODS: &[(&str, &str)] = &[
     ),
     (
         "audio.bus",
-        "Change a mixer bus (gain_db, pan, mute, solo) live; save: true writes content/audio/mixer.json",
+        "Change a mixer bus live: gain_db, pan, mute, solo, output, effects (the insert chain), effect (one effect's params or bypass), sends, duck; save: true writes content/audio/mixer.json",
+    ),
+    ("audio.effect_kinds", "The mixer's built-in effects and their parameters"),
+    (
+        "audio.music",
+        "Play a music track (a sound file or an AHX/HVL/A2M/SID song) on the music bus, crossfading from the one before; stop: true fades it out; no path tells what is playing",
+    ),
+    ("audio.fade", "Glide a playing sound's volume over some seconds, or fade it out and stop it"),
+    (
+        "audio.snapshot",
+        "Fade the mix to a named snapshot (or back to none), and define or remove snapshots",
     ),
     (
         "audio.capture",
@@ -441,7 +452,10 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         "asset.reload" => rendering::asset_reload(params, ctx),
         "audio.play" => audio_play(params),
         "audio.stop" => match super::json::opt_u64(params, "id") {
-            Some(id) => Ok(json!({ "stopped": crate::audio::stop(id) })),
+            Some(id) => Ok(json!({ "stopped": match super::json::opt_f64(params, "fade") {
+                Some(seconds) => crate::audio::stop_after(id, seconds as f32),
+                None => crate::audio::stop(id),
+            } })),
             None => {
                 crate::audio::stop_all();
                 Ok(json!({ "stopped": "all" }))
@@ -449,7 +463,11 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
         },
         "audio.inspect" => audio_inspect(params),
         "view.preview" => super::preview::set_from_params(params),
-        "audio.bus" => audio_bus(params),
+        "audio.bus" => audio::bus(params),
+        "audio.effect_kinds" => audio::effect_kinds(),
+        "audio.music" => audio::music(params),
+        "audio.fade" => audio::fade(params),
+        "audio.snapshot" => audio::snapshot(params),
         "audio.capture" => audio_capture(params),
         "audio.status" => {
             let recent = crate::audio::history(super::json::opt_u64(params, "since").unwrap_or(0));
@@ -457,6 +475,7 @@ pub fn handle(method: &str, params: &Value, ctx: &mut RemoteContext<'_, '_>) -> 
                 "playing": crate::audio::playing(),
                 "next_id": crate::audio::next_id(),
                 "mixer": crate::audio::status(),
+                "music": audio::music_json(),
                 "captures": crate::audio::captures()
                     .iter()
                     .map(|p| p.display().to_string())
@@ -605,6 +624,8 @@ fn audio_play(params: &Value) -> RemoteResult {
         looped: opt_bool(params, "loop").unwrap_or(false),
         bus: opt_str(params, "bus").map(str::to_string),
         spatial: spatial_options(params)?,
+        subsong: super::json::opt_u64(params, "subsong").unwrap_or(0) as usize,
+        stream: opt_bool(params, "stream").unwrap_or(false),
         ..Default::default()
     };
     let since = crate::audio::next_id();
@@ -639,35 +660,6 @@ fn spatial_options(params: &Value) -> Result<Option<crate::audio::SpatialOptions
         spatial.doppler = v as f32;
     }
     Ok(Some(spatial))
-}
-
-/// `audio.bus {bus, gain_db?, pan?, mute?, solo?, save?}`
-fn audio_bus(params: &Value) -> RemoteResult {
-    use super::json::{opt_bool, opt_f64, req_str};
-    let name = req_str(params, "bus")?;
-    let gain_db = opt_f64(params, "gain_db").map(|v| v as f32);
-    let pan = opt_f64(params, "pan").map(|v| (v as f32).clamp(-1.0, 1.0));
-    let (mute, solo) = (opt_bool(params, "mute"), opt_bool(params, "solo"));
-    crate::audio::update_bus(name, |bus| {
-        if let Some(gain_db) = gain_db {
-            bus.gain_db = gain_db.clamp(cubed_mixer::MIN_DB, 24.0);
-        }
-        if let Some(pan) = pan {
-            bus.pan = pan;
-        }
-        if let Some(mute) = mute {
-            bus.mute = mute;
-        }
-        if let Some(solo) = solo {
-            bus.solo = solo;
-        }
-    })?;
-    let saved = if opt_bool(params, "save").unwrap_or(false) {
-        Some(crate::audio::save_layout()?.display().to_string())
-    } else {
-        None
-    };
-    Ok(json!({ "saved": saved, "mixer": crate::audio::status() }))
 }
 
 /// `audio.capture {path, seconds}`

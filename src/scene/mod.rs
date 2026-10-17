@@ -57,7 +57,7 @@ pub use light_probes::{
 };
 pub use loader::{SceneImportDevice, SceneLoader};
 pub use picking::entity_for_pick_value;
-pub use post_process::{blend_post_process_volumes, volume_influence};
+pub use post_process::{blend_post_process_volumes, shape_influence, volume_influence};
 pub use scene::{Scene, ScenePrefabEntityMetadata};
 pub use skeletal::{Animator, RootMotion, SkinnedMesh};
 pub use sky_lights::{follow_sky, sky_following_lights, stop_following_sky};

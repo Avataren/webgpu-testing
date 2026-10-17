@@ -57,6 +57,9 @@ pub use scene_hierarchy_window::{
 pub use scene_tabs::{SceneTabDescriptor, SceneTabsHandle, SceneTabsState};
 
 #[cfg(feature = "egui")]
+pub mod audio_changes;
+
+#[cfg(feature = "egui")]
 mod mixer_window;
 
 #[cfg(feature = "egui")]

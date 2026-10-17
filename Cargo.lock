@@ -883,9 +883,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "cubed-ahx"
+version = "0.1.0"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+dependencies = [
+ "cubed-simd",
+ "once_cell",
+ "rustc-hash 2.1.3",
+ "rustfft",
+]
+
+[[package]]
 name = "cubed-dsp"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#20152e45981db854ac4ea0ca16b0431543ed6f1b"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
 dependencies = [
  "base64 0.22.1",
  "cubed-simd",
@@ -906,17 +917,34 @@ dependencies = [
 [[package]]
 name = "cubed-mixer"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#20152e45981db854ac4ea0ca16b0431543ed6f1b"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
 dependencies = [
  "cpal",
+ "cubed-ahx",
  "cubed-dsp",
+ "cubed-opl",
+ "cubed-sid",
  "rtrb",
 ]
 
 [[package]]
+name = "cubed-opl"
+version = "0.1.0"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cubed-sid"
+version = "0.1.0"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
+
+[[package]]
 name = "cubed-simd"
 version = "0.1.0"
-source = "git+https://github.com/Avataren/cubed-synth#20152e45981db854ac4ea0ca16b0431543ed6f1b"
+source = "git+https://github.com/Avataren/cubed-synth#5d25291a23424c60aeaac075fb093366b29b7adc"
 
 [[package]]
 name = "cursor-icon"

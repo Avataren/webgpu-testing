@@ -11,7 +11,18 @@ use crate::scene::components::{
 /// How much a volume applies at `point`, from 0 to 1, before its weight: 1 inside the
 /// shape (always, for an infinite volume), fading to 0 over `blend_distance` outside it.
 pub fn volume_influence(volume: &PostProcessVolume, transform: Mat4, point: Vec3) -> f32 {
-    let distance = match volume.shape {
+    shape_influence(&volume.shape, volume.blend_distance, transform, point)
+}
+
+/// How much a volume of `shape` (on an entity at `transform`) applies at `point`: 1
+/// inside, fading to 0 over `blend_distance` outside. Audio volumes share it.
+pub fn shape_influence(
+    shape: &VolumeShape,
+    blend_distance: f32,
+    transform: Mat4,
+    point: Vec3,
+) -> f32 {
+    let distance = match *shape {
         VolumeShape::Infinite => return 1.0,
         VolumeShape::Box { size } => {
             let Some(inverse) = invertible(transform) else {
@@ -34,8 +45,8 @@ pub fn volume_influence(volume: &PostProcessVolume, transform: Mat4, point: Vec3
     };
     if distance <= 0.0 {
         1.0
-    } else if volume.blend_distance > 0.0 {
-        (1.0 - distance / volume.blend_distance).clamp(0.0, 1.0)
+    } else if blend_distance > 0.0 {
+        (1.0 - distance / blend_distance).clamp(0.0, 1.0)
     } else {
         0.0
     }

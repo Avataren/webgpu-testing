@@ -209,8 +209,12 @@ engine you launched; save first).
   (or the editor's file watcher) shows the new version under the same path.
 - `sound_play` tries a sound; `audio_status` lists what played (you cannot hear it) and
   the mixer's buses with live meters. A busy game plays the same files hundreds of times,
-  so pass `summary: true` for one entry per file. `audio_bus` sets a bus's fader, mute or
-  solo; `audio_capture` records the mixed output to a WAV for `sound_inspect`, the way to
+  so pass `summary: true` for one entry per file. `audio_bus` sets a bus's fader, mute,
+  solo, output, effects (`audio_effect_kinds` lists them and their parameters), sends and
+  ducking; `audio_music` plays music (sound files or AHX/HVL/A2M/SID songs) with
+  crossfades; `audio_snapshot` defines and fades to mixer snapshots; an `audio_volume`
+  component changes the mix around the listener in play mode (reverb in a cave);
+  `audio_capture` records the mixed output to a WAV for `sound_inspect`, the way to
   check a mix without speakers. Positional sound: an `audio_source` component (clip, loop,
   spatial auto/2d/3d/off, min/max_distance, rolloff, doppler; starts in play mode) plays
   from its entity, an `audio_listener` replaces the camera as the ear, and `sound_play

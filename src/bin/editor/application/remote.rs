@@ -94,7 +94,7 @@ fn absolute(path: &str) -> PathBuf {
 fn content_folder(extension: &str) -> Option<&'static str> {
     Some(match extension {
         "png" | "jpg" | "jpeg" | "tga" | "bmp" | "hdr" | "exr" => "textures",
-        "wav" | "ogg" | "mp3" | "flac" => "audio",
+        "wav" | "ogg" | "mp3" | "flac" | "ahx" | "hvl" | "a2m" | "asid" => "audio",
         "ttf" | "otf" => "fonts",
         "lua" => "scripts",
         "wgsl" => "shaders",
@@ -194,7 +194,7 @@ fn import_file(
             let folder = content_folder(extension).ok_or_else(|| {
                 format!(
                     "cannot import .{extension} files: use glTF/GLB models, images (png, jpg, tga, bmp, hdr, exr), \
-                     audio (wav, ogg, mp3, flac), fonts (ttf, otf), .lua or .wgsl, or give dest"
+                     audio (wav, ogg, mp3, flac; ahx, hvl, a2m, asid songs), fonts (ttf, otf), .lua or .wgsl, or give dest"
                 )
             })?;
             let name = source.file_name().ok_or("the path has no file name")?;

@@ -5,8 +5,11 @@
 //! (build_web.sh stages both next to the player). Sound files are fetched
 //! relative to the page and decoded by the browser at the context's rate,
 //! then sent to the worklet as PCM once; a play waits for its file to load.
-//! Commands go over the node's port as `cubed_mixer::wire` bytes, in order
-//! with the clips, and events and meters come back about every 20 ms.
+//! Songs (AHX, A2M, SID) are fetched once and sent with each play, and the
+//! worklet builds their players; effects are sent as a kind and parameters
+//! and built there too. Commands go over the node's port as
+//! `cubed_mixer::wire` bytes, in order with the clips, songs and effects,
+//! and events and meters come back about every 20 ms.
 //! Browsers keep audio suspended until the user first clicks or presses a
 //! key; sounds played before that start then. If the worklet cannot load,
 //! sounds are recorded but silent. The latest telemetry is also put in
@@ -16,7 +19,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use cubed_mixer::{wire, BusMeter, ClipId, Command, Event, Play, VoiceId};
+use cubed_mixer::{
+    wire, BusMeter, ClipId, Command, Effect, Event, Play, PlaySource, SourceId, VoiceId,
+};
 use js_sys::{Array, ArrayBuffer, Float32Array, Object, Reflect, Uint8Array};
 use serde_json::{json, Value};
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
@@ -27,7 +32,7 @@ use web_sys::{
 };
 
 use super::layout::{BusLayout, MixerLayout};
-use super::mix::Buses;
+use super::mix::{Ambience, Buses, MixOp};
 use super::{PlayOptions, AUDIO};
 
 /// The processor script and the mixer's wasm, relative to the page.
@@ -45,10 +50,27 @@ enum ClipState {
     Failed(String),
 }
 
+/// A song file, fetched once per path.
+enum SongState {
+    Loading,
+    Ready(ArrayBuffer),
+    Failed(String),
+}
+
+/// A song play waiting for its file.
+struct WaitingSong {
+    path: PathBuf,
+    format: u32,
+    subsong: usize,
+    looped: bool,
+    play: PlaySource,
+}
+
 /// A message for the worklet, kept in order until its node exists.
 enum Outgoing {
     Commands(Vec<u8>),
-    Clip(JsValue),
+    /// A clip, song or effect.
+    Message(JsValue),
 }
 
 /// What the worklet last reported.
@@ -81,6 +103,8 @@ pub(super) struct Output {
     next_clip_id: u32,
     /// Plays waiting for their file to load, in order.
     waiting: Vec<(PathBuf, Play)>,
+    songs: HashMap<PathBuf, SongState>,
+    waiting_songs: Vec<WaitingSong>,
     /// Voices that may still be playing (or waiting to).
     voices: HashSet<u64>,
     buses: Buses,
@@ -210,9 +234,8 @@ impl Output {
                     });
                     self.context = Some(Some(context));
                     // The mix's buses go first, queued until the node exists.
-                    for command in self.buses.all() {
-                        self.send(command);
-                    }
+                    let ops = self.buses.all();
+                    self.apply(ops);
                 }
                 Err(err) => {
                     log::warn!(target: "audio", "No audio output, sounds will be silent: {}", js_error(err));
@@ -238,6 +261,7 @@ impl Output {
                 self.queue.clear();
                 self.commands.clear();
                 self.waiting.clear();
+                self.waiting_songs.clear();
                 self.voices.clear();
             }
         }
@@ -268,6 +292,12 @@ impl Output {
                 self.telemetry.bad_batches = number("badBatches") as u32;
             }
             Some("ready") => self.ready = true,
+            Some("song") => {
+                if get(data, "ok").as_bool() != Some(true) {
+                    let message = get(data, "error").as_string().unwrap_or_default();
+                    log::warn!(target: "audio", "cannot play the song: {message}");
+                }
+            }
             Some("error") => {
                 let message = get(data, "message").as_string().unwrap_or_default();
                 log::warn!(target: "audio", "audio worklet: {message}");
@@ -282,13 +312,25 @@ impl Output {
         }
     }
 
-    /// Commands for a mix that has started; one that starts later gets the
-    /// whole layout then.
-    fn send_if_started(&mut self, commands: impl IntoIterator<Item = Command>) {
-        if matches!(self.context, Some(Some(_))) {
-            for command in commands {
-                self.send(command);
+    /// Layout changes, in order: effects go as their own messages.
+    fn apply(&mut self, ops: Vec<MixOp>) {
+        for op in ops {
+            match op {
+                MixOp::Command(command) => self.send(command),
+                MixOp::Effect { bus, slot, effect } => {
+                    // The commands before it (its bus) go first.
+                    self.flush();
+                    self.post(Outgoing::Message(effect_message(bus.0, slot, effect)));
+                }
             }
+        }
+    }
+
+    /// Changes for a mix that has started; one that starts later gets the
+    /// whole mix then.
+    fn apply_if_started(&mut self, ops: Vec<MixOp>) {
+        if matches!(self.context, Some(Some(_))) {
+            self.apply(ops);
             self.flush();
         }
     }
@@ -317,7 +359,7 @@ impl Output {
                 set(&object, "bytes", buffer.clone());
                 port.post_message_with_transferable(&object, &Array::of1(&buffer))
             }
-            Outgoing::Clip(object) => port.post_message(&object),
+            Outgoing::Message(object) => port.post_message(&object),
         };
         if let Err(err) = posted {
             log::warn!(target: "audio", "cannot reach the audio worklet: {}", js_error(err));
@@ -358,7 +400,7 @@ impl Output {
         self.next_clip_id += 1;
         // Commands sent before this clip go first.
         self.flush();
-        self.post(Outgoing::Clip(clip_message(id, &buffer)));
+        self.post(Outgoing::Message(clip_message(id, &buffer)));
         self.clips.insert(path, ClipState::Ready(id));
         for (_, play) in now {
             if self.voices.contains(&play.voice.0) {
@@ -382,6 +424,9 @@ impl Output {
             return Err(err.clone());
         }
         let bus = self.buses.for_sound(options.bus.as_deref())?;
+        if let Some(format) = song_format(path) {
+            return self.play_song(id, path, format, bus, options, spatial);
+        }
         let Some(context) = self.context() else {
             return Ok(false);
         };
@@ -412,6 +457,101 @@ impl Output {
         Ok(true)
     }
 
+    fn play_song(
+        &mut self,
+        id: u64,
+        path: &Path,
+        format: u32,
+        bus: cubed_mixer::BusId,
+        options: &PlayOptions,
+        spatial: Option<cubed_mixer::Spatial>,
+    ) -> Result<bool, String> {
+        if let Some(SongState::Failed(err)) = self.songs.get(path) {
+            return Err(err.clone());
+        }
+        if self.context().is_none() || self.failed {
+            return Ok(false);
+        }
+        let waiting = WaitingSong {
+            path: path.to_path_buf(),
+            format,
+            subsong: options.subsong,
+            looped: options.looped,
+            play: PlaySource {
+                gain: options.volume.max(0.0),
+                priority: options.priority,
+                spatial,
+                ..PlaySource::new(VoiceId(id), SourceId(0), bus)
+            },
+        };
+        self.voices.insert(id);
+        match self.songs.get(path) {
+            Some(SongState::Ready(bytes)) => {
+                let bytes = bytes.clone();
+                self.start_song(waiting, &bytes);
+            }
+            Some(SongState::Loading) => self.waiting_songs.push(waiting),
+            Some(SongState::Failed(_)) | None => {
+                self.waiting_songs.push(waiting);
+                self.songs.insert(path.to_path_buf(), SongState::Loading);
+                let path = path.to_path_buf();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let result = match crate::io::web_url(&path) {
+                        Ok(url) => fetch_bytes(&url).await,
+                        Err(err) => Err(err),
+                    };
+                    AUDIO.with(|cell| {
+                        if let Some(audio) = cell.borrow_mut().as_mut() {
+                            audio.output.song_loaded(path, result);
+                        }
+                    });
+                });
+            }
+        }
+        Ok(true)
+    }
+
+    /// Sends the song's file (the worklet builds its player in source slot
+    /// 0) and the play that takes it.
+    fn start_song(&mut self, song: WaitingSong, bytes: &ArrayBuffer) {
+        if !self.voices.contains(&song.play.voice.0) {
+            return;
+        }
+        self.flush();
+        let message = Object::new();
+        set(&message, "type", "song");
+        set(&message, "source", 0);
+        set(&message, "format", song.format);
+        set(&message, "bytes", bytes.slice(0));
+        set(&message, "subsong", song.subsong as u32);
+        set(&message, "looped", song.looped);
+        self.post(Outgoing::Message(message.into()));
+        self.send(Command::PlaySource(song.play));
+        self.flush();
+    }
+
+    fn song_loaded(&mut self, path: PathBuf, result: Result<ArrayBuffer, String>) {
+        let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiting_songs)
+            .into_iter()
+            .partition(|s| s.path == path);
+        self.waiting_songs = later;
+        match result {
+            Ok(bytes) => {
+                for song in now {
+                    self.start_song(song, &bytes);
+                }
+                self.songs.insert(path, SongState::Ready(bytes));
+            }
+            Err(err) => {
+                log::warn!(target: "audio", "{err}");
+                for song in now {
+                    self.voices.remove(&song.play.voice.0);
+                }
+                self.songs.insert(path, SongState::Failed(err));
+            }
+        }
+    }
+
     pub(super) fn set_listener(&mut self, listener: cubed_mixer::Listener) {
         if matches!(self.context, Some(Some(_))) {
             self.send(Command::SetListener(listener));
@@ -420,8 +560,19 @@ impl Output {
 
     /// Moves a voice; a play still waiting for its file starts from there.
     pub(super) fn move_voice(&mut self, id: u64, position: [f32; 3], velocity: [f32; 3]) {
-        if let Some((_, play)) = self.waiting.iter_mut().find(|(_, p)| p.voice.0 == id) {
-            if let Some(spatial) = &mut play.spatial {
+        let waiting = self
+            .waiting
+            .iter_mut()
+            .find(|(_, p)| p.voice.0 == id)
+            .map(|(_, p)| &mut p.spatial)
+            .or_else(|| {
+                self.waiting_songs
+                    .iter_mut()
+                    .find(|s| s.play.voice.0 == id)
+                    .map(|s| &mut s.play.spatial)
+            });
+        if let Some(spatial) = waiting {
+            if let Some(spatial) = spatial {
                 spatial.position = position;
                 spatial.velocity = velocity;
             }
@@ -439,31 +590,78 @@ impl Output {
     }
 
     fn stop_fade(&self) -> u32 {
-        let rate = match &self.context {
-            Some(Some(context)) => context.sample_rate(),
-            _ => 48_000.0,
-        };
-        (STOP_FADE_SECONDS * rate) as u32
+        (STOP_FADE_SECONDS * self.sample_rate()) as u32
     }
 
     pub(super) fn stop(&mut self, id: u64) -> bool {
+        let fade = self.stop_fade();
+        self.stop_over(id, fade)
+    }
+
+    /// Fades the sound out over `seconds`, then stops it.
+    pub(super) fn stop_after(&mut self, id: u64, seconds: f32) -> bool {
+        let fade = ((seconds.max(0.0) * self.sample_rate()) as u32).max(self.stop_fade());
+        self.stop_over(id, fade)
+    }
+
+    fn stop_over(&mut self, id: u64, frames: u32) -> bool {
         if !self.voices.contains(&id) {
             return false;
         }
-        if let Some(i) = self.waiting.iter().position(|(_, p)| p.voice.0 == id) {
-            self.waiting.remove(i);
+        let waiting_clip = self.waiting.iter().position(|(_, p)| p.voice.0 == id);
+        let waiting_song = self.waiting_songs.iter().position(|s| s.play.voice.0 == id);
+        if waiting_clip.is_some() || waiting_song.is_some() {
+            if let Some(i) = waiting_clip {
+                self.waiting.remove(i);
+            }
+            if let Some(i) = waiting_song {
+                self.waiting_songs.remove(i);
+            }
             self.voices.remove(&id);
             return true;
         }
-        let fade = self.stop_fade();
-        self.send(Command::Stop(VoiceId(id), fade));
+        self.send(Command::Stop(VoiceId(id), frames));
         self.flush();
         true
+    }
+
+    /// Glides a playing sound's volume to `volume` over `seconds`.
+    pub(super) fn fade(&mut self, id: u64, volume: f32, seconds: f32) -> bool {
+        if !self.voices.contains(&id) {
+            return false;
+        }
+        let gain = volume.max(0.0);
+        if let Some((_, play)) = self.waiting.iter_mut().find(|(_, p)| p.voice.0 == id) {
+            play.gain = gain;
+            return true;
+        }
+        if let Some(song) = self.waiting_songs.iter_mut().find(|s| s.play.voice.0 == id) {
+            song.play.gain = gain;
+            return true;
+        }
+        let frames = (seconds.max(0.0) * self.sample_rate()) as u32;
+        self.send(Command::FadeVoice {
+            voice: VoiceId(id),
+            gain,
+            frames,
+        });
+        self.flush();
+        true
+    }
+
+    fn sample_rate(&self) -> f32 {
+        match &self.context {
+            Some(Some(context)) => context.sample_rate(),
+            _ => 48_000.0,
+        }
     }
 
     pub(super) fn stop_all(&mut self) {
         for (_, play) in self.waiting.drain(..) {
             self.voices.remove(&play.voice.0);
+        }
+        for song in self.waiting_songs.drain(..) {
+            self.voices.remove(&song.play.voice.0);
         }
         if matches!(self.context, Some(Some(_))) {
             let fade = self.stop_fade();
@@ -473,8 +671,14 @@ impl Output {
     }
 
     pub(super) fn set_master_volume(&mut self, volume: f32) {
-        let command = self.buses.set_master_volume(volume);
-        self.send_if_started(command);
+        let ops = self.buses.set_master_volume(volume).into_iter().collect();
+        self.apply_if_started(ops);
+    }
+
+    /// The audio volumes' effect at the listener.
+    pub(super) fn set_ambience(&mut self, ambience: Ambience) {
+        let ops = self.buses.set_ambience(ambience);
+        self.apply_if_started(ops);
     }
 
     pub(super) fn playing(&mut self) -> Vec<u64> {
@@ -487,12 +691,16 @@ impl Output {
     pub(super) fn poll(&mut self) {}
 
     pub(super) fn apply_layout(&mut self, layout: MixerLayout) {
-        let commands = self.buses.set_layout(layout);
-        self.send_if_started(commands);
+        let ops = self.buses.set_layout(layout);
+        self.apply_if_started(ops);
     }
 
     pub(super) fn layout(&self) -> &MixerLayout {
         self.buses.layout()
+    }
+
+    pub(super) fn snapshots_mut(&mut self) -> &mut Vec<super::layout::SnapshotLayout> {
+        self.buses.snapshots_mut()
     }
 
     pub(super) fn update_bus(
@@ -500,8 +708,8 @@ impl Output {
         name: &str,
         change: impl FnOnce(&mut BusLayout),
     ) -> Result<(), String> {
-        let commands = self.buses.update(name, change)?;
-        self.send_if_started(commands);
+        let ops = self.buses.update(name, change)?;
+        self.apply_if_started(ops);
         Ok(())
     }
 
@@ -544,6 +752,37 @@ impl Output {
     pub(super) fn capture(&mut self, _path: PathBuf, _seconds: f32) -> Result<(), String> {
         Err("recording the mix is not available on the web yet".into())
     }
+}
+
+/// The worklet's number for a song file's format (see `cw_prepare_song`).
+fn song_format(path: &Path) -> Option<u32> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "ahx" | "hvl" => Some(0),
+        "a2m" => Some(1),
+        "asid" => Some(2),
+        _ => None,
+    }
+}
+
+/// `{type: 'effect', bus, slot, kind, params}`: kind -1 empties the slot.
+fn effect_message(bus: u16, slot: u8, effect: Option<Effect>) -> JsValue {
+    let object = Object::new();
+    set(&object, "type", "effect");
+    set(&object, "bus", bus);
+    set(&object, "slot", slot);
+    match effect {
+        Some(effect) => {
+            set(&object, "kind", effect.kind.index());
+            set(
+                &object,
+                "params",
+                Float32Array::from(effect.params.as_slice()),
+            );
+        }
+        None => set(&object, "kind", -1),
+    }
+    object.into()
 }
 
 /// `{type: 'clip', id, sampleRate, left, right?}` with the buffer's channels.

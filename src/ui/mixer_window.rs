@@ -1,11 +1,17 @@
 //! The mixer window: a strip per bus with its fader, meter, balance, mute and
-//! solo. Changes apply to what is playing at once and are saved to the
+//! solo, and below them the selected bus's output, effects, sends and
+//! ducking. Changes apply to what is playing at once and are saved to the
 //! project's `content/audio/mixer.json` when a drag ends or a button is
 //! pressed.
 
+use cubed_mixer::EffectKind;
 use egui::{pos2, vec2, Color32, Rect, Sense, Stroke, StrokeKind, Ui};
 
-use crate::audio::{self, BusState, MASTER};
+use super::audio_changes::{self as changes, Edit};
+use crate::audio::{
+    self, BusState, DuckLayout, EffectLayout, SendLayout, SnapshotLayout, MASTER, MAX_EFFECTS,
+    MAX_SENDS, REVERB_BUS,
+};
 
 /// The fader's travel; its bottom stop is silence.
 const FADER_MIN_DB: f32 = -60.0;
@@ -24,6 +30,13 @@ pub fn show_mixer_window(ctx: &egui::Context, open: &mut bool) {
     let buses = audio::buses();
     let mut save = false;
     let status_id = egui::Id::new("mixer_window_status");
+    let selected_id = egui::Id::new("mixer_window_selected");
+    let mut selected: String = ctx
+        .data(|d| d.get_temp(selected_id))
+        .unwrap_or_else(|| MASTER.to_string());
+    if !buses.iter().any(|b| b.layout.name == selected) {
+        selected = MASTER.to_string();
+    }
     egui::Window::new("Mixer")
         .open(open)
         .resizable([true, false])
@@ -33,12 +46,23 @@ pub fn show_mixer_window(ctx: &egui::Context, open: &mut bool) {
                 ui.horizontal_top(|ui| {
                     for bus in &buses {
                         // A frame, not separators: those stretch to the window's height.
-                        egui::Frame::group(ui.style()).show(ui, |ui| {
-                            save |= strip(ui, bus);
+                        let mut frame = egui::Frame::group(ui.style());
+                        if bus.layout.name == selected {
+                            frame =
+                                frame.stroke(Stroke::new(1.5, ui.visuals().selection.stroke.color));
+                        }
+                        frame.show(ui, |ui| {
+                            save |= strip(ui, bus, &mut selected);
                         });
                     }
                 });
             });
+            ui.separator();
+            if let Some(bus) = buses.iter().find(|b| b.layout.name == selected) {
+                save |= details(ui, bus, &buses);
+                ui.separator();
+            }
+            save |= snapshots(ui, &buses);
             ui.separator();
             let status: Option<String> = ui.data(|d| d.get_temp(status_id));
             ui.label(
@@ -49,6 +73,7 @@ pub fn show_mixer_window(ctx: &egui::Context, open: &mut bool) {
                 .weak(),
             );
         });
+    ctx.data_mut(|d| d.insert_temp(selected_id, selected));
     if save {
         let status = match audio::save_layout() {
             Ok(path) => format!("Saved {}", path.display()),
@@ -61,20 +86,27 @@ pub fn show_mixer_window(ctx: &egui::Context, open: &mut bool) {
 }
 
 /// One bus's strip. Returns whether a change should be saved.
-fn strip(ui: &mut Ui, bus: &BusState) -> bool {
+fn strip(ui: &mut Ui, bus: &BusState, selected: &mut String) -> bool {
     let name = bus.layout.name.clone();
     let mut save = false;
     ui.allocate_ui_with_layout(
-        vec2(STRIP_WIDTH, FADER_HEIGHT + 90.0),
+        vec2(STRIP_WIDTH, FADER_HEIGHT + 114.0),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
             ui.set_width(STRIP_WIDTH);
             let label = egui::RichText::new(&name).strong();
-            ui.label(if name == MASTER {
+            let label = if name == MASTER {
                 label.underline()
             } else {
                 label
-            });
+            };
+            if ui
+                .add(egui::Label::new(label).sense(Sense::click()))
+                .on_hover_text("Show the bus's effects, sends and ducking")
+                .clicked()
+            {
+                *selected = name.clone();
+            }
 
             ui.horizontal(|ui| {
                 // A vertical slider's length is the spacing's slider width.
@@ -148,8 +180,368 @@ fn strip(ui: &mut Ui, bus: &BusState) -> bool {
                     }
                 }
             });
+            let effects = bus.layout.effects.len();
+            let mut text = if effects == 0 {
+                "FX".to_string()
+            } else {
+                format!("FX {effects}")
+            };
+            if bus.layout.duck.is_some() {
+                text.push_str(" ↓");
+            }
+            if ui
+                .selectable_label(*selected == name, text)
+                .on_hover_text(strip_summary(bus))
+                .clicked()
+            {
+                *selected = name.clone();
+            }
         },
     );
+    save
+}
+
+fn strip_summary(bus: &BusState) -> String {
+    let mut lines = Vec::new();
+    for effect in &bus.layout.effects {
+        lines.push(format!(
+            "{}{}",
+            effect_label(&effect.kind),
+            if effect.bypass { " (bypassed)" } else { "" }
+        ));
+    }
+    for send in &bus.layout.sends {
+        lines.push(format!("→ {} {:+.1} dB", send.to, send.level_db));
+    }
+    if let Some(duck) = &bus.layout.duck {
+        lines.push(format!("Ducks {:.0} dB under {}", duck.depth_db, duck.key));
+    }
+    if lines.is_empty() {
+        "No effects, sends or ducking: click to add".into()
+    } else {
+        lines.join("\n")
+    }
+}
+
+/// "low_pass" as "Low pass".
+fn effect_label(kind: &str) -> String {
+    let words = kind.replace('_', " ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => words,
+    }
+}
+
+/// The selected bus's output, effects, sends and ducking. Returns whether a
+/// change should be saved.
+fn details(ui: &mut Ui, bus: &BusState, buses: &[BusState]) -> bool {
+    let name = bus.layout.name.clone();
+    let mut save = false;
+    let others: Vec<String> = buses
+        .iter()
+        .map(|b| b.layout.name.clone())
+        .filter(|n| *n != name)
+        .collect();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(&name).strong());
+        if name != MASTER {
+            ui.label("feeds");
+            let current = bus.layout.output.clone().unwrap_or_else(|| MASTER.into());
+            egui::ComboBox::from_id_salt(("mixer_output", &name))
+                .selected_text(&current)
+                .show_ui(ui, |ui| {
+                    for other in &others {
+                        if ui.selectable_label(*other == current, other).clicked()
+                            && *other != current
+                        {
+                            let output = (other != MASTER).then(|| other.clone());
+                            if audio::update_bus(&name, |b| b.output = output).is_ok() {
+                                save = true;
+                            }
+                        }
+                    }
+                });
+        }
+    });
+
+    ui.label(egui::RichText::new("Effects").small().strong());
+    let count = bus.layout.effects.len();
+    for (slot, effect) in bus.layout.effects.iter().enumerate() {
+        save |= effect_row(ui, &name, slot, count, effect);
+    }
+    ui.add_enabled_ui(count < MAX_EFFECTS, |ui| {
+        ui.menu_button("+ Add effect", |ui| {
+            for kind in EffectKind::ALL {
+                if ui.button(effect_label(kind.name())).clicked() {
+                    let mut effect = EffectLayout::new(kind);
+                    if name == REVERB_BUS && kind == EffectKind::Reverb {
+                        // A return carries only the reverb.
+                        effect.params.insert("wet".into(), 1.0);
+                        effect.params.insert("dry".into(), 0.0);
+                    }
+                    let _ = audio::update_bus(&name, |b| b.effects.push(effect));
+                    save = true;
+                    ui.close();
+                }
+            }
+        });
+    });
+
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Sends").small().strong());
+    for (slot, send) in bus.layout.sends.iter().enumerate() {
+        save |= send_row(ui, &name, slot, send, &others);
+    }
+    let targets: Vec<&String> = others.iter().filter(|o| *o != MASTER).collect();
+    ui.add_enabled_ui(
+        bus.layout.sends.len() < MAX_SENDS && !targets.is_empty(),
+        |ui| {
+            if ui.button("+ Add send").clicked() {
+                let to = targets
+                    .iter()
+                    .find(|t| t.as_str() == REVERB_BUS)
+                    .or(targets.first())
+                    .map(|t| t.to_string())
+                    .unwrap_or_default();
+                let _ = audio::update_bus(&name, |b| {
+                    b.sends.push(SendLayout {
+                        to,
+                        level_db: -12.0,
+                        pre_fader: false,
+                    })
+                });
+                save = true;
+            }
+        },
+    );
+
+    if name != MASTER {
+        ui.add_space(4.0);
+        save |= duck_row(ui, &name, bus.layout.duck.as_ref(), &others);
+    }
+    save
+}
+
+fn effect_row(ui: &mut Ui, bus: &str, slot: usize, count: usize, effect: &EffectLayout) -> bool {
+    let mut save = false;
+    let kind = EffectKind::from_name(&effect.kind);
+    let id = ui.make_persistent_id(("mixer_effect", bus, slot));
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+        .show_header(ui, |ui| {
+            let mut on = !effect.bypass;
+            if ui
+                .checkbox(&mut on, effect_label(&effect.kind))
+                .on_hover_text("Off: bypassed")
+                .changed()
+            {
+                let _ = audio::update_bus(bus, |b| b.effects[slot].bypass = !on);
+                save = true;
+            }
+            if slot > 0 && ui.small_button("⏶").on_hover_text("Earlier").clicked() {
+                let _ = audio::update_bus(bus, |b| b.effects.swap(slot, slot - 1));
+                save = true;
+            }
+            if slot + 1 < count && ui.small_button("⏷").on_hover_text("Later").clicked() {
+                let _ = audio::update_bus(bus, |b| b.effects.swap(slot, slot + 1));
+                save = true;
+            }
+            if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                let _ = audio::update_bus(bus, |b| {
+                    b.effects.remove(slot);
+                });
+                save = true;
+            }
+        })
+        .body(|ui| {
+            let Some(kind) = kind else {
+                ui.label("Unknown effect");
+                return;
+            };
+            egui::Grid::new(("mixer_effect_params", bus, slot))
+                .num_columns(2)
+                .show(ui, |ui| {
+                    for info in kind.params() {
+                        let mut value = effect
+                            .params
+                            .get(info.name)
+                            .copied()
+                            .unwrap_or(info.default);
+                        ui.label(
+                            effect_label(info.name)
+                                .replace(" hz", "")
+                                .replace(" ms", "")
+                                .replace(" db", ""),
+                        );
+                        let slider = egui::Slider::new(&mut value, info.min..=info.max)
+                            .logarithmic(matches!(info.unit, "Hz" | "ms") && info.min > 0.0)
+                            .suffix(if info.unit.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" {}", info.unit)
+                            });
+                        let response = ui.add(slider);
+                        if response.changed() {
+                            let name = info.name.to_string();
+                            let _ = audio::update_bus(bus, |b| {
+                                b.effects[slot].params.insert(name, value);
+                            });
+                        }
+                        save |=
+                            response.drag_stopped() || (response.changed() && !response.dragged());
+                        ui.end_row();
+                    }
+                });
+        });
+    save
+}
+
+fn send_row(ui: &mut Ui, bus: &str, slot: usize, send: &SendLayout, others: &[String]) -> bool {
+    let mut save = false;
+    ui.horizontal(|ui| {
+        ui.label("→");
+        egui::ComboBox::from_id_salt(("mixer_send_to", bus, slot))
+            .selected_text(&send.to)
+            .width(90.0)
+            .show_ui(ui, |ui| {
+                for other in others.iter().filter(|o| *o != MASTER) {
+                    if ui.selectable_label(*other == send.to, other).clicked() && *other != send.to
+                    {
+                        let to = other.clone();
+                        let _ = audio::update_bus(bus, |b| b.sends[slot].to = to);
+                        save = true;
+                    }
+                }
+            });
+        let mut level = send.level_db;
+        let response = ui.add(
+            egui::Slider::new(&mut level, -60.0..=6.0)
+                .suffix(" dB")
+                .fixed_decimals(1),
+        );
+        if response.changed() {
+            let _ = audio::update_bus(bus, |b| b.sends[slot].level_db = level);
+        }
+        save |= response.drag_stopped() || (response.changed() && !response.dragged());
+        let mut pre = send.pre_fader;
+        if ui
+            .checkbox(&mut pre, "pre")
+            .on_hover_text("Taken before the bus's fader")
+            .changed()
+        {
+            let _ = audio::update_bus(bus, |b| b.sends[slot].pre_fader = pre);
+            save = true;
+        }
+        if ui.small_button("✕").on_hover_text("Remove").clicked() {
+            let _ = audio::update_bus(bus, |b| {
+                b.sends.remove(slot);
+            });
+            save = true;
+        }
+    });
+    save
+}
+
+fn duck_row(ui: &mut Ui, bus: &str, duck: Option<&DuckLayout>, others: &[String]) -> bool {
+    let mut save = false;
+    let mut on = duck.is_some();
+    ui.horizontal(|ui| {
+        if ui
+            .checkbox(&mut on, "Duck under")
+            .on_hover_text(
+                "Turn this bus down while another is loud (music under effects or dialogue)",
+            )
+            .changed()
+        {
+            let key = others
+                .iter()
+                .find(|o| o.as_str() == "voice" || o.as_str() == audio::DEFAULT_BUS)
+                .or_else(|| others.iter().find(|o| o.as_str() != MASTER))
+                .cloned();
+            let _ = audio::update_bus(bus, |b| {
+                b.duck = match (on, key) {
+                    (true, Some(key)) => Some(DuckLayout {
+                        key,
+                        ..DuckLayout::default()
+                    }),
+                    _ => None,
+                }
+            });
+            save = true;
+        }
+        if let Some(duck) = duck {
+            egui::ComboBox::from_id_salt(("mixer_duck_key", bus))
+                .selected_text(&duck.key)
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for other in others.iter().filter(|o| *o != MASTER) {
+                        if ui.selectable_label(*other == duck.key, other).clicked()
+                            && *other != duck.key
+                        {
+                            let key = other.clone();
+                            let _ = audio::update_bus(bus, |b| {
+                                if let Some(d) = &mut b.duck {
+                                    d.key = key;
+                                }
+                            });
+                            save = true;
+                        }
+                    }
+                });
+        }
+    });
+    let Some(duck) = duck else {
+        return save;
+    };
+    egui::Grid::new(("mixer_duck", bus))
+        .num_columns(2)
+        .show(ui, |ui| {
+            let mut row = |ui: &mut Ui,
+                           label: &str,
+                           value: f32,
+                           range: std::ops::RangeInclusive<f32>,
+                           unit: &str,
+                           apply: fn(&mut DuckLayout, f32)| {
+                ui.label(label);
+                let mut v = value;
+                let response = ui.add(
+                    egui::Slider::new(&mut v, range)
+                        .suffix(format!(" {unit}"))
+                        .logarithmic(unit == "ms"),
+                );
+                if response.changed() {
+                    let _ = audio::update_bus(bus, |b| {
+                        if let Some(d) = &mut b.duck {
+                            apply(d, v);
+                        }
+                    });
+                }
+                save |= response.drag_stopped() || (response.changed() && !response.dragged());
+                ui.end_row();
+            };
+            row(ui, "Depth", duck.depth_db, 0.0..=40.0, "dB", |d, v| {
+                d.depth_db = v
+            });
+            row(
+                ui,
+                "Threshold",
+                duck.threshold_db,
+                -80.0..=0.0,
+                "dB",
+                |d, v| d.threshold_db = v,
+            );
+            row(ui, "Attack", duck.attack_ms, 1.0..=500.0, "ms", |d, v| {
+                d.attack_ms = v
+            });
+            row(
+                ui,
+                "Release",
+                duck.release_ms,
+                10.0..=4000.0,
+                "ms",
+                |d, v| d.release_ms = v,
+            );
+        });
     save
 }
 
@@ -220,4 +612,80 @@ fn meter(ui: &mut Ui, bus: &BusState) {
         db(rms[0]),
         db(rms[1])
     ));
+}
+
+/// The project's snapshots: named changes to the mix that scripts fade to
+/// (`set_audio_snapshot`) and audio volumes can name. Returns whether a
+/// change should be saved.
+fn snapshots(ui: &mut Ui, buses: &[BusState]) -> bool {
+    let mut list = audio::update_snapshots(|list| list.clone());
+    let names: Vec<String> = buses.iter().map(|b| b.layout.name.clone()).collect();
+    let active = audio::snapshot();
+    let mut edit = Edit::default();
+    let mut remove = None;
+    egui::CollapsingHeader::new(format!("Snapshots ({})", list.len()))
+        .id_salt("mixer_snapshots")
+        .show(ui, |ui| {
+            for (i, snapshot) in list.iter_mut().enumerate() {
+                let id = ui.make_persistent_id(("mixer_snapshot", i));
+                egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+                    .show_header(ui, |ui| {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut snapshot.name).desired_width(110.0),
+                        );
+                        edit.changed |= response.changed();
+                        edit.done |= response.lost_focus();
+                        if active.as_deref() == Some(snapshot.name.as_str()) {
+                            ui.label(egui::RichText::new("on").small().strong());
+                        }
+                        if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                    })
+                    .body(|ui| {
+                        egui::Grid::new(("mixer_snapshot_reverb", i))
+                            .num_columns(2)
+                            .show(ui, |ui| {
+                                edit.merge(changes::reverb_rows(
+                                    ui,
+                                    &mut snapshot.reverb_room_size,
+                                    &mut snapshot.reverb_damping,
+                                ));
+                            });
+                        edit.merge(changes::bus_changes(
+                            ui,
+                            ("mixer_snapshot_buses", i),
+                            &mut snapshot.buses,
+                            &names,
+                            REVERB_BUS,
+                        ));
+                    });
+            }
+            if ui.button("+ Add snapshot").clicked() {
+                let mut n = list.len() + 1;
+                while list.iter().any(|s| s.name == format!("snapshot {n}")) {
+                    n += 1;
+                }
+                list.push(SnapshotLayout {
+                    name: format!("snapshot {n}"),
+                    ..SnapshotLayout::default()
+                });
+                edit.changed = true;
+                edit.done = true;
+            }
+            ui.label(
+                egui::RichText::new("Scripts fade to one with set_audio_snapshot(name, seconds) in play mode; an Audio Volume can name one.")
+                    .small()
+                    .weak(),
+            );
+        });
+    if let Some(i) = remove {
+        list.remove(i);
+        edit.changed = true;
+        edit.done = true;
+    }
+    if edit.changed {
+        audio::update_snapshots(|snapshots| *snapshots = list);
+    }
+    edit.done
 }

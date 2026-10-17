@@ -672,13 +672,18 @@ function on_destroyed(self, reason) if controls then controls:release() end end
   `always_run` (Shift walks), `capture_mouse`, `turn_rate` (degrees/s), `mouse_sensitivity`
   (degrees/pixel), `hide_cursor_while_dragging`, `invert_y`, `camera_follow` (how fast the
   view swings back behind), `diagonal_turn` (degrees the body turns into a diagonal run),
-  `strafes` (false: the character turns to run sideways instead of strafing).
+  `strafes` (false: the character turns to run sideways instead of strafing), `drive`
+  (`"character"`, or `"navigation"` to steer the entity's `NavAgent` along the navmesh with
+  `nav_steer`: no jumping, the crowd makes way) with `walk_speed` and `run_speed` (m/s) for
+  a NavAgent.
 - Replace a method on the instance (or on `ThirdPerson` for every character): `read_input`,
-  `move_direction`, `mmo_steer`, and the hooks `jumped`, `landed(speed)` for sounds and
+  `move_direction`, `mmo_steer`, `face(yaw, instant)` and `drive(dx, dz, run, jump)` (what
+  moves the body), and the hooks `jumped`, `landed(speed)` for sounds and
   effects:
   `local landed = controls.landed; function controls:landed(speed) landed(self, speed); play_sound(...) end`.
-- `controls.state` is the last `character_state`; `controls:release()` gives the cursor
-  back (when switching schemes, or before the script goes away).
+- `controls.state` is the last `character_state` (`nav_agent_state` for a NavAgent);
+  `controls:release()` gives the cursor back (when switching schemes, or before the script
+  goes away) and stops a NavAgent where it stands.
 
 To change it beyond that, copy `engine/third_person.lua` from the engine
 (`src/scripting/lua/modules/`) into your scripts folder as `engine/third_person.lua`: a
@@ -715,8 +720,12 @@ destination set in `update` is planned and walked the same frame.
   at once.
 - `nav_face(entity, yaw)` - face `yaw` (radians about +Y; 0 faces +Z) while it stands;
   walking hands the facing back to its movement.
+- `nav_steer(entity, vx, vz[, yaw])` - drive it by velocity (m/s, world x and z) instead
+  of toward a destination, as a player's input does: it walks the navmesh at that velocity
+  (walls and edges stop it), avoids nobody and the others make way. It faces `yaw` when
+  given, else the way it moves. Call it every frame; `nav_stop` or a destination ends it.
 - `nav_agent_state(entity)` → `{state, position, velocity, speed, desired_velocity, target,
-  remaining_distance, partial, corners}` or `nil`. `state` is `idle`, `planning`, `moving`,
+  remaining_distance, partial, steering, corners}` or `nil`. `state` is `idle`, `planning`, `moving`,
   `arrived`, `failed`, `off_mesh` or `lost`; `partial` means the way is blocked for now and
   it walks as near as it can (it keeps retrying).
 - `nav_find_path(x0, y0, z0, x1, y1, z1[, {agent_type}])` → `{points = {{x, y, z}, ...},
@@ -915,18 +924,32 @@ the script calls in its hooks.
 
 ### Audio
 - `play_sound(path[, {volume = 1, pitch = 1, loop = false, bus = "sfx", priority = 128,
-  entity, position, spatial, min_distance, max_distance, rolloff, doppler}])` → `id` - Play
-  a wav, ogg, mp3 or flac file. Paths are relative to the project
-  (`"content/audio/hit.wav"`) or absolute. `pitch` is the playback speed. `bus` is the
-  mixer bus it plays on. The rest place it in the world (below).
+  subsong = 0, stream = false, entity, position, spatial, min_distance, max_distance,
+  rolloff, doppler}])` → `id` - Play a wav, ogg, mp3 or flac file, or a chip-music song
+  (AHX and HivelyTracker `.ahx`/`.hvl`, Adlib Tracker II `.a2m`, SID `.asid`; `subsong`
+  picks one of several). Paths are relative to the project (`"content/audio/hit.wav"`) or
+  absolute. `pitch` is the playback speed (not for songs or streams). `bus` is the mixer
+  bus it plays on. `stream` decodes a long file while it plays instead of all at once.
+  The rest place it in the world (below).
 - `move_sound(id, position[, velocity])` - Move a sound played at a position
 - `play_audio_source(entity)` / `stop_audio_source(entity)` - Start or stop an entity's
   `AudioSource`
-- `stop_sound(id)` - Stop one sound (with a 5 ms fade, so it does not click)
+- `stop_sound(id[, fade])` - Stop one sound, fading out over `fade` seconds (default 5 ms,
+  so it does not click)
+- `fade_sound(id, volume, seconds)` - Glide a playing sound's volume
+- `play_music(path[, {volume = 1, bus = "music", crossfade = 1, loop = true, subsong = 0}])`
+  → `id` - Play a music track (a file or a song). The track playing before fades out as
+  this one fades in over `crossfade` seconds (0 cuts). Files stream as they play.
+- `stop_music([fade])` - Fade the music out (default 1 second)
 - `stop_all_sounds()` - Stop everything
 - `set_master_volume(volume)` - Gain applied to every sound, on top of the master fader
 - `set_bus_volume(bus, db)` - A bus's fader in dB (0 unchanged, -80 silent)
 - `set_bus_muted(bus, muted)` - Mute or unmute a bus
+- `set_bus_effect(bus, index, {param = value, ..., bypass = false})` - Change one of a bus's
+  effects (`index` 1 is the first), e.g. `set_bus_effect("music", 1, {cutoff_hz = 600})`
+- `set_audio_snapshot(name[, fade])` - Fade the mix to one of the project's snapshots over
+  `fade` seconds (default 0.5); `nil` fades back. A pause menu: `set_audio_snapshot("paused")`
+  when it opens and `set_audio_snapshot(nil)` when it closes.
 
 Sounds can play from a place in the world. `play_sound(path, {entity = e})` plays from
 an entity and follows it; `{position = {x, y, z}}` plays from a point, which
@@ -945,11 +968,20 @@ the inspector (Add Component > Audio) or with `set_component(e, "AudioSource", {
 "content/audio/hum.wav", loop = true})`.
 
 Every sound plays on a bus of the project's mixer: `sfx` unless it names another. The
-default buses are `master`, `music`, `sfx`, `ambience`, `ui` and `voice`, each feeding
-master. The editor's Window > Mixer sets their faders, balance, mute and solo while the
-game plays and saves them in `content/audio/mixer.json`; changes from scripts last until
-the project reopens. Play music with `bus = "music"` so players (and the mix) can turn it
-down separately.
+default buses are `master`, `music`, `sfx`, `ambience`, `ui`, `voice` and `reverb` (a
+reverb return that other buses send to), each feeding master. The editor's Window > Mixer
+sets their faders, balance, mute and solo, and for the selected bus its output, effects
+(reverb, delay, low/high pass, compressor, limiter, chorus, saturation, bitcrusher), sends
+and ducking (turning music down while `sfx` or `voice` is loud), while the game plays. It
+saves them in `content/audio/mixer.json`; changes from scripts last until the project
+reopens. Play music with `play_music` (or `bus = "music"`) so players (and the mix) can
+turn it down separately.
+
+The same window keeps the project's snapshots: named changes to the mix (a fader offset,
+a reverb send and a low-pass per bus, and the reverb's room size) that
+`set_audio_snapshot` fades to. An `AudioVolume` component changes the mix while the
+listener is inside its box or sphere (a cave's reverb, a muffled room), fading in over
+its blend distance, with its own list of bus changes or a snapshot's.
 
 Sounds stop when play mode ends. Without an audio device sounds are silent but still
 recorded, so automated tests can check what played (engine tool `audio_status`).

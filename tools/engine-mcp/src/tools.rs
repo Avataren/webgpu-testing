@@ -77,6 +77,7 @@ impl Tool {
                 | "logs"
                 | "editor_state"
                 | "audio_status"
+                | "audio_effect_kinds"
                 | "sound_inspect"
                 | "scene_query"
                 | "scene_raycast"
@@ -243,8 +244,9 @@ fn entity_fields() -> serde_json::Map<String, Value> {
         "ai_agent": { "type": ["object", "null"], "description": "Gives the entity a brain, run in play mode (or null to remove): brain (a name a script defines with ai_tree / ai_machine, or ai_define / the ai_define tool, or a project JSON file like content/ai/guard.json), enabled, tick_rate (thinks per second, 10; 0 every frame), tags (what others perceive it as), group (shares the group. blackboard and group events), run_speed (m/s for run = true moves, 3.2), blackboard (starting values; [x,y,z] arrays are positions; merged key by key, null removes), perception {sight_range (0: blind), sight_angle (deg, 120), near_range (1.5), hearing_range (15), memory (s, 5), interests (tags it notices), line_of_sight (navmesh|physics|none), eye_height, rate (looks/s)}. Walking needs a nav_agent too. See docs/ai.md." },
         "nav_obstacle": { "type": ["object", "null"], "description": "Something that moves about on the navmesh (cart, door, crate): agents steer around it while it moves; standing still it carves a hole into the navmesh (tiles rebuilt, paths reroute). Or null to remove. Fields: shape ({kind: box, size: [x,y,z]} | {kind: cylinder, radius, height}; local units), offset, carve (true), carve_only_stationary (true), move_threshold (m, 0.1), stationary_time (s, 0.5)." },
         "nav_link": { "type": ["object", "null"], "description": "Off-mesh link from the entity to end (local offset): a jump down, a gap, a ladder; agents whose path uses it cross in an arc (Lua callbacks on_nav_link_start(self, {start, finish, link}) / on_nav_link_end). Or null to remove. Fields: end ([x,y,z], default [0,0,2]), bidirectional (false: only entity -> end), radius (m, 0.5: how far each end reaches for the floor), area (63)." },
-        "audio_source": { "type": ["object", "null"], "description": "Plays a sound from the entity, following it as it moves (or null to remove). Fields: clip (wav/ogg/mp3/flac path in the project), bus (mixer bus, default sfx), volume (1), pitch (1), loop (false), play_on_start (true: starts when play starts or the entity appears; else Lua play_audio_source(e)), spatial (auto: 2d under an orthographic camera, else 3d | 2d: depth along the view ignored, panned across the screen | 3d | off: heard as it is), min_distance (1: full volume within), max_distance (50), rolloff (inverse: min/distance, stops falling at max | linear: silent at max), doppler (1: pitch shift from motion; 0 none), priority (128; lower is stolen first when a bus is full)." },
+        "audio_source": { "type": ["object", "null"], "description": "Plays a sound from the entity, following it as it moves (or null to remove). Fields: clip (wav/ogg/mp3/flac, or an AHX/HVL/A2M/SID .asid song, path in the project), bus (mixer bus, default sfx), volume (1), pitch (1), loop (false), play_on_start (true: starts when play starts or the entity appears; else Lua play_audio_source(e)), spatial (auto: 2d under an orthographic camera, else 3d | 2d: depth along the view ignored, panned across the screen | 3d | off: heard as it is), min_distance (1: full volume within), max_distance (50), rolloff (inverse: min/distance, stops falling at max | linear: silent at max), doppler (1: pitch shift from motion; 0 none), priority (128; lower is stolen first when a bus is full)." },
         "audio_listener": { "type": ["object", "null"], "description": "Hear the mix from this entity instead of the active camera (or null to remove). Fields: mode (auto: 2d if this entity has an orthographic camera, else 3d | 2d | 3d) for sounds whose spatial is auto, pan_width (the offset across the screen that pans a 2d sound fully to one side; 0: half an orthographic camera's view width, 10 without one)." },
+        "audio_volume": { "type": ["object", "null"], "description": "Changes the mix while the listener is inside it, in play mode: a cave's reverb, a muffled room, quieter music indoors (or null to remove). Overlapping volumes blend by priority like post-process volumes: full inside the shape, fading out over blend_distance. Fields: enabled, shape ({kind: box, size: [x,y,z]} | {kind: sphere, radius} | {kind: infinite}; default box 10x4x10), priority, blend_distance (2), reverb_bus (the bus reverb sends go to, default reverb), reverb_room_size (0..1, default 0.85; null keeps the layout's), reverb_damping (0..1 or null), buses [{bus, gain_db (added to the fader), reverb_db (send level to the reverb bus; null none), low_pass_hz (null: open)}] (default: sfx with reverb_db -6), snapshot (a mixer snapshot's name to apply instead of buses and the reverb settings; see audio_snapshot). Buses it does not name are left alone. audio_status shows each volume's weight at the listener." },
         "nav_modifier": { "type": ["object", "null"], "description": "How an entity's geometry (and its children's, include_children) goes into navmeshes, or null to remove: ignore (leave it out), walkable (false: solid but never walked on, like rooftops), area (1..63; 63 plain ground; agents' area_costs make areas cheaper or dearer)." },
         "animation_tree": { "type": ["object", "null"], "description": "Animation state machine (like Godot's AnimationTree) driving the character's animator (on the entity, the nearest below, or above), or null to remove. {generate: true} builds a locomotion tree from the character's clips by name (idle/walk/run/backpedal/strafes in a 2D blend space at the speeds the clips travel, then Jump/Fall/Land states); put it on the character root. Fields: from_character (default true: the CharacterController feeds speed, forward_speed, side_speed, vertical_speed, grounded, air_time, landing_speed and the triggers jumped and landed), start, parameters {name: number}, states [{name, motion: {kind: clip, clip, speed} | {kind: blend_1d, parameter, points: [{at, clip, speed}], scale_speed} | {kind: blend_2d, x, y, points: [{at: [x, y], clip, speed}], scale_speed}, looping, speed}], transitions [{from (a state or \"*\"), to, when (e.g. \"!grounded && air_time > 0.15\"), fade, after (0..1 share of the state played)}]. entity_get shows playing {state, previous, time, progress, parameters} in play mode. Lua: animation_set/trigger/get/state/travel." },
         "rotate_animation": nullable_object("Built-in spin animation, or null", json!({
@@ -490,7 +492,7 @@ pub fn tools() -> Vec<Tool> {
             description: "Remove one component from an entity.",
             schema: object(json!({
                 "entity": entity_ref(),
-                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "nav_mesh_surface", "nav_agent", "nav_obstacle", "nav_modifier", "nav_link", "ai_agent", "audio_source", "audio_listener", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
+                "component": { "type": "string", "enum": ["transform", "mesh", "material", "visible", "point_light", "directional_light", "spot_light", "cast_shadow", "camera", "script", "particle_system", "particle_emitter", "environment", "post_process_volume", "light_probe_volume", "rigid_body", "collider", "character_controller", "spring_camera", "nav_mesh_surface", "nav_agent", "nav_obstacle", "nav_modifier", "nav_link", "ai_agent", "audio_source", "audio_listener", "audio_volume", "animation_tree", "billboard", "depth_state", "rotate_animation", "orbit_animation", "gltf", "skinned_mesh", "animator"] }
             }), &["entity", "component"]),
             action: Action::Engine("entity.remove_component"),
         },
@@ -618,7 +620,7 @@ pub fn tools() -> Vec<Tool> {
         // ---- Audio ----
         Tool {
             name: "sound_play",
-            description: "Play a sound file (wav, ogg, mp3, flac) through the engine, e.g. to try a sound effect before a script uses it. Paths are relative to the project (content/audio/hit.wav) or absolute. Returns its id for sound_stop.",
+            description: "Play a sound file (wav, ogg, mp3, flac) or a chip-music song (AHX/HVL, A2M, SID .asid) through the engine, e.g. to try a sound effect before a script uses it. Paths are relative to the project (content/audio/hit.wav) or absolute. Returns its id for sound_stop. For music with crossfades use audio_music.",
             schema: object(json!({
                 "path": { "type": "string" },
                 "volume": { "type": "number", "description": "Linear gain (default 1)" },
@@ -630,15 +632,46 @@ pub fn tools() -> Vec<Tool> {
                 "min_distance": { "type": "number", "description": "With position: full volume within (default 1)" },
                 "max_distance": { "type": "number", "description": "With position: default 50" },
                 "rolloff": { "type": "string", "enum": ["inverse", "linear"] },
-                "doppler": { "type": "number", "description": "With position: doppler scale (default 1, 0 none)" }
+                "doppler": { "type": "number", "description": "With position: doppler scale (default 1, 0 none)" },
+                "subsong": { "type": "integer", "description": "For a song file with several songs: which one (0, the main song)" },
+                "stream": { "type": "boolean", "description": "Decode a long file while it plays instead of all at once (audio_music streams by itself)" }
             }), &["path"]),
             action: Action::Engine("audio.play"),
         },
         Tool {
             name: "sound_stop",
-            description: "Stop one sound by id, or every sound.",
-            schema: object(json!({ "id": { "type": "integer" } }), &[]),
+            description: "Stop one sound by id (fading out over fade seconds), or every sound.",
+            schema: object(json!({
+                "id": { "type": "integer" },
+                "fade": { "type": "number", "description": "Seconds to fade out over (default: a few milliseconds)" }
+            }), &[]),
             action: Action::Engine("audio.stop"),
+        },
+        Tool {
+            name: "audio_music",
+            description: "Play a music track: a sound file or a chip-music song (AHX/HVL, A2M, SID .asid), looping, on the music bus. The track playing before fades out as this one fades in over crossfade seconds. stop: true fades the music out; without a path it tells what is playing. Scripts use play_music / stop_music.",
+            schema: object(json!({
+                "path": { "type": "string" },
+                "volume": { "type": "number", "description": "Linear gain (default 1)" },
+                "bus": { "type": "string", "description": "Default music" },
+                "crossfade": { "type": "number", "description": "Seconds (default 1; 0 cuts)" },
+                "loop": { "type": "boolean", "description": "Default true" },
+                "subsong": { "type": "integer" },
+                "stop": { "type": "boolean" },
+                "fade": { "type": "number", "description": "With stop: seconds to fade out over (default 1)" }
+            }), &[]),
+            action: Action::Engine("audio.music"),
+        },
+        Tool {
+            name: "audio_fade",
+            description: "Glide a playing sound's volume (linear) over some seconds, or with stop: true fade it out and stop it.",
+            schema: object(json!({
+                "id": { "type": "integer" },
+                "volume": { "type": "number" },
+                "seconds": { "type": "number", "description": "Default 1" },
+                "stop": { "type": "boolean" }
+            }), &["id"]),
+            action: Action::Engine("audio.fade"),
         },
         Tool {
             name: "sound_inspect",
@@ -660,16 +693,39 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "audio_bus",
-            description: "Change a mixer bus live: its fader (gain_db, -80 silent to +24), balance (pan -1..1), mute or solo. Changes are heard at once; save writes the project's bus layout (content/audio/mixer.json), as the editor's mixer window does. Returns audio_status's mixer view.",
+            description: "Change a mixer bus live: its fader (gain_db, -80 silent to +24), balance (pan -1..1), mute, solo, output, its effects (insert chain, up to 7), sends (up to 3, e.g. to the reverb return) and ducking (the bus goes down while another is loud: music under sfx or voice). Effects: reverb {room_size, damping, wet, dry, width}, delay {time_ms, feedback, mix}, low_pass / high_pass {cutoff_hz, q}, compressor {threshold_db, ratio, attack_ms, release_ms, makeup_db, mix}, limiter {threshold_db, release_ms}, chorus {delay_ms, depth_ms, rate_hz, feedback, mix}, saturation {drive, mix}, bitcrusher {bits, downsample, mix}; audio_effect_kinds has the ranges and defaults. An edit to an effect's params keeps it running (a reverb's tail goes on). Changes are heard at once; save writes the project's bus layout (content/audio/mixer.json), as the editor's mixer window does. Returns audio_status's mixer view.",
             schema: object(json!({
-                "bus": { "type": "string", "description": "master, music, sfx, ambience, ui, voice or a project bus" },
+                "bus": { "type": "string", "description": "master, music, sfx, ambience, ui, voice, reverb or a project bus" },
                 "gain_db": { "type": "number" },
                 "pan": { "type": "number" },
                 "mute": { "type": "boolean" },
                 "solo": { "type": "boolean" },
+                "output": { "type": ["string", "null"], "description": "The bus this one feeds (null: master)" },
+                "effects": { "type": "array", "description": "Replaces the insert chain: [{kind, params: {name: value}, bypass}]", "items": { "type": "object" } },
+                "effect": { "type": "object", "description": "Changes one effect where it is: {slot (0 first), params: {name: value}, bypass}" },
+                "sends": { "type": "array", "description": "Replaces the sends: [{to, level_db, pre_fader}]", "items": { "type": "object" } },
+                "duck": { "type": ["object", "null"], "description": "{key (the bus that ducks this one), depth_db (9), threshold_db (-40), attack_ms (20), release_ms (400)}, or null for none" },
                 "save": { "type": "boolean", "description": "Also write content/audio/mixer.json" }
             }), &["bus"]),
             action: Action::Engine("audio.bus"),
+        },
+        Tool {
+            name: "audio_snapshot",
+            description: "Mixer snapshots: named changes to the mix that a game fades to (a pause menu muffling sfx and music, a slow-motion moment), saved in content/audio/mixer.json. name fades to one in play mode (null fades back to none; scripts call set_audio_snapshot); define adds or replaces one, remove deletes one; save writes the layout. Each snapshot lists buses like an audio_volume: [{bus, gain_db, reverb_db, low_pass_hz}] plus reverb_room_size / reverb_damping. An audio_volume can name a snapshot instead of listing its own buses. audio_status shows the snapshot weights and each audio volume's weight at the listener.",
+            schema: object(json!({
+                "name": { "type": ["string", "null"], "description": "Fade to this snapshot (null: none)" },
+                "fade": { "type": "number", "description": "Seconds (default 0.5)" },
+                "define": { "type": "object", "description": "{name, buses: [{bus, gain_db, reverb_db, low_pass_hz}], reverb_room_size, reverb_damping}" },
+                "remove": { "type": "string" },
+                "save": { "type": "boolean" }
+            }), &[]),
+            action: Action::Engine("audio.snapshot"),
+        },
+        Tool {
+            name: "audio_effect_kinds",
+            description: "The mixer's built-in effects (for audio_bus effects) with each parameter's range, default and unit.",
+            schema: object(json!({}), &[]),
+            action: Action::Engine("audio.effect_kinds"),
         },
         Tool {
             name: "audio_capture",

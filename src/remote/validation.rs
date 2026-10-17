@@ -27,7 +27,8 @@ const WEB_UNSUPPORTED_LUA: &[&str] = &[
 
 /// Extensions of files a script loads by path.
 const ASSET_EXTENSIONS: &[&str] = &[
-    "wav", "ogg", "mp3", "flac", "png", "jpg", "jpeg", "hdr", "json", "lua", "gltf", "glb",
+    "wav", "ogg", "mp3", "flac", "ahx", "hvl", "a2m", "asid", "png", "jpg", "jpeg", "hdr", "json",
+    "lua", "gltf", "glb",
 ];
 
 /// Whether `line` calls `name(` (not a longer identifier, field or method that ends in it).

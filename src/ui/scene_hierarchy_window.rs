@@ -220,6 +220,7 @@ pub struct SceneEntityComponentsSummary {
     pub ai_agent: Option<crate::ai::AiAgent>,
     pub audio_source: Option<crate::audio::AudioSource>,
     pub audio_listener: Option<crate::audio::AudioListener>,
+    pub audio_volume: Option<crate::audio::AudioVolume>,
 }
 
 #[cfg(feature = "egui")]
@@ -397,6 +398,9 @@ impl SceneHierarchySnapshot {
                         .map(|component| (*component).clone()),
                     audio_listener: entity_ref
                         .get::<&crate::audio::AudioListener>()
+                        .map(|component| (*component).clone()),
+                    audio_volume: entity_ref
+                        .get::<&crate::audio::AudioVolume>()
                         .map(|component| (*component).clone()),
                 },
             );

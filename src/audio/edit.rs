@@ -5,11 +5,11 @@
 use hecs::{Entity, World};
 use serde_json::Value;
 
-use super::components::{AudioListener, AudioSource};
+use super::components::{AudioListener, AudioSource, AudioVolume};
 use crate::remote::json::patch_serde;
 
 /// The audio components' field names in saved scenes and the remote API.
-pub const COMPONENT_NAMES: [&str; 2] = ["audio_source", "audio_listener"];
+pub const COMPONENT_NAMES: [&str; 3] = ["audio_source", "audio_listener", "audio_volume"];
 
 /// The snake_case name of an audio component, from that or its type name
 /// (`"AudioSource"`).
@@ -17,6 +17,7 @@ pub fn canonical_name(name: &str) -> Option<&'static str> {
     Some(match name {
         "audio_source" | "AudioSource" => "audio_source",
         "audio_listener" | "AudioListener" => "audio_listener",
+        "audio_volume" | "AudioVolume" => "audio_volume",
         _ => return None,
     })
 }
@@ -30,6 +31,7 @@ pub fn component_json(world: &World, entity: Entity, name: &str) -> Option<Value
     match canonical_name(name)? {
         "audio_source" => get::<AudioSource>(world, entity),
         "audio_listener" => get::<AudioListener>(world, entity),
+        "audio_volume" => get::<AudioVolume>(world, entity),
         _ => None,
     }
 }
@@ -38,6 +40,7 @@ pub fn has_component(world: &World, entity: Entity, name: &str) -> bool {
     match canonical_name(name) {
         Some("audio_source") => world.satisfies::<&AudioSource>(entity),
         Some("audio_listener") => world.satisfies::<&AudioListener>(entity),
+        Some("audio_volume") => world.satisfies::<&AudioVolume>(entity),
         _ => Ok(false),
     }
     .unwrap_or(false)
@@ -77,6 +80,7 @@ pub fn patch_component(
     match canonical_name(name) {
         Some("audio_source") => patch::<AudioSource>(world, entity, value),
         Some("audio_listener") => patch::<AudioListener>(world, entity, value),
+        Some("audio_volume") => patch::<AudioVolume>(world, entity, value),
         _ => Err(format!("{name:?} is not an audio component")),
     }
 }
@@ -87,6 +91,9 @@ pub fn clone_components(world: &World, source: Entity, builder: &mut hecs::Entit
         builder.add((*component).clone());
     }
     if let Ok(component) = world.get::<&AudioListener>(source) {
+        builder.add((*component).clone());
+    }
+    if let Ok(component) = world.get::<&AudioVolume>(source) {
         builder.add((*component).clone());
     }
 }

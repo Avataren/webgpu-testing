@@ -63,7 +63,7 @@ Options and environment:
 | Editing | `entity_spawn`, `entity_update`, `entity_remove_component`, `entity_delete`, `entity_duplicate` |
 | Scripting | `lua_eval`, `script_status`, `script_reload`, `lua_api_reference` |
 | Runtime | `runtime_set` (play/stop, time_scale), `wait`, `playtest` |
-| Audio | `sound_play`, `sound_stop`, `audio_status`, `audio_bus`, `audio_capture` |
+| Audio | `sound_play`, `sound_stop`, `audio_music`, `audio_fade`, `audio_status`, `audio_bus`, `audio_effect_kinds`, `audio_snapshot`, `audio_capture` |
 | Procedural assets | `mesh_lathe`, `mesh_extrude`, `mesh_compose`, `mesh_sweep`, `mesh_heightfield`, `texture_generate`, `texture_maps`, `sound_generate` |
 | Animation | `entity_update {animator, animation_tree}`, `animation_inspect`, `debug_skeleton`, `character_make` (skinned characters; `entity_get` shows `skinned_mesh`, `animator` and the tree's live state) |
 | Asset library | `library_search`, `library_info`, `library_add` (editor), `library_fetch`, `library_ingest`, `mixamo_catalog` (no editor needed) |

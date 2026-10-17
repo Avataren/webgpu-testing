@@ -92,6 +92,7 @@ pub mod icons {
     pub const AI: &str = "🧠";
     pub const AUDIO_SOURCE: &str = "🔊";
     pub const AUDIO_LISTENER: &str = "👂";
+    pub const AUDIO_VOLUME: &str = "🔉";
     pub const SCRIPT: &str = "📜";
     pub const TRANSFORM: &str = "✚";
     pub const MATERIAL: &str = "🎨";

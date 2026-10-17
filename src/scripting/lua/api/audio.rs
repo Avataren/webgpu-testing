@@ -1,20 +1,22 @@
 //! # Audio API
 //!
 //! Sound effects and music for game scripts. Paths are relative to the project (e.g.
-//! `"content/audio/hit.wav"`) or absolute; wav, ogg, mp3 and flac are supported.
-//! Sounds play on the project's mixer buses (`content/audio/mixer.json`): `sfx`
-//! unless they name another, such as `music`, `ambience`, `ui` or `voice`.
+//! `"content/audio/hit.wav"`) or absolute; wav, ogg, mp3 and flac are supported, and
+//! chip-music songs (AHX/HVL, A2M, SID `.asid`) play as they are. Sounds play on the
+//! project's mixer buses (`content/audio/mixer.json`): `sfx` unless they name another,
+//! such as `music`, `ambience`, `ui` or `voice`.
 
 use mlua::{Lua, Result as LuaResult, Table, Value};
 
-use crate::audio::{self, AudioSource, PlayOptions, SpatialOptions};
+use crate::audio::{self, AudioSource, MusicOptions, PlayOptions, SpatialOptions};
 use crate::scene::components::WorldTransform;
 use crate::scripting::lua::guards::{resolve_entity, with_active_world};
 
 /// Registers the audio functions:
 ///
-/// - `play_sound(path[, {volume, pitch, loop, bus, priority, entity, position, spatial,
-///   min_distance, max_distance, rolloff, doppler}])` - start a sound, returns its id.
+/// - `play_sound(path[, {volume, pitch, loop, bus, priority, subsong, stream, entity,
+///   position, spatial, min_distance, max_distance, rolloff, doppler}])` - start a sound,
+///   returns its id. `stream` decodes a long file as it plays (music does by itself).
 ///   With `entity` it plays from that entity and follows it; with `position` it
 ///   plays from there. `spatial` is "auto" (2D under an orthographic camera, else 3D),
 ///   "2d", "3d" or "off"; `rolloff` "inverse" or "linear"; `doppler` scales the pitch
@@ -22,11 +24,21 @@ use crate::scripting::lua::guards::{resolve_entity, with_active_world};
 /// - `move_sound(id, position[, velocity])` - move a positioned sound
 /// - `play_audio_source(entity)` / `stop_audio_source(entity)` - start or stop an
 ///   entity's `AudioSource` (for one that does not play on start)
-/// - `stop_sound(id)` - stop one sound
+/// - `stop_sound(id[, fade])` - stop one sound, fading out over `fade` seconds
+/// - `fade_sound(id, volume, seconds)` - glide a sound's volume
+/// - `play_music(path[, {volume, bus, crossfade, loop, subsong}])` - play a track on the
+///   `music` bus, looping, crossfading from the one before over `crossfade` seconds
+///   (default 1); returns its id
+/// - `stop_music([fade])` - fade the music out (default 1 second)
 /// - `stop_all_sounds()` - stop everything
 /// - `set_master_volume(volume)` - gain applied to every sound
 /// - `set_bus_volume(bus, db)` - a bus's fader in dB (0 = unchanged, -80 = silent)
 /// - `set_bus_muted(bus, muted)` - mute or unmute a bus
+/// - `set_audio_snapshot(name[, fade])` - fade the mix to one of the project's
+///   snapshots over `fade` seconds (default 0.5); `nil` fades back to none
+/// - `set_bus_effect(bus, index, {param = value, ..., bypass})` - change a bus effect's
+///   parameters (`index` 1 is the first effect), e.g. `set_bus_effect("music", 1,
+///   {cutoff_hz = 600})` for a low-pass
 ///
 /// Bus changes from scripts last until the project reopens; the editor's mixer
 /// window saves the layout.
@@ -54,6 +66,12 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
                 }
                 if let Some(priority) = options.get::<Option<u8>>("priority")? {
                     play.priority = priority;
+                }
+                if let Some(subsong) = options.get::<Option<usize>>("subsong")? {
+                    play.subsong = subsong;
+                }
+                if let Some(stream) = options.get::<Option<bool>>("stream")? {
+                    play.stream = stream;
                 }
                 let entity =
                     match options.get::<Option<i64>>("entity")? {
@@ -134,7 +152,87 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
 
     globals.set(
         "stop_sound",
-        lua.create_function(|_, id: u64| Ok(audio::stop(id)))?,
+        lua.create_function(|_, (id, fade): (u64, Option<f32>)| {
+            Ok(match fade {
+                Some(seconds) => audio::stop_after(id, seconds),
+                None => audio::stop(id),
+            })
+        })?,
+    )?;
+
+    globals.set(
+        "fade_sound",
+        lua.create_function(|_, (id, volume, seconds): (u64, f32, f32)| {
+            Ok(audio::fade(id, volume, seconds))
+        })?,
+    )?;
+
+    globals.set(
+        "play_music",
+        lua.create_function(|_, (path, options): (String, Option<Table>)| {
+            let mut music = MusicOptions::default();
+            if let Some(options) = options {
+                if let Some(volume) = options.get::<Option<f32>>("volume")? {
+                    music.volume = volume.max(0.0);
+                }
+                music.bus = options.get::<Option<String>>("bus")?;
+                if let Some(crossfade) = options.get::<Option<f32>>("crossfade")? {
+                    music.crossfade = crossfade.max(0.0);
+                }
+                if let Some(looped) = options.get::<Option<bool>>("loop")? {
+                    music.looped = looped;
+                }
+                if let Some(subsong) = options.get::<Option<usize>>("subsong")? {
+                    music.subsong = subsong;
+                }
+            }
+            audio::play_music(&path, music).map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    globals.set(
+        "stop_music",
+        lua.create_function(|_, fade: Option<f32>| Ok(audio::stop_music(fade.unwrap_or(1.0))))?,
+    )?;
+
+    globals.set(
+        "set_audio_snapshot",
+        lua.create_function(|_, (name, fade): (Option<String>, Option<f32>)| {
+            audio::set_snapshot(name.as_deref(), fade.unwrap_or(0.5))
+                .map_err(mlua::Error::RuntimeError)
+        })?,
+    )?;
+
+    globals.set(
+        "set_bus_effect",
+        lua.create_function(|_, (bus, index, changes): (String, usize, Table)| {
+            let mut problem = None;
+            audio::update_bus(&bus, |b| {
+                let Some(effect) = index.checked_sub(1).and_then(|i| b.effects.get_mut(i)) else {
+                    problem = Some(format!("bus {bus} has no effect {index}"));
+                    return;
+                };
+                let kind = cubed_mixer::EffectKind::from_name(&effect.kind);
+                for pair in changes.pairs::<String, Value>() {
+                    let Ok((name, value)) = pair else { continue };
+                    match (name.as_str(), value) {
+                        ("bypass", Value::Boolean(on)) => effect.bypass = on,
+                        (name, Value::Number(v)) => {
+                            set_param(effect, kind, name, v as f32, &mut problem)
+                        }
+                        (name, Value::Integer(v)) => {
+                            set_param(effect, kind, name, v as f32, &mut problem)
+                        }
+                        (name, _) => problem = Some(format!("{name} must be a number")),
+                    }
+                }
+            })
+            .map_err(mlua::Error::RuntimeError)?;
+            match problem {
+                Some(problem) => Err(mlua::Error::RuntimeError(problem)),
+                None => Ok(()),
+            }
+        })?,
     )?;
 
     globals.set(
@@ -169,6 +267,25 @@ pub(crate) fn register_audio_api(lua: &Lua) -> LuaResult<()> {
     )?;
 
     Ok(())
+}
+
+/// Sets a parameter of a bus effect by name (clamped to its range).
+fn set_param(
+    effect: &mut audio::EffectLayout,
+    kind: Option<cubed_mixer::EffectKind>,
+    name: &str,
+    value: f32,
+    problem: &mut Option<String>,
+) {
+    let info = kind.and_then(|k| k.params().iter().find(|p| p.name == name));
+    match info {
+        Some(info) => {
+            effect
+                .params
+                .insert(name.to_string(), value.clamp(info.min, info.max));
+        }
+        None => *problem = Some(format!("{} has no parameter {name}", effect.kind)),
+    }
 }
 
 /// An entity's position in the world.

@@ -1,9 +1,15 @@
 //! Sound playback for games, through a mixer of named buses.
 //!
-//! Scripts call `play_sound` (see the Lua guide); remote clients use `audio.play`.
-//! Every sound plays on a bus: `sfx` unless it names another. A project's buses
-//! (master, music, sfx, ambience, ui, voice by default) and their faders live in
-//! `content/audio/mixer.json`, edited in the editor's mixer window.
+//! Scripts call `play_sound` and `play_music` (see the Lua guide); remote clients use
+//! `audio.play` and `audio.music`. Every sound plays on a bus: `sfx` unless it names
+//! another (music: `music`). A project's buses (master, music, sfx, ambience, ui,
+//! voice and a reverb return by default), their faders, effects, sends and ducking
+//! live in `content/audio/mixer.json`, edited in the editor's mixer window.
+//! `AudioVolume`s change the mix around the listener in play mode (a cave's reverb).
+//!
+//! Besides sound files (wav, ogg, mp3, flac), chip-music songs play as they are:
+//! AHX and HivelyTracker (`.ahx`, `.hvl`), Adlib Tracker II (`.a2m`) and
+//! cubed-synth's SID songs (`.asid`), each through its emulated chip.
 //!
 //! The output device is opened on the first sound, so applications that never play
 //! anything never touch the audio system. Decoded files are cached by path. Every
@@ -35,8 +41,13 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-pub use components::{AudioListener, AudioSource, RolloffSetting, SpatialSetting};
-pub use layout::{BusLayout, MixerLayout, SpatialLayout, DEFAULT_BUS, LAYOUT_FILE, MASTER};
+pub use components::{
+    AudioListener, AudioSource, AudioVolume, AudioVolumeBus, RolloffSetting, SpatialSetting,
+};
+pub use layout::{
+    BusLayout, DuckLayout, EffectLayout, MixerLayout, SendLayout, SnapshotLayout, SpatialLayout,
+    DEFAULT_BUS, LAYOUT_FILE, MASTER, MAX_EFFECTS, MAX_SENDS, MUSIC_BUS, REVERB_BUS,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use native::decode_pcm;
@@ -63,6 +74,13 @@ pub struct PlayOptions {
     pub priority: u8,
     /// Where it plays from; `None` plays it as it is.
     pub spatial: Option<SpatialOptions>,
+    /// For a song file with several songs (AHX, SID): which one; 0 is the
+    /// main song.
+    pub subsong: usize,
+    /// Decode the file a little ahead while it plays instead of all at once
+    /// (long music; natively, where a decoded track would take tens of MB).
+    /// It cannot change pitch.
+    pub stream: bool,
 }
 
 /// Where a sound plays from, and how it fades with distance.
@@ -114,6 +132,8 @@ impl PlayOptions {
                 rolloff: source.rolloff,
                 doppler: source.doppler,
             }),
+            subsong: 0,
+            stream: false,
         }
     }
 }
@@ -127,6 +147,35 @@ impl Default for PlayOptions {
             bus: None,
             priority: 128,
             spatial: None,
+            subsong: 0,
+            stream: false,
+        }
+    }
+}
+
+/// How [`play_music`] starts a track.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MusicOptions {
+    /// Linear gain; 1 is the file's own level.
+    pub volume: f32,
+    /// The bus to play on; `None` is [`MUSIC_BUS`] (or sfx without one).
+    pub bus: Option<String>,
+    /// Seconds over which the track playing now fades out as this one fades
+    /// in; 0 cuts.
+    pub crossfade: f32,
+    pub looped: bool,
+    /// For song files with several songs: which one.
+    pub subsong: usize,
+}
+
+impl Default for MusicOptions {
+    fn default() -> Self {
+        Self {
+            volume: 1.0,
+            bus: None,
+            crossfade: 1.0,
+            looped: true,
+            subsong: 0,
         }
     }
 }
@@ -154,6 +203,8 @@ struct Audio {
     listener_planar: bool,
     /// Play mode's listener, sources and entity-attached sounds.
     scene: scene::SceneAudio,
+    /// The music track playing (or fading in), and its file.
+    music: Option<(u64, PathBuf)>,
 }
 
 impl Audio {
@@ -167,6 +218,7 @@ impl Audio {
             layout_root: None,
             listener_planar: false,
             scene: scene::SceneAudio::default(),
+            music: None,
         }
     }
 
@@ -361,6 +413,72 @@ pub fn stop(id: u64) -> bool {
     with_audio(|audio| audio.output.stop(id))
 }
 
+/// Fades a sound out over `seconds`, then stops it. Returns whether it was playing.
+pub fn stop_after(id: u64, seconds: f32) -> bool {
+    with_audio(|audio| audio.output.stop_after(id, seconds))
+}
+
+/// Glides a playing sound's volume (linear) to `volume` over `seconds`.
+/// Returns whether it was playing.
+pub fn fade(id: u64, volume: f32, seconds: f32) -> bool {
+    with_audio(|audio| audio.output.fade(id, volume, seconds))
+}
+
+/// Plays a music track: a sound file or a song, looping unless told not to,
+/// on the music bus. The track playing before fades out as this one fades in
+/// over `crossfade` seconds. Returns the track's sound id.
+pub fn play_music(path: &str, options: MusicOptions) -> Result<u64, String> {
+    let path = resolve_path(path)?;
+    with_audio(|audio| audio.play_music(path, options))
+}
+
+/// Fades the music out over `seconds` and stops it. Returns whether any was playing.
+pub fn stop_music(seconds: f32) -> bool {
+    with_audio(|audio| match audio.music.take() {
+        Some((id, _)) => audio.output.stop_after(id, seconds),
+        None => false,
+    })
+}
+
+/// The music track playing: its sound id and file.
+pub fn music() -> Option<(u64, PathBuf)> {
+    with_audio(|audio| {
+        let (id, path) = audio.music.clone()?;
+        audio.output.is_playing(id).then_some((id, path))
+    })
+}
+
+impl Audio {
+    fn play_music(&mut self, path: PathBuf, options: MusicOptions) -> Result<u64, String> {
+        let crossfade = options.crossfade.max(0.0);
+        let bus = options.bus.clone().or_else(|| {
+            self.output
+                .layout()
+                .bus(MUSIC_BUS)
+                .map(|_| MUSIC_BUS.to_string())
+        });
+        let play = PlayOptions {
+            // Fading in from silence.
+            volume: if crossfade > 0.0 { 0.0 } else { options.volume },
+            looped: options.looped,
+            bus,
+            priority: 255,
+            subsong: options.subsong,
+            stream: true,
+            ..PlayOptions::default()
+        };
+        let id = self.play(path.clone(), play)?;
+        if crossfade > 0.0 {
+            self.output.fade(id, options.volume.max(0.0), crossfade);
+        }
+        if let Some((old, _)) = self.music.replace((id, path)) {
+            self.output.stop_after(old, crossfade);
+        }
+        self.output.flush();
+        Ok(id)
+    }
+}
+
 /// Stop every sound, e.g. when play mode ends.
 pub fn stop_all() {
     // Nothing to stop if audio was never used; don't open a device just for this.
@@ -368,6 +486,8 @@ pub fn stop_all() {
         if let Some(audio) = cell.borrow_mut().as_mut() {
             audio.output.stop_all();
             audio.scene.clear();
+            audio.music = None;
+            audio.output.set_ambience(mix::Ambience::default());
         }
     });
 }
@@ -471,6 +591,44 @@ pub fn update_bus(name: &str, change: impl FnOnce(&mut BusLayout)) -> Result<(),
     with_audio(|audio| audio.output.update_bus(name, change))
 }
 
+/// Fades the mix to the project's snapshot `name` over `seconds` (`None`: back
+/// to no snapshot), in play mode. Fails for a snapshot the project does not
+/// have.
+pub fn set_snapshot(name: Option<&str>, seconds: f32) -> Result<(), String> {
+    with_audio(|audio| {
+        if let Some(name) = name {
+            if audio.output.layout().snapshot(name).is_none() {
+                let names: Vec<_> = audio
+                    .output
+                    .layout()
+                    .snapshots
+                    .iter()
+                    .map(|s| s.name.clone())
+                    .collect();
+                return Err(format!(
+                    "no audio snapshot named \"{name}\" (the project has {names:?})"
+                ));
+            }
+        }
+        audio.scene.set_snapshot(name, seconds.max(0.0));
+        Ok(())
+    })
+}
+
+/// The snapshot the mix is fading to or holding.
+pub fn snapshot() -> Option<String> {
+    AUDIO.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|audio| audio.scene.snapshot().map(str::to_string))
+    })
+}
+
+/// Changes the project's snapshots ([`save_layout`] keeps them).
+pub fn update_snapshots<R>(change: impl FnOnce(&mut Vec<SnapshotLayout>) -> R) -> R {
+    with_audio(|audio| change(audio.output.snapshots_mut()))
+}
+
 /// Writes the mix's buses to the open project's `content/audio/mixer.json`.
 pub fn save_layout() -> Result<PathBuf, String> {
     let root = crate::project::active_project_root().ok_or("no project is open")?;
@@ -489,6 +647,9 @@ pub fn status() -> Value {
                 "pan": bus.layout.pan,
                 "mute": bus.layout.mute,
                 "solo": bus.layout.solo,
+                "effects": bus.layout.effects,
+                "sends": bus.layout.sends,
+                "duck": bus.layout.duck,
                 "peak_db": bus.peak.map(|p| [to_db(p[0]), to_db(p[1])]),
                 "rms_db": bus.rms.map(|r| [to_db(r[0]), to_db(r[1])]),
             })
@@ -498,6 +659,28 @@ pub fn status() -> Value {
         let mut status = audio.output.status_json();
         status["buses"] = Value::from(buses);
         status["master_volume"] = json!(audio.master_volume);
+        status["snapshots"] = json!(audio
+            .output
+            .layout()
+            .snapshots
+            .iter()
+            .map(|s| s.name.clone())
+            .collect::<Vec<_>>());
+        status["snapshot_weights"] = json!(audio
+            .scene
+            .snapshot_weights()
+            .into_iter()
+            .map(|(name, weight)| json!({ "name": name, "weight": (weight * 1000.0).round() / 1000.0 }))
+            .collect::<Vec<_>>());
+        status["volumes"] = json!(audio
+            .scene
+            .volume_weights
+            .iter()
+            .map(|(entity, weight)| json!({
+                "entity": entity.to_bits().get(),
+                "weight": (weight * 1000.0).round() / 1000.0,
+            }))
+            .collect::<Vec<_>>());
         status
     })
 }

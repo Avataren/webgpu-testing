@@ -1,8 +1,11 @@
-//! Inspector sections for sound: an entity's `AudioSource` and `AudioListener`.
+//! Inspector sections for sound: an entity's `AudioSource`, `AudioListener`
+//! and `AudioVolume`.
 
-use egui::{ComboBox, Grid};
+use egui::{ComboBox, DragValue, Grid};
 use hecs::Entity;
-use wgpu_cube::audio::{AudioListener, AudioSource, RolloffSetting, SpatialSetting};
+use wgpu_cube::audio::{AudioListener, AudioSource, AudioVolume, RolloffSetting, SpatialSetting};
+use wgpu_cube::scene::VolumeShape;
+use wgpu_cube::ui::audio_changes as changes;
 use wgpu_cube::SceneEntityComponentsSummary;
 
 use super::{float_drag_value, InspectorAction};
@@ -115,7 +118,7 @@ fn source_section(
                 changed |= ui
                     .text_edit_singleline(&mut edited.clip)
                     .on_hover_text(
-                        "A wav, ogg, mp3 or flac file in the project, e.g. content/audio/hum.wav",
+                        "A wav, ogg, mp3 or flac file in the project, e.g. content/audio/hum.wav, or a chip-music song (.ahx, .hvl, .a2m, .asid)",
                     )
                     .lost_focus();
                 ui.end_row();
@@ -259,6 +262,157 @@ fn listener_section(
     })
 }
 
+/// The project's bus names, for pickers.
+fn bus_names() -> Vec<String> {
+    wgpu_cube::audio::buses()
+        .into_iter()
+        .map(|b| b.layout.name)
+        .collect()
+}
+
+fn distance(value: &mut f32) -> DragValue<'_> {
+    DragValue::new(value)
+        .speed(0.05)
+        .range(0.0..=100_000.0)
+        .max_decimals(2)
+}
+
+fn volume_section(
+    ui: &mut egui::Ui,
+    entity: Entity,
+    volume: &AudioVolume,
+    actions: &mut Vec<InspectorAction>,
+) -> egui::Response {
+    theme::section(ui, icons::AUDIO_VOLUME, "Audio Volume", |ui| {
+        let mut edited = volume.clone();
+        let mut changed = false;
+        let buses = bus_names();
+        let snapshots: Vec<String> = wgpu_cube::audio::update_snapshots(|list| {
+            list.iter().map(|s| s.name.clone()).collect()
+        });
+        Grid::new(("audio_volume_grid", entity))
+            .num_columns(2)
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label("Enabled");
+                changed |= ui.checkbox(&mut edited.enabled, "").changed();
+                ui.end_row();
+                ui.label("Extent");
+                let current = edited.shape;
+                ComboBox::from_id_salt(("audio_volume_shape", entity))
+                    .selected_text(current.label())
+                    .show_ui(ui, |ui| {
+                        for option in [
+                            VolumeShape::Infinite,
+                            VolumeShape::Box {
+                                size: [10.0, 4.0, 10.0],
+                            },
+                            VolumeShape::Sphere { radius: 5.0 },
+                        ] {
+                            let selected =
+                                std::mem::discriminant(&current) == std::mem::discriminant(&option);
+                            if ui.selectable_label(selected, option.label()).clicked() && !selected
+                            {
+                                edited.shape = option;
+                                changed = true;
+                            }
+                        }
+                    });
+                ui.end_row();
+                match &mut edited.shape {
+                    VolumeShape::Infinite => {}
+                    VolumeShape::Box { size } => {
+                        ui.label("Size");
+                        ui.horizontal(|ui| {
+                            for value in size.iter_mut() {
+                                changed |= ui.add(distance(value)).changed();
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    VolumeShape::Sphere { radius } => {
+                        ui.label("Radius");
+                        changed |= ui.add(distance(radius)).changed();
+                        ui.end_row();
+                    }
+                }
+                if !edited.shape.is_infinite() {
+                    ui.label("Blend distance");
+                    changed |= ui
+                        .add(distance(&mut edited.blend_distance).suffix(" m"))
+                        .on_hover_text("How far outside the shape it fades out")
+                        .changed();
+                    ui.end_row();
+                }
+                ui.label("Priority");
+                changed |= ui
+                    .add(DragValue::new(&mut edited.priority).speed(0.1))
+                    .on_hover_text("Higher-priority volumes blend over lower ones")
+                    .changed();
+                ui.end_row();
+                ui.label("Reverb bus");
+                changed |= changes::bus_combo(
+                    ui,
+                    ("audio_volume_reverb_bus", entity),
+                    &mut edited.reverb_bus,
+                    &buses,
+                );
+                ui.end_row();
+                ui.label("Snapshot");
+                let none = "None (the buses below)";
+                ComboBox::from_id_salt(("audio_volume_snapshot", entity))
+                    .selected_text(edited.snapshot.clone().unwrap_or_else(|| none.into()))
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(edited.snapshot.is_none(), none).clicked()
+                            && edited.snapshot.is_some()
+                        {
+                            edited.snapshot = None;
+                            changed = true;
+                        }
+                        for name in &snapshots {
+                            let on = edited.snapshot.as_ref() == Some(name);
+                            if ui.selectable_label(on, name).clicked() && !on {
+                                edited.snapshot = Some(name.clone());
+                                changed = true;
+                            }
+                        }
+                    })
+                    .response
+                    .on_hover_text("Sound like one of the mixer's snapshots instead of listing buses here (edit them in Window > Mixer)");
+                ui.end_row();
+                if edited.snapshot.is_none() {
+                    changed |= changes::reverb_rows(
+                        ui,
+                        &mut edited.reverb_room_size,
+                        &mut edited.reverb_damping,
+                    )
+                    .changed;
+                }
+            });
+
+        if edited.snapshot.is_none() {
+            ui.label(egui::RichText::new("Buses").small().strong());
+            let reverb = edited.reverb_bus.clone();
+            changed |= changes::bus_changes(
+                ui,
+                ("audio_volume", entity),
+                &mut edited.buses,
+                &buses,
+                &reverb,
+            )
+            .changed;
+        }
+        ui.label(
+            egui::RichText::new("While the listener is inside (in play mode): buses send to the reverb, are muffled or turned down. Buses not listed are left alone.")
+                .small()
+                .weak(),
+        );
+        if changed {
+            set(actions, entity, "audio_volume", &edited);
+        }
+    })
+}
+
 pub(super) fn show_audio_sections(
     ui: &mut egui::Ui,
     entity: Entity,
@@ -272,6 +426,10 @@ pub(super) fn show_audio_sections(
     if let Some(listener) = &components.audio_listener {
         let header = listener_section(ui, entity, listener, actions);
         removable(&header, entity, "audio_listener", "Audio Listener", actions);
+    }
+    if let Some(volume) = &components.audio_volume {
+        let header = volume_section(ui, entity, volume, actions);
+        removable(&header, entity, "audio_volume", "Audio Volume", actions);
     }
 }
 
@@ -306,6 +464,13 @@ pub(super) fn add_audio_menu(
             "Audio Listener",
             "audio_listener",
             serde_json::to_value(AudioListener::default()).unwrap_or_default(),
+        );
+        add(
+            ui,
+            components.audio_volume.is_none(),
+            "Audio Volume",
+            "audio_volume",
+            serde_json::to_value(AudioVolume::default()).unwrap_or_default(),
         );
     });
 }

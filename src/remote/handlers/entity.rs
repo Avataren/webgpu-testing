@@ -65,6 +65,7 @@ pub(super) const COMPONENT_NAMES: &[&str] = &[
     "nav_link",
     "audio_source",
     "audio_listener",
+    "audio_volume",
     "ai_agent",
     "animation_tree",
     "billboard",
@@ -104,7 +105,9 @@ pub(super) fn has_component(world: &World, entity: Entity, name: &str) -> bool {
             crate::navigation::edit::has_component(world, entity, name)
         }
         "ai_agent" => crate::ai::edit::has_component(world, entity),
-        "audio_source" | "audio_listener" => crate::audio::edit::has_component(world, entity, name),
+        "audio_source" | "audio_listener" | "audio_volume" => {
+            crate::audio::edit::has_component(world, entity, name)
+        }
         "animation_tree" => has::<AnimationTree>(world, entity),
         "billboard" => has::<Billboard>(world, entity),
         "depth_state" => has::<DepthState>(world, entity),
@@ -1074,7 +1077,7 @@ pub(super) fn apply_patch(
             "ai_agent" => {
                 crate::ai::edit::patch_component(ctx.gpu.scene.main_world_mut(), entity, value)?
             }
-            "audio_source" | "audio_listener" => crate::audio::edit::patch_component(
+            "audio_source" | "audio_listener" | "audio_volume" => crate::audio::edit::patch_component(
                 ctx.gpu.scene.main_world_mut(),
                 entity,
                 key,
@@ -1986,7 +1989,7 @@ pub(super) fn remove_component(params: &Value, ctx: &mut RemoteContext<'_, '_>) 
         #[cfg(not(feature = "navigation"))]
         "nav_mesh_surface" | "nav_agent" | "nav_obstacle" | "nav_modifier" | "nav_link" => {}
         "ai_agent" => remove::<crate::ai::AiAgent>(world, entity),
-        "audio_source" | "audio_listener" => {
+        "audio_source" | "audio_listener" | "audio_volume" => {
             let _ = crate::audio::edit::patch_component(world, entity, component, &Value::Null);
         }
         "animation_tree" => remove::<AnimationTree>(world, entity),

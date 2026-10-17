@@ -74,7 +74,7 @@ impl AssetKind {
             "json" if in_scenes_folder || name == "scene.json" => Self::Scene,
             "png" | "jpg" | "jpeg" | "tga" | "bmp" | "hdr" | "exr" | "ktx2" => Self::Image,
             "gltf" | "glb" | "fbx" | "blend" | "obj" => Self::Model,
-            "wav" | "ogg" | "mp3" | "flac" => Self::Audio,
+            "wav" | "ogg" | "mp3" | "flac" | "ahx" | "hvl" | "a2m" | "asid" => Self::Audio,
             "json" | "txt" | "md" | "toml" | "ron" | "yaml" | "yml" | "csv" => Self::Text,
             _ => Self::Other,
         }
