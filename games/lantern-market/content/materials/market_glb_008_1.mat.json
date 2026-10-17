@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    158,
+    26,
+    18,
+    255
+  ],
+  "flags": 71,
+  "base_color_texture": {
+    "path": "content/textures/cloth_base_color.png",
+    "name": "cloth_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/cloth_orm.png",
+    "name": "cloth_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/cloth_normal.png",
+    "name": "cloth_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

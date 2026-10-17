@@ -1,0 +1,26 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#1a2e0f",
+      "#5f8a35"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "foliage",
+    "normal_strength": 0.06,
+    "pattern": "voronoi",
+    "roughness": 0.85,
+    "scale": 16,
+    "seed": 7,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,1689 @@
+{
+  "name": "market (glTF)",
+  "root_transform": {
+    "translation": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "scale": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "entities": [
+    {
+      "name": "Foliage",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 0,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -24.385628,
+          2.2985368,
+          -11.070068
+        ],
+        "max": [
+          23.093824,
+          6.1014633,
+          12.092661
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material5",
+      "parent": null,
+      "children": [],
+      "gltf_node": 2,
+      "gltf_material": 5,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Gate",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          12.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 1,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -2.45,
+          -0.18,
+          -0.06
+        ],
+        "max": [
+          2.45,
+          2.7,
+          0.06
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material2",
+      "parent": null,
+      "children": [],
+      "gltf_node": 3,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Bark",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 2,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -22.7,
+          0.55,
+          -9.190211
+        ],
+        "max": [
+          21.2,
+          3.35,
+          10.190211
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material7",
+      "parent": null,
+      "children": [],
+      "gltf_node": 5,
+      "gltf_material": 7,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_ClothGold",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 3,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -8.623348,
+          2.253471,
+          3.8
+        ],
+        "max": [
+          6.2,
+          2.846529,
+          10.123348
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material0",
+      "parent": null,
+      "children": [],
+      "gltf_node": 6,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_ClothRed",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 4,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -20.05,
+          2.253471,
+          -7.7
+        ],
+        "max": [
+          8.623348,
+          3.5,
+          7.2
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material8",
+      "parent": null,
+      "children": [],
+      "gltf_node": 7,
+      "gltf_material": 8,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_ClothTeal",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 5,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -6.2,
+          2.253471,
+          -7.7
+        ],
+        "max": [
+          8.623348,
+          2.846529,
+          10.123348
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material9",
+      "parent": null,
+      "children": [],
+      "gltf_node": 8,
+      "gltf_material": 9,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Cobble",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 6,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -28.0,
+          0.0,
+          -20.0
+        ],
+        "max": [
+          28.0,
+          3.8,
+          25.0
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material10",
+      "parent": null,
+      "children": [],
+      "gltf_node": 9,
+      "gltf_material": 10,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Fruit",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 7,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -7.082939,
+          1.2187783,
+          -7.3656054
+        ],
+        "max": [
+          7.0746446,
+          1.4412217,
+          8.584319
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material1",
+      "parent": null,
+      "children": [],
+      "gltf_node": 10,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Iron",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 8,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -24.03,
+          -2.3,
+          -13.62
+        ],
+        "max": [
+          24.03,
+          3.4,
+          23.914127
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material2",
+      "parent": null,
+      "children": [],
+      "gltf_node": 11,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Plaster",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 9,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -35.0,
+          0.0,
+          -27.0
+        ],
+        "max": [
+          35.0,
+          14.4,
+          31.0
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material11",
+      "parent": null,
+      "children": [],
+      "gltf_node": 12,
+      "gltf_material": 11,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_PlasterBlue",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 10,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -35.0,
+          0.0,
+          -27.0
+        ],
+        "max": [
+          35.0,
+          14.9,
+          31.0
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material12",
+      "parent": null,
+      "children": [],
+      "gltf_node": 13,
+      "gltf_material": 12,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_PlasterRose",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 11,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -35.0,
+          0.0,
+          -27.0
+        ],
+        "max": [
+          35.0,
+          13.9,
+          31.0
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material13",
+      "parent": null,
+      "children": [],
+      "gltf_node": 14,
+      "gltf_material": 13,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Stone",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 12,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -28.0,
+          -3.6,
+          -20.0
+        ],
+        "max": [
+          28.0,
+          6.3,
+          25.0
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material14",
+      "parent": null,
+      "children": [],
+      "gltf_node": 15,
+      "gltf_material": 14,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Timber",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 13,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -28.14,
+          -1.4,
+          -27.14
+        ],
+        "max": [
+          28.14,
+          11.5,
+          31.14
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material3",
+      "parent": null,
+      "children": [],
+      "gltf_node": 16,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_WindowGlow",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 14,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -28.0,
+          1.3,
+          -26.025
+        ],
+        "max": [
+          28.0,
+          8.5,
+          30.2
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material15",
+      "parent": null,
+      "children": [],
+      "gltf_node": 17,
+      "gltf_material": 15,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Market_Wood",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 15,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -26.65,
+          -0.25,
+          -15.25
+        ],
+        "max": [
+          27.38,
+          1.25,
+          19.5
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material4",
+      "parent": null,
+      "children": [],
+      "gltf_node": 18,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Roofs",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 16,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -35.4,
+          6.12,
+          -27.4
+        ],
+        "max": [
+          35.4,
+          14.95,
+          31.4
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material16",
+      "parent": null,
+      "children": [],
+      "gltf_node": 19,
+      "gltf_material": 16,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Water",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 17,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -28.0,
+          -2.7,
+          -2.95
+        ],
+        "max": [
+          28.0,
+          1.78,
+          17.5
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material17",
+      "parent": null,
+      "children": [],
+      "gltf_node": 20,
+      "gltf_material": 17,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartA_Primitive_1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 18,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.40392303,
+          0.5402364,
+          0.49807087
+        ],
+        "max": [
+          0.4039362,
+          0.7597636,
+          0.70192915
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material1",
+      "parent": 27,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 1,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartA_Primitive_2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 19,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.72,
+          0.3,
+          0.02
+        ],
+        "max": [
+          0.72,
+          0.46,
+          0.18
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material2",
+      "parent": 27,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 2,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartA_Primitive_3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 20,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.7,
+          0.0,
+          -1.8952581
+        ],
+        "max": [
+          0.7,
+          0.8485866,
+          0.4704726
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material3",
+      "parent": 27,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 3,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartA_Primitive_4",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 21,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.6,
+          0.0,
+          -0.9
+        ],
+        "max": [
+          0.6,
+          0.95,
+          0.9
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material4",
+      "parent": 27,
+      "children": [],
+      "gltf_node": 0,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 4,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartB_Primitive_1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 18,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.40392303,
+          0.5402364,
+          0.49807087
+        ],
+        "max": [
+          0.4039362,
+          0.7597636,
+          0.70192915
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material1",
+      "parent": 28,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 1,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 1,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartB_Primitive_2",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 19,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.72,
+          0.3,
+          0.02
+        ],
+        "max": [
+          0.72,
+          0.46,
+          0.18
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material2",
+      "parent": 28,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 2,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartB_Primitive_3",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 20,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.7,
+          0.0,
+          -1.8952581
+        ],
+        "max": [
+          0.7,
+          0.8485866,
+          0.4704726
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material3",
+      "parent": 28,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 3,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 3,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartB_Primitive_4",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 21,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.6,
+          0.0,
+          -0.9
+        ],
+        "max": [
+          0.6,
+          0.95,
+          0.9
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material4",
+      "parent": 28,
+      "children": [],
+      "gltf_node": 1,
+      "gltf_material": 4,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 4,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Lanterns_Primitive_1",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 22,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -22.16,
+          2.45,
+          -13.76
+        ],
+        "max": [
+          22.16,
+          3.75,
+          23.98
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material6",
+      "parent": 29,
+      "children": [],
+      "gltf_node": 4,
+      "gltf_material": 6,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 1,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartA",
+      "transform": {
+        "translation": [
+          -5.0,
+          0.0,
+          -10.5
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 23,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.55701977,
+          0.514026,
+          -0.6312109
+        ],
+        "max": [
+          0.539623,
+          1.018599,
+          0.5891666
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material0",
+      "parent": null,
+      "children": [
+        18,
+        19,
+        20,
+        21
+      ],
+      "gltf_node": 0,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "CartB",
+      "transform": {
+        "translation": [
+          12.0,
+          0.0,
+          1.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 23,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -0.55701977,
+          0.514026,
+          -0.6312109
+        ],
+        "max": [
+          0.539623,
+          1.018599,
+          0.5891666
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material0",
+      "parent": null,
+      "children": [
+        22,
+        23,
+        24,
+        25
+      ],
+      "gltf_node": 1,
+      "gltf_material": 0,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    },
+    {
+      "name": "Lanterns",
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "visible": true,
+      "mesh_handle": 24,
+      "primitive_mesh": null,
+      "mesh_bounds": {
+        "min": [
+          -22.2,
+          2.4,
+          -13.8
+        ],
+        "max": [
+          22.2,
+          4.05,
+          24.1
+        ]
+      },
+      "material": "/home/avataren/src/rust/webgpu-testing/games/lantern-market/content/models/market.glb#material2",
+      "parent": null,
+      "children": [
+        26
+      ],
+      "gltf_node": 4,
+      "gltf_material": 2,
+      "gltf_source": "content/gltf/market/market.glb.import",
+      "gltf_primitive": 0,
+      "script": null,
+      "directional_light": null,
+      "point_light": null,
+      "spot_light": null,
+      "casts_shadow": null,
+      "billboard": null,
+      "editor_id": null,
+      "particle_system": null,
+      "particle_emitter": null,
+      "particle_behavior": null,
+      "environment": null,
+      "camera": null
+    }
+  ],
+  "animations": [],
+  "animation_states": [],
+  "mesh_data": [],
+  "active_camera": null
+}

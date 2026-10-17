@@ -1,0 +1,27 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#6e655a",
+      "#c2b49f"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "mortar": 0.035,
+    "name": "stone_blocks",
+    "normal_strength": 0.07,
+    "pattern": "bricks",
+    "roughness": 0.82,
+    "scale": 4,
+    "seed": 5,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

@@ -1,0 +1,5 @@
+# Copied from the asset library by tools/fetch_cast.py. Mixamo files must never be
+# committed (its licence forbids redistributing them).
+content/characters/
+content/animations/
+content/scripts/cast_data.lua

@@ -1,0 +1,27 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#1c1b1d",
+      "#3a3836"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "metallic": 0.85,
+    "name": "iron",
+    "normal_strength": 0.02,
+    "pattern": "noise",
+    "roughness": 0.5,
+    "scale": 12,
+    "seed": 4,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

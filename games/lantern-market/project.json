@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "metadata": {
+    "name": "lantern-market",
+    "description": ""
+  },
+  "scenes": [
+    {
+      "id": "9FKKrEIPvZz8",
+      "name": "lantern-market",
+      "relative_path": "content/scenes/9FKKrEIPvZz8.json",
+      "dependencies": {
+        "prefab_instances": []
+      }
+    }
+  ],
+  "environment": {
+    "clear_color": [
+      0.23100000619888306,
+      0.26899999380111694,
+      0.33799999952316284,
+      1.0
+    ],
+    "ambient_intensity": 0.25,
+    "hdr": {
+      "enabled": true,
+      "image_path": "content/environment/qwantani_dusk_2_puresky.hdr",
+      "intensity": 1.0,
+      "background": true
+    }
+  },
+  "engine_camera": {
+    "eye": [
+      20.0,
+      9.0,
+      20.0
+    ],
+    "target": [
+      19.319586,
+      8.727835,
+      19.319586
+    ],
+    "up": [
+      -0.1924501,
+      0.9622505,
+      -0.19245006
+    ],
+    "projection": {
+      "kind": "perspective",
+      "fov_y_radians": 0.9599311,
+      "near": 0.1,
+      "far": 400.0
+    }
+  },
+  "imports": [
+    {
+      "package": "content/gltf/market",
+      "metadata": [
+        "content/gltf/market/meshes/mesh_0000.json",
+        "content/gltf/market/meshes/mesh_0001.json",
+        "content/gltf/market/meshes/mesh_0002.json",
+        "content/gltf/market/meshes/mesh_0003.json",
+        "content/gltf/market/meshes/mesh_0004.json",
+        "content/gltf/market/meshes/mesh_0005.json",
+        "content/gltf/market/meshes/mesh_0006.json",
+        "content/gltf/market/meshes/mesh_0007.json",
+        "content/gltf/market/meshes/mesh_0008.json",
+        "content/gltf/market/meshes/mesh_0009.json",
+        "content/gltf/market/meshes/mesh_0010.json",
+        "content/gltf/market/meshes/mesh_0011.json",
+        "content/gltf/market/meshes/mesh_0012.json",
+        "content/gltf/market/meshes/mesh_0013.json",
+        "content/gltf/market/meshes/mesh_0014.json",
+        "content/gltf/market/meshes/mesh_0015.json",
+        "content/gltf/market/meshes/mesh_0016.json",
+        "content/gltf/market/meshes/mesh_0017.json",
+        "content/gltf/market/meshes/mesh_0018.json",
+        "content/gltf/market/meshes/mesh_0019.json",
+        "content/gltf/market/meshes/mesh_0020.json",
+        "content/gltf/market/meshes/mesh_0021.json",
+        "content/gltf/market/meshes/mesh_0022.json",
+        "content/gltf/market/meshes/mesh_0023.json",
+        "content/gltf/market/meshes/mesh_0024.json",
+        "content/gltf/market/meta.json",
+        "content/gltf/market/scene.asset.json"
+      ]
+    }
+  ]
+}

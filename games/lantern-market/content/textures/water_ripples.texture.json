@@ -1,0 +1,29 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "ao_strength": 0,
+    "colors": [
+      "#0b2a30",
+      "#1d4a50"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "water_ripples",
+    "normal_strength": 0.03,
+    "octaves": 4,
+    "pattern": "noise",
+    "roughness": 0.06,
+    "roughness_variation": 0.04,
+    "scale": 5,
+    "seed": 13,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

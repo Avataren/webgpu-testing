@@ -1,0 +1,26 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#8a7564",
+      "#e6d3bd"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "wood_planks",
+    "normal_strength": 0.03,
+    "pattern": "wood",
+    "roughness": 0.7,
+    "scale": 5,
+    "seed": 8,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

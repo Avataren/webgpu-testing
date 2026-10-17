@@ -1,0 +1,27 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "ao_strength": 1.5,
+    "colors": [
+      "#3b342e",
+      "#a39484"
+    ],
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "cobble",
+    "normal_strength": 0.09,
+    "pattern": "voronoi",
+    "roughness": 0.85,
+    "roughness_variation": 0.25,
+    "scale": 9,
+    "seed": 11,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

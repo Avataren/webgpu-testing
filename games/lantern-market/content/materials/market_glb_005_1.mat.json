@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    229,
+    255,
+    217,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/foliage_base_color.png",
+    "name": "foliage_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/foliage_orm.png",
+    "name": "foliage_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/foliage_normal.png",
+    "name": "foliage_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/foliage_orm.png",
+    "name": "foliage_orm.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

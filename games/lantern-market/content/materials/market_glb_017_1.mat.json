@@ -1,0 +1,29 @@
+{
+  "base_color": [
+    255,
+    255,
+    255,
+    255
+  ],
+  "flags": 7,
+  "base_color_texture": {
+    "path": "content/textures/water_ripples_base_color.png",
+    "name": "water_ripples_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/water_ripples_orm.png",
+    "name": "water_ripples_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/water_ripples_normal.png",
+    "name": "water_ripples_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": 0,
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

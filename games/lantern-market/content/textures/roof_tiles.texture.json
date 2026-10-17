@@ -1,0 +1,27 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#8d6a5e",
+      "#f2d6c8"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "mortar": 0.06,
+    "name": "roof_tiles",
+    "normal_strength": 0.08,
+    "pattern": "bricks",
+    "roughness": 0.72,
+    "scale": 10,
+    "seed": 21,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

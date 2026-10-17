@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    199,
+    148,
+    102,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/wood_planks_base_color.png",
+    "name": "wood_planks_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/wood_planks_orm.png",
+    "name": "wood_planks_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/wood_planks_normal.png",
+    "name": "wood_planks_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/wood_planks_orm.png",
+    "name": "wood_planks_orm.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

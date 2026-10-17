@@ -1,0 +1,28 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#cfcfcf",
+      "#ffffff"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "cloth",
+    "normal_strength": 0.015,
+    "octaves": 2,
+    "pattern": "noise",
+    "roughness": 0.88,
+    "roughness_variation": 0.05,
+    "scale": 32,
+    "seed": 2,
+    "size": [
+      256,
+      256
+    ]
+  },
+  "version": 1
+}

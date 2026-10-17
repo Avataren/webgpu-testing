@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    229,
+    153,
+    128,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/plaster_base_color.png",
+    "name": "plaster_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/plaster_orm.png",
+    "name": "plaster_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/plaster_normal.png",
+    "name": "plaster_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/plaster_orm.png",
+    "name": "plaster_orm.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}

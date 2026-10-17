@@ -1,0 +1,28 @@
+{
+  "generator": "texture.generate",
+  "parameters": {
+    "colors": [
+      "#cdc6bb",
+      "#f4efe6"
+    ],
+    "image": false,
+    "maps": [
+      "base_color",
+      "normal",
+      "orm"
+    ],
+    "name": "plaster",
+    "normal_strength": 0.02,
+    "octaves": 6,
+    "pattern": "noise",
+    "roughness": 0.9,
+    "roughness_variation": 0.1,
+    "scale": 6,
+    "seed": 3,
+    "size": [
+      512,
+      512
+    ]
+  },
+  "version": 1
+}

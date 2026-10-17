@@ -1,0 +1,34 @@
+{
+  "about": "Characters and clips Lantern Market takes from the asset library (docs/asset_library.md), by library id. tools/fetch_cast.py copies them into content/ and writes content/scripts/cast_data.lua. Groups give each character its roles: townsfolk wander between the stalls, the fountain, the terrace and the canal; guards patrol; children run about and jump off the stage; the performer plays on the stage; pullers draw the carts.",
+  "characters": [
+    { "id": "mixamo-peasant-man", "name": "Peasant", "groups": ["townsfolk", "puller"] },
+    { "id": "mixamo-peasant-girl", "name": "Peasant Girl", "groups": ["townsfolk"] },
+    { "id": "mixamo-castle-guard-01", "name": "Castle Guard", "groups": ["guard"] },
+    { "id": "mixamo-knight-d-pelegrini", "name": "Knight", "groups": ["guard"] },
+    { "id": "mixamo-paladin-j-nordstrom", "name": "Paladin", "groups": ["guard", "townsfolk"] },
+    { "id": "mixamo-erika-archer", "name": "Erika Archer", "groups": ["townsfolk"] },
+    { "id": "mixamo-pirate-by-p-konstantinov", "name": "Pirate", "groups": ["townsfolk", "puller"] },
+    { "id": "mixamo-claire", "name": "Claire", "groups": ["townsfolk"] },
+    { "id": "mixamo-kaya", "name": "Kaya", "groups": ["townsfolk"] },
+    { "id": "mixamo-sporty-granny", "name": "Granny", "groups": ["townsfolk"] },
+    { "id": "mixamo-ely-by-k-atienza", "name": "Ely", "groups": ["townsfolk"] },
+    { "id": "mixamo-vanguard-by-t-choonyung", "name": "Vanguard", "groups": ["townsfolk"] },
+    { "id": "mixamo-big-vegas", "name": "Big Vegas", "groups": ["townsfolk"] },
+    { "id": "mixamo-michelle", "name": "Michelle", "groups": ["townsfolk"] },
+    { "id": "mixamo-remy", "name": "Remy", "groups": ["townsfolk"] },
+    { "id": "mixamo-louise", "name": "Louise", "groups": ["townsfolk"] },
+    { "id": "mixamo-timmy", "name": "Timmy", "groups": ["child"] },
+    { "id": "mixamo-mousey", "name": "Mousey", "groups": ["child"] },
+    { "id": "mixamo-whiteclown-n-hallin", "name": "White Clown", "groups": ["performer"] },
+    { "id": "quaternius-ual2-mannequin", "name": "Mannequin", "groups": ["townsfolk"] },
+    { "id": "quaternius-ual2-mannequin-f", "name": "Mannequin F", "groups": ["townsfolk"] }
+  ],
+  "clips": [
+    "mixamo-idle", "mixamo-happy-idle", "mixamo-breathing-idle", "mixamo-bored", "mixamo-look-around",
+    "mixamo-thinking", "mixamo-talking", "mixamo-laughing", "mixamo-waving", "mixamo-clapping",
+    "mixamo-cheering", "mixamo-pointing", "mixamo-shrugging", "mixamo-drinking", "mixamo-sitting-idle",
+    "mixamo-salute", "mixamo-samba-dancing", "mixamo-hip-hop-dancing", "mixamo-quick-formal-bow",
+    "mixamo-walking", "mixamo-jogging", "mixamo-running", "mixamo-jump", "mixamo-pulling-a-rope",
+    "mixamo-pushing"
+  ]
+}

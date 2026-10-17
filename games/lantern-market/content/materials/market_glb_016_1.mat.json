@@ -1,0 +1,32 @@
+{
+  "base_color": [
+    219,
+    115,
+    84,
+    255
+  ],
+  "flags": 23,
+  "base_color_texture": {
+    "path": "content/textures/roof_tiles_base_color.png",
+    "name": "roof_tiles_base_color.png"
+  },
+  "metallic_roughness_texture": {
+    "path": "content/textures/roof_tiles_orm.png",
+    "name": "roof_tiles_orm.png"
+  },
+  "normal_texture": {
+    "path": "content/textures/roof_tiles_normal.png",
+    "name": "roof_tiles_normal.png"
+  },
+  "emissive_texture": 0,
+  "occlusion_texture": {
+    "path": "content/textures/roof_tiles_orm.png",
+    "name": "roof_tiles_orm.png"
+  },
+  "metallic_factor": 255,
+  "roughness_factor": 255,
+  "emissive_strength": 0,
+  "kind": {
+    "type": "pbr"
+  }
+}
