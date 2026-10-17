@@ -653,6 +653,7 @@ impl ShadowResources {
 
         pass.set_bind_group(0, &self.uniform_bind_group, &[uniform_offset]);
         pass.set_bind_group(1, &objects.bind_group, &[]);
+        let mut binder = crate::renderer::renderer_core::passes::GeometryBinder::default();
 
         for (batch_index, batch) in batches.all().iter().enumerate() {
             if !casts_shadows(batch.pass) || !visibility.batch(batch_index) {
@@ -674,8 +675,8 @@ impl ShadowResources {
             pass.set_pipeline(masked.map_or(&self.pipeline[sides], |(pipeline, _)| pipeline));
 
             let instance_count = batch.instances.len() as u32;
-            pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
-            pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+            binder.bind(&mut pass, mesh, None);
+            let base_vertex = mesh.base_vertex() as i32;
             let mut current_range_start: Option<u32> = None;
             let mut current_material: Option<u32> = None;
 
@@ -689,7 +690,7 @@ impl ShadowResources {
                         materials.len()
                     );
                     if let Some(start) = current_range_start.take() {
-                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                        pass.draw_indexed(0..mesh.index_count(), base_vertex, start..global_index);
                         draws += 1;
                     }
                     continue;
@@ -700,13 +701,13 @@ impl ShadowResources {
                         != Some(instance.material_index);
                 if new_material {
                     if let Some(start) = current_range_start.take() {
-                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                        pass.draw_indexed(0..mesh.index_count(), base_vertex, start..global_index);
                         draws += 1;
                     }
                 }
                 if !material.casts_shadow() || !instance_visible(visible, local_index) {
                     if let Some(start) = current_range_start.take() {
-                        pass.draw_indexed(0..mesh.index_count(), 0, start..global_index);
+                        pass.draw_indexed(0..mesh.index_count(), base_vertex, start..global_index);
                         draws += 1;
                     }
                 } else if current_range_start.is_none() {
@@ -723,7 +724,7 @@ impl ShadowResources {
             if let Some(start) = current_range_start.take() {
                 pass.draw_indexed(
                     0..mesh.index_count(),
-                    0,
+                    base_vertex,
                     start..(batch.first_instance + instance_count),
                 );
                 draws += 1;

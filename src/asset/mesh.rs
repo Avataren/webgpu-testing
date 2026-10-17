@@ -88,11 +88,12 @@ impl MeshData {
 pub struct Mesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    /// The skin stream, readable by the skinning compute shader. Present for skinned
-    /// meshes on devices that support storage buffers.
-    skin_buffer: Option<wgpu::Buffer>,
     index_count: u32,
     index_format: wgpu::IndexFormat,
+    /// Where the vertices start in `vertex_buffer`, in vertices: a skinned copy lives in
+    /// a pool shared with other instances. Drawn with `draw_indexed`'s base vertex, so
+    /// instances in one pool need no rebinding between draws.
+    base_vertex: u32,
     data: Arc<MeshData>,
     bounds: LocalBounds,
 }
@@ -111,24 +112,12 @@ impl Mesh {
                 data.vertices.len()
             );
         }
-        // Skinned meshes are read by the skinning compute pass, which needs storage
-        // access; downlevel devices (WebGL2) skin on the CPU instead.
-        let storage = skinned && device.limits().max_storage_buffers_per_shader_stage >= 4;
-        let mut vertex_usage = wgpu::BufferUsages::VERTEX;
-        if storage {
-            vertex_usage |= wgpu::BufferUsages::STORAGE;
-        }
+        // A skinned mesh's own buffer draws its bind pose (when skinning is skipped); the
+        // skinning stage reads the vertices and skin weights from `data` into its pool.
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("VertexBuffer"),
             contents: bytemuck::cast_slice(&data.vertices),
-            usage: vertex_usage,
-        });
-        let skin_buffer = data.skin.as_ref().filter(|_| storage).map(|skin| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("SkinBuffer"),
-                contents: bytemuck::cast_slice(skin),
-                usage: wgpu::BufferUsages::STORAGE,
-            })
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
         let uses_u32_indices = data.indices.iter().any(|&idx| idx > u16::MAX as u32);
@@ -156,23 +145,24 @@ impl Mesh {
         Self {
             vertex_buffer,
             index_buffer,
-            skin_buffer,
             index_count: data.indices.len() as u32,
             index_format,
+            base_vertex: 0,
             bounds: LocalBounds::from_vertices(&data.vertices),
             data: Arc::new(data),
         }
     }
 
-    /// The same geometry drawn from another vertex buffer (with the same layout and
-    /// vertex count), e.g. one instance's skinned vertices. Shares the index buffer.
-    pub(crate) fn with_vertex_buffer(&self, vertex_buffer: wgpu::Buffer) -> Self {
+    /// The same geometry drawn from another vertex buffer (with the same layout), its
+    /// vertices starting `base_vertex` vertices in, e.g. one instance's skinned vertices
+    /// in a pool. Shares the index buffer.
+    pub(crate) fn with_vertex_buffer(&self, vertex_buffer: wgpu::Buffer, base_vertex: u32) -> Self {
         Self {
             vertex_buffer,
             index_buffer: self.index_buffer.clone(),
-            skin_buffer: None,
             index_count: self.index_count,
             index_format: self.index_format,
+            base_vertex,
             data: Arc::clone(&self.data),
             bounds: self.bounds,
         }
@@ -182,12 +172,19 @@ impl Mesh {
         &self.vertex_buffer
     }
 
-    pub fn index_buffer(&self) -> &wgpu::Buffer {
-        &self.index_buffer
+    /// Where the vertices start in [`vertex_buffer`](Self::vertex_buffer), in vertices
+    /// (0 for a mesh asset's own buffer). Pass it to `draw_indexed` as the base vertex.
+    pub fn base_vertex(&self) -> u32 {
+        self.base_vertex
     }
 
-    pub(crate) fn skin_buffer(&self) -> Option<&wgpu::Buffer> {
-        self.skin_buffer.as_ref()
+    /// [`base_vertex`](Self::base_vertex) in bytes, for copies out of the buffer.
+    pub fn vertex_byte_offset(&self) -> u64 {
+        u64::from(self.base_vertex) * std::mem::size_of::<Vertex>() as u64
+    }
+
+    pub fn index_buffer(&self) -> &wgpu::Buffer {
+        &self.index_buffer
     }
 
     pub fn index_count(&self) -> u32 {
@@ -234,9 +231,9 @@ impl Clone for Mesh {
         Self {
             vertex_buffer: self.vertex_buffer.clone(),
             index_buffer: self.index_buffer.clone(),
-            skin_buffer: self.skin_buffer.clone(),
             index_count: self.index_count,
             index_format: self.index_format,
+            base_vertex: self.base_vertex,
             data: Arc::clone(&self.data),
             bounds: self.bounds,
         }

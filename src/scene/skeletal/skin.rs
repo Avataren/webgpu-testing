@@ -46,16 +46,32 @@ impl SkinnedMesh {
     /// `inverse(mesh_world) * joint_world * inverse_bind`. A joint that no longer exists
     /// (or has no world transform yet) leaves its vertices in the bind pose.
     pub fn palette(&self, world: &World, mesh_world: Mat4) -> Vec<Mat4> {
+        self.palette_with(
+            |joint| {
+                world
+                    .get::<&WorldTransform>(joint)
+                    .ok()
+                    .map(|w| w.0.matrix())
+            },
+            mesh_world,
+        )
+    }
+
+    /// [`palette`](Self::palette) with the joints' world matrices from `joint_world`
+    /// (e.g. a prepared view, cheaper than a lookup per joint when a crowd is skinned).
+    pub fn palette_with(
+        &self,
+        joint_world: impl Fn(Entity) -> Option<Mat4>,
+        mesh_world: Mat4,
+    ) -> Vec<Mat4> {
         let to_local = mesh_world.inverse();
         self.joints
             .iter()
             .zip(self.inverse_bind.iter())
-            .map(
-                |(joint, inverse_bind)| match world.get::<&WorldTransform>(*joint) {
-                    Ok(joint_world) => to_local * joint_world.0.matrix() * *inverse_bind,
-                    Err(_) => Mat4::IDENTITY,
-                },
-            )
+            .map(|(joint, inverse_bind)| match joint_world(*joint) {
+                Some(joint_world) => to_local * joint_world * *inverse_bind,
+                None => Mat4::IDENTITY,
+            })
             .collect()
     }
 }

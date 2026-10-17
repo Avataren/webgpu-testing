@@ -364,10 +364,24 @@ fn nearest_distance_sq(batch: &OrderedBatch, camera_pos: Vec3) -> f32 {
         .fold(f32::INFINITY, f32::min)
 }
 
+/// Rigid batches front to back; then the skinned instances, grouped by mesh (they draw
+/// one after another from shared pool buffers, so a run of one mesh needs no rebinding)
+/// and front to back within each mesh.
 fn sort_opaque_front_to_back(batches: &mut [OrderedBatch], camera_pos: Vec3) {
     batches.sort_by(|a, b| {
-        nearest_distance_sq(a, camera_pos)
-            .total_cmp(&nearest_distance_sq(b, camera_pos))
+        a.skin
+            .is_some()
+            .cmp(&b.skin.is_some())
+            .then_with(|| {
+                if a.skin.is_some() {
+                    a.mesh.index().cmp(&b.mesh.index())
+                } else {
+                    Ordering::Equal
+                }
+            })
+            .then_with(|| {
+                nearest_distance_sq(a, camera_pos).total_cmp(&nearest_distance_sq(b, camera_pos))
+            })
             .then_with(|| a.mesh.index().cmp(&b.mesh.index()))
             .then_with(|| a.skin.cmp(&b.skin))
     });

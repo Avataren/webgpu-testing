@@ -336,7 +336,8 @@ pub(crate) struct RayTracingScene {
     particle_material_capacity: u64,
     particle_material_scratch: Vec<MaterialData>,
     /// This frame's skinned vertex buffers and where in the pool they are copied.
-    deformed_copies: Vec<(wgpu::Buffer, u64, u64)>,
+    /// `(source buffer, source offset, pool offset, size)` in bytes.
+    deformed_copies: Vec<(wgpu::Buffer, u64, u64, u64)>,
     tlas: wgpu::Tlas,
     tlas_capacity: u32,
     /// Instances written into `tlas` last frame (slots past this are already empty).
@@ -534,8 +535,14 @@ impl RayTracingScene {
             buffers_changed |= self.ensure_particles(device, queue, encoder, assets, system);
         }
         // After any pool growth above, which copies the old contents in this encoder.
-        for (buffer, offset, size) in &self.deformed_copies {
-            encoder.copy_buffer_to_buffer(buffer, 0, &self.vertices.buffer, *offset, *size);
+        for (buffer, source_offset, offset, size) in &self.deformed_copies {
+            encoder.copy_buffer_to_buffer(
+                buffer,
+                *source_offset,
+                &self.vertices.buffer,
+                *offset,
+                *size,
+            );
         }
         self.expand_particles(device, queue, encoder, camera);
 
@@ -1053,6 +1060,7 @@ impl RayTracingScene {
                     entry.needs_build = true;
                     self.deformed_copies.push((
                         mesh.vertex_buffer().clone(),
+                        mesh.vertex_byte_offset(),
                         entry.vertex_base as u64 * VERTEX_STRIDE,
                         entry.size.vertex_count as u64 * VERTEX_STRIDE,
                     ));
@@ -1124,6 +1132,7 @@ impl RayTracingScene {
         if deformed {
             self.deformed_copies.push((
                 mesh.vertex_buffer().clone(),
+                mesh.vertex_byte_offset(),
                 vertex_base * VERTEX_STRIDE,
                 vertex_count as u64 * VERTEX_STRIDE,
             ));

@@ -1314,11 +1314,6 @@ impl Renderer {
             .bind_group_for_material(&self.context.device, assets, material)
     }
 
-    fn set_geometry_buffers(&self, pass: &mut wgpu::RenderPass<'_>, mesh: &Mesh) {
-        pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
-        pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
-    }
-
     fn draw_environment_background(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(self.pipeline.background());
         pass.set_bind_group(0, &self.camera_buffer.bind_group, &[]);

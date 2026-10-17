@@ -1368,20 +1368,26 @@ pub(crate) fn update_animators(world: &mut World, assets: &mut Assets, dt: f32) 
         jobs.par_iter_mut().map(pose).collect()
     };
 
-    for ((entity, animator, _), posed) in jobs.into_iter().zip(posed) {
-        if let Some(posed) = posed {
-            for (slot, &bone) in posed.binding.bones.iter().enumerate() {
-                if let Ok(mut transform) = world.get::<&mut TransformComponent>(bone) {
-                    transform.0 = posed.pose[slot];
-                }
-            }
-            if let Some(delta) = posed.root_delta {
-                if let Ok(mut transform) = world.get::<&mut TransformComponent>(entity) {
-                    let t = &mut transform.0;
-                    t.translation += t.rotation * (t.scale * delta);
-                }
+    // One view for every bone rather than a lookup (and borrow) per component access.
+    let mut transforms = world.view_mut::<&mut TransformComponent>();
+    for ((entity, _, _), posed) in jobs.iter().zip(&posed) {
+        let Some(posed) = posed else {
+            continue;
+        };
+        for (slot, &bone) in posed.binding.bones.iter().enumerate() {
+            if let Some(transform) = transforms.get_mut(bone) {
+                transform.0 = posed.pose[slot];
             }
         }
+        if let Some(delta) = posed.root_delta {
+            if let Some(transform) = transforms.get_mut(*entity) {
+                let t = &mut transform.0;
+                t.translation += t.rotation * (t.scale * delta);
+            }
+        }
+    }
+    drop(transforms);
+    for (entity, animator, _) in jobs {
         if let Ok(mut slot) = world.get::<&mut Animator>(entity) {
             *slot = animator;
         }

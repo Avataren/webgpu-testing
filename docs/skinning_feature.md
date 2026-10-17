@@ -38,11 +38,21 @@ in `tools/engine-mcp/README.md` and `.claude/skills/engine-mcp/SKILL.md`.
 - **Compute pre-skinning instead of vertex-shader skinning.** `build_render_objects`
   computes each skinned entity's palette (`inverse(mesh_world) * joint_world *
   inverse_bind`) and passes it as a `SkinBinding`. Before the shadow pass,
-  `SkinningStage` (`src/renderer/skinning.rs`) deforms every skinned instance into its own
-  vertex buffer (`src/shader/skinning.wgsl`, one dispatch per instance). Each instance is
-  its own batch; every pass (shadows, prepass, G-buffer, picking, transparency, user shader
-  materials, gizmo outlines) draws it like a rigid mesh. No vertex shader knows about
-  skinning.
+  `SkinningStage` (`src/renderer/skinning.rs`) deforms every skinned instance into a slot
+  of a pooled vertex buffer (`src/shader/skinning.wgsl`). Each instance is its own batch;
+  every pass (shadows, prepass, G-buffer, picking, transparency, user shader materials,
+  gizmo outlines) draws it like a rigid mesh, from the pool page with `draw_indexed`'s base
+  vertex. No vertex shader knows about skinning.
+- **Pooled buffers, one dispatch per page (2026-10-17).** Skinned vertices live in 64 MiB
+  pool pages (two buffers each, taking turns for motion vectors); an instance keeps its
+  slot while drawn (`SlotAllocator`, freed slots reused by size). The source meshes are
+  copied into source pages the same way, so a single dispatch skins every instance of a
+  page: records carry each instance's palette, source and output offsets, and a workgroup
+  finds its record by binary search. One dispatch per page is what makes it fast: wgpu
+  puts a barrier between consecutive dispatches writing one buffer, so per-instance
+  dispatches into a shared page serialized (6 ms of GPU time for the stadium against 2.3).
+  Passes bind a page once (`GeometryBinder` skips rebinding) and opaque skinned batches
+  are grouped by mesh, so a run of instances costs one draw each.
 - **CPU fallback** with the same math (`skin_vertices`), chosen automatically on devices
   without compute or storage buffers (the planned WebGL2/GLES tier).
   `WGPU_CUBE_FORCE_CPU_SKINNING=1` forces it natively. A GPU test compares the two on every
@@ -127,19 +137,19 @@ merge; a Lua regression test covers the script functions.
 - **Animated bounds.** Picking (GPU picking is exact), `scene_query`, `scene_raycast`,
   placement and editor selection boxes use the bind-pose `MeshBounds`. Compute bounds from
   joint positions plus a per-joint radius if culling or precise queries need it.
-- **Instancing of crowds.** Each skinned instance is still one compute dispatch and one
-  draw per pass. Profiled with `games/marionette` (2026-10-17, its stadium: 1,040 Mixamo
-  and Quaternius characters, 2,933 skinned meshes, 14.5M skinned vertices, 80k entities,
-  raster, Navi 31): the frame is CPU-bound (GPU about 10 ms). Done since: animators pose
-  on the thread pool (10.8 to about 4 ms), transform propagation walks one hecs view
-  (13.1 to about 6.5 ms for its two passes a frame), the meshes of one character share one
-  palette per frame, computed and uploaded once (collect 11.5 to about 6 ms, submission
-  18 to about 13 ms), and passes borrow meshes instead of cloning them; the stadium went
-  from 15 to 29 fps, both measured with a game running alongside (35 fps with nothing else
-  running; numbers in `games/marionette/README.md`). What is left is mostly wgpu's per-draw and per-dispatch cost:
-  next would be skinning all instances of a mesh in one dispatch into one shared buffer and
-  drawing them with fewer calls (vertex pulling or multi-draw), and propagating
-  transforms once per frame instead of twice.
+- **Instancing of crowds.** Each skinned instance is still one draw per pass. Profiled
+  with `games/marionette` (2026-10-17, its stadium: 1,040 Mixamo and Quaternius
+  characters, 2,933 skinned meshes, 14.5M skinned vertices, 80k entities, raster, Navi
+  31): the frame is CPU-bound. Done since: animators pose on the thread pool, transform
+  propagation walks root subtrees in parallel (both passes a frame: 5.2 to 2.3 ms), the
+  meshes of one character share one palette per frame and the distinct palettes are
+  computed in parallel through one view (collect 4.5 to 2.6 ms), bone poses are written
+  through one view, and the pooled skinning above cut submission from 11.2 to 6.6 ms
+  and GPU time from 12.3 to 9.0 ms; the stadium went from 37 to 63 fps with nothing else
+  running (numbers in `games/marionette/README.md`). What is left is wgpu's per-draw cost
+  (6,866 draws a frame) and the sequential parts of batching: next would be drawing all
+  instances of a mesh with one call (vertex pulling from the pool, or multi-draw indirect
+  natively), and propagating transforms once per frame instead of twice.
 - **Ray tracing.** Skinned buffers are ready for BLAS refits (add `BLAS_INPUT` usage) once
   the work in `docs/rendering_features_future.md` starts.
 - **Morph targets** (blend shapes) are not supported; `web/assets/morph/` still renders

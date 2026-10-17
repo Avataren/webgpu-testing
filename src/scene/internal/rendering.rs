@@ -135,56 +135,61 @@ fn has_hidden_ancestor(world: &World, hidden: &HashSet<Entity>, entity: Entity) 
     false
 }
 
-/// Joint palettes computed while collecting one frame's entities. The meshes of one
+/// Which palette each skinned entity collected this frame uses. The meshes of one
 /// character share its skeleton, inverse bind matrices and placement, so they share one
-/// palette rather than each reading every joint again.
+/// palette rather than each reading every joint again; the distinct palettes are then
+/// computed together ([`PaletteCache::resolve`]), on the thread pool for a crowd.
 #[derive(Default)]
-struct PaletteCache {
-    palettes: HashMap<PaletteKey, Vec<CachedPalette>>,
+struct PaletteCache<'a> {
+    by_key: HashMap<PaletteKey, Vec<usize>>,
+    /// The distinct palettes to compute: a skin and the world matrix of its mesh.
+    unique: Vec<(&'a SkinnedMesh, glam::Mat4)>,
 }
 
 /// First joint, joint count and the mesh's world matrix; entries under a key are told
 /// apart by their joints and inverse bind matrices.
-type PaletteKey = (Entity, usize, [u32; 16]);
+type PaletteKey = (Option<Entity>, usize, [u32; 16]);
 
-struct CachedPalette {
-    joints: Vec<Entity>,
-    inverse_bind: Arc<[glam::Mat4]>,
-    palette: Arc<[glam::Mat4]>,
-}
+/// Distinct palettes from which they are computed on the thread pool.
+const PARALLEL_PALETTES: usize = 64;
 
-impl PaletteCache {
-    fn palette(
-        &mut self,
-        world: &World,
-        skin: &SkinnedMesh,
-        mesh_world: glam::Mat4,
-    ) -> Arc<[glam::Mat4]> {
-        let Some(&first) = skin.joints.first() else {
-            return Arc::from(Vec::new());
-        };
+impl<'a> PaletteCache<'a> {
+    /// The index (into [`resolve`](Self::resolve)'s result) of the palette for `skin`
+    /// placed at `mesh_world`.
+    fn index(&mut self, skin: &'a SkinnedMesh, mesh_world: glam::Mat4) -> usize {
         let key = (
-            first,
+            skin.joints.first().copied(),
             skin.joints.len(),
             mesh_world.to_cols_array().map(f32::to_bits),
         );
-        let entries = self.palettes.entry(key).or_default();
+        let entries = self.by_key.entry(key).or_default();
         // Loaded copies of one skin carry equal inverse binds in separate allocations.
-        let same = |cached: &&CachedPalette| {
+        let same = |&&index: &&usize| {
+            let (cached, _) = self.unique[index];
             cached.joints == skin.joints
                 && (Arc::ptr_eq(&cached.inverse_bind, &skin.inverse_bind)
                     || cached.inverse_bind == skin.inverse_bind)
         };
-        if let Some(cached) = entries.iter().find(same) {
-            return Arc::clone(&cached.palette);
+        if let Some(&index) = entries.iter().find(same) {
+            return index;
         }
-        let palette: Arc<[glam::Mat4]> = skin.palette(world, mesh_world).into();
-        entries.push(CachedPalette {
-            joints: skin.joints.clone(),
-            inverse_bind: Arc::clone(&skin.inverse_bind),
-            palette: Arc::clone(&palette),
-        });
-        palette
+        let index = self.unique.len();
+        self.unique.push((skin, mesh_world));
+        entries.push(index);
+        index
+    }
+
+    /// Compute every distinct palette, with the joints' world transforms from `joints`.
+    fn resolve(self, joints: &hecs::View<'_, &WorldTransform>) -> Vec<Arc<[glam::Mat4]>> {
+        let compute = |&(skin, mesh_world): &(&SkinnedMesh, glam::Mat4)| -> Arc<[glam::Mat4]> {
+            skin.palette_with(|joint| joints.get(joint).map(|w| w.0.matrix()), mesh_world)
+                .into()
+        };
+        if self.unique.len() < PARALLEL_PALETTES {
+            self.unique.iter().map(compute).collect()
+        } else {
+            self.unique.par_iter().map(compute).collect()
+        }
     }
 }
 
@@ -192,8 +197,13 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
     let default_material = assets.default_material_handle();
     let hidden = hidden_entities(world);
     let mut palettes = PaletteCache::default();
+    // Skinned entities (by index in the result) and the palette each uses, resolved
+    // after the walk.
+    let mut skinned_entities: Vec<(usize, Entity, usize)> = Vec::new();
+    let mut joints_query = world.query::<&WorldTransform>();
+    let joints = joints_query.view();
 
-    world
+    let mut query = world
         .query::<(
             &MeshComponent,
             &MaterialComponent,
@@ -210,35 +220,51 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
         )>()
         // A particle system draws its particles itself: its mesh is only their template,
         // not something to draw at the entity.
-        .without::<&ParticleSystemComponent>()
+        .without::<&ParticleSystemComponent>();
+    let mut entities: Vec<RenderEntity> = query
         .iter()
         // Skip hidden entities before doing any work for them; pools of hidden objects
         // are common in games.
         .filter(|(entity, (_, _, visible, ..))| {
             visible.0 && (hidden.is_empty() || !has_hidden_ancestor(world, &hidden, *entity))
         })
+        .enumerate()
         .map(
             |(
-                entity,
+                index,
                 (
-                    mesh,
-                    material,
-                    visible,
-                    world_transform,
-                    local_transform,
-                    name,
-                    billboard,
-                    depth_state,
-                    selected_marker,
-                    editor_id,
-                    cast_shadow,
-                    skinned,
+                    entity,
+                    (
+                        mesh,
+                        material,
+                        visible,
+                        world_transform,
+                        local_transform,
+                        name,
+                        billboard,
+                        depth_state,
+                        selected_marker,
+                        editor_id,
+                        cast_shadow,
+                        skinned,
+                    ),
                 ),
             )| {
                 let (material_handle, base_material) = assets
                     .material(material.0)
                     .map(|asset| (material.0, *asset.material()))
                     .unwrap_or((default_material, Material::pbr()));
+
+                if let Some(skinned) =
+                    skinned.filter(|_| assets.meshes.get(mesh.0).is_some_and(|m| m.is_skinned()))
+                {
+                    // The same matrix the renderer will draw it with.
+                    let mesh_world = world_transform
+                        .map(|t| t.0)
+                        .or(local_transform.map(|t| t.0))
+                        .map_or(glam::Mat4::IDENTITY, |t| t.matrix());
+                    skinned_entities.push((index, entity, palettes.index(skinned, mesh_world)));
+                }
 
                 RenderEntity {
                     mesh: mesh.0,
@@ -258,23 +284,20 @@ fn collect_render_entities(world: &World, assets: &Assets, scene_key: u64) -> Ve
                     selected: selected_marker.is_some(),
                     casts_shadow: cast_shadow.is_none_or(|flag| flag.0),
                     pick_id: encode_pick_id(editor_id.copied()),
-                    skin: skinned
-                        .filter(|_| assets.meshes.get(mesh.0).is_some_and(|m| m.is_skinned()))
-                        .map(|skinned| {
-                            // The same matrix the renderer will draw it with.
-                            let mesh_world = world_transform
-                                .map(|t| t.0)
-                                .or(local_transform.map(|t| t.0))
-                                .map_or(glam::Mat4::IDENTITY, |t| t.matrix());
-                            SkinBinding {
-                                key: skin_key(scene_key, entity),
-                                palette: palettes.palette(world, skinned, mesh_world),
-                            }
-                        }),
+                    skin: None,
                 }
             },
         )
-        .collect()
+        .collect();
+
+    let resolved = palettes.resolve(&joints);
+    for (index, entity, palette) in skinned_entities {
+        entities[index].skin = Some(SkinBinding {
+            key: skin_key(scene_key, entity),
+            palette: Arc::clone(&resolved[palette]),
+        });
+    }
+    entities
 }
 
 fn prepare_render_objects(camera: CameraVectors, entity: RenderEntity) -> Vec<RenderObject> {
@@ -527,15 +550,23 @@ mod tests {
         );
 
         let mut cache = PaletteCache::default();
-        let a = cache.palette(&world, &body, glam::Mat4::IDENTITY);
-        let b = cache.palette(&world, &hair, glam::Mat4::IDENTITY);
-        assert!(Arc::ptr_eq(&a, &b), "equal skins share one palette");
-        assert_eq!(a[0], glam::Mat4::from_translation(Vec3::Y));
+        let a = cache.index(&body, glam::Mat4::IDENTITY);
+        let b = cache.index(&hair, glam::Mat4::IDENTITY);
+        assert_eq!(a, b, "equal skins share one palette");
 
-        let c = cache.palette(&world, &other, glam::Mat4::IDENTITY);
-        assert!(!Arc::ptr_eq(&a, &c), "other inverse binds get their own");
-        let moved = cache.palette(&world, &body, glam::Mat4::from_translation(Vec3::Z));
-        assert!(!Arc::ptr_eq(&a, &moved), "so does a mesh placed elsewhere");
+        let c = cache.index(&other, glam::Mat4::IDENTITY);
+        assert_ne!(a, c, "other inverse binds get their own");
+        let moved = cache.index(&body, glam::Mat4::from_translation(Vec3::Z));
+        assert_ne!(a, moved, "so does a mesh placed elsewhere");
+
+        let mut joints = world.query::<&WorldTransform>();
+        let palettes = cache.resolve(&joints.view());
+        assert_eq!(palettes.len(), 3);
+        assert_eq!(palettes[a][0], glam::Mat4::from_translation(Vec3::Y));
+        assert_eq!(
+            palettes[c][0],
+            glam::Mat4::from_translation(Vec3::Y) * glam::Mat4::from_translation(Vec3::X)
+        );
     }
 
     #[test]

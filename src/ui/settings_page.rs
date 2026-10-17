@@ -96,16 +96,16 @@ fn draw_fps(ctx: &egui::Context, view: egui::Rect, fps: f64) {
     ));
     let text = format!("{fps:.0} FPS");
     let font = egui::FontId::monospace(16.0);
-    let position = view.min + egui::vec2(10.0, 8.0);
+    let position = view.right_top() + egui::vec2(-10.0, 8.0);
     // A dark shadow keeps the text readable over bright scenes.
     painter.text(
         position + egui::vec2(1.0, 1.0),
-        egui::Align2::LEFT_TOP,
+        egui::Align2::RIGHT_TOP,
         &text,
         font.clone(),
         egui::Color32::from_black_alpha(200),
     );
-    painter.text(position, egui::Align2::LEFT_TOP, text, font, FPS_COLOR);
+    painter.text(position, egui::Align2::RIGHT_TOP, text, font, FPS_COLOR);
 }
 
 /// Which of the app-dependent parts the page shows.

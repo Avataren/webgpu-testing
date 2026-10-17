@@ -68,6 +68,16 @@ impl<'a> BatchRecorder<'a> {
         bindless_group: Option<&wgpu::BindGroup>,
     ) -> u32 {
         let mut draw_calls = 0u32;
+        let mut geometry = GeometryBinder::default();
+        // The same for every batch: set once.
+        let camera = if options.stable_camera {
+            &self.renderer.camera_buffer.stable_bind_group
+        } else {
+            &self.renderer.camera_buffer.bind_group
+        };
+        pass.set_bind_group(0, camera, &[]);
+        pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
+        pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
 
         for batch in batches {
             let visible: &[bool] = if options.cull {
@@ -100,15 +110,6 @@ impl<'a> BatchRecorder<'a> {
                 options.pick_only,
                 wireframe,
             );
-            let camera = if options.stable_camera {
-                &self.renderer.camera_buffer.stable_bind_group
-            } else {
-                &self.renderer.camera_buffer.bind_group
-            };
-            pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &self.renderer.objects_buffer.bind_group, &[]);
-            pass.set_bind_group(2, &self.renderer.lights_buffer.bind_group, &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
             // Last frame's positions, for motion vectors: a skinned instance's previous
             // pose, else the mesh itself (only the model matrix moved it).
             let previous = batch
@@ -116,8 +117,7 @@ impl<'a> BatchRecorder<'a> {
                 .and_then(|key| self.renderer.skinning.previous_vertex_buffer(key))
                 .unwrap_or(mesh.vertex_buffer())
                 .clone();
-            pass.set_vertex_buffer(1, previous.slice(..));
-            pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+            geometry.bind(pass, &mesh, Some(&previous));
 
             if let Some(group) = bindless_group {
                 pass.set_bind_group(3, group, &[]);
@@ -166,7 +166,11 @@ impl<'a> BatchRecorder<'a> {
                 let start_instance = batch.first_instance + local_offset as u32;
                 let end_instance = start_instance + run_length as u32;
 
-                pass.draw_indexed(0..mesh.index_count(), 0, start_instance..end_instance);
+                pass.draw_indexed(
+                    0..mesh.index_count(),
+                    mesh.base_vertex() as i32,
+                    start_instance..end_instance,
+                );
                 draw_calls += 1;
                 local_offset += run_length;
             }
@@ -409,6 +413,7 @@ pub(crate) fn depth_prepass(
         pass.set_bind_group(0, camera_bind_group, &[]);
         pass.set_bind_group(1, object_bind_group, &[]);
         pass.set_bind_group(2, lights_bind_group, &[]);
+        let mut geometry = GeometryBinder::default();
 
         // Back-face culled batches, then double-sided ones; plain, then cut-outs.
         for (double_sided, masked) in [(false, false), (false, true), (true, false), (true, true)] {
@@ -434,7 +439,7 @@ pub(crate) fn depth_prepass(
                 };
                 let visible = &batch.camera_visible;
                 if !masked {
-                    renderer.set_geometry_buffers(pass, mesh);
+                    geometry.bind(pass, mesh, None);
                     let mut start = 0usize;
                     while start < batch.instances.len() {
                         if !instance_visible(visible, start) {
@@ -443,7 +448,11 @@ pub(crate) fn depth_prepass(
                         }
                         let run = visible_run_length(visible, batch.instances.len(), start);
                         let first = batch.first_instance + start as u32;
-                        pass.draw_indexed(0..mesh.index_count(), 0, first..first + run as u32);
+                        pass.draw_indexed(
+                            0..mesh.index_count(),
+                            mesh.base_vertex() as i32,
+                            first..first + run as u32,
+                        );
                         draw_calls += 1;
                         start += run;
                     }
@@ -454,7 +463,7 @@ pub(crate) fn depth_prepass(
                 let Some(textures) = cutouts.as_ref() else {
                     continue;
                 };
-                renderer.set_geometry_buffers(pass, mesh);
+                geometry.bind(pass, mesh, None);
                 let mut drawn = true;
                 let mut start = 0usize;
                 while start < batch.instances.len() {
@@ -467,7 +476,11 @@ pub(crate) fn depth_prepass(
                         Some(group) => {
                             pass.set_bind_group(3, group, &[]);
                             let first = batch.first_instance + start as u32;
-                            pass.draw_indexed(0..mesh.index_count(), 0, first..first + run as u32);
+                            pass.draw_indexed(
+                                0..mesh.index_count(),
+                                mesh.base_vertex() as i32,
+                                first..first + run as u32,
+                            );
                             draw_calls += 1;
                         }
                         None => drawn = false,
@@ -896,6 +909,43 @@ pub(crate) fn finish_frame(
     RenderFrame {
         frame,
         output_resolved: std::cell::Cell::new(false),
+    }
+}
+
+/// Binds a batch's vertex and index buffers, skipping what the pass already has bound:
+/// skinned instances draw from shared pool buffers (with their own base vertex), so a
+/// run of them costs one draw each.
+#[derive(Default)]
+pub(crate) struct GeometryBinder {
+    vertex: Option<wgpu::Buffer>,
+    previous: Option<wgpu::Buffer>,
+    index: Option<wgpu::Buffer>,
+}
+
+impl GeometryBinder {
+    /// Bind `mesh`'s buffers at slot 0 and the index slot, and `previous` (last frame's
+    /// positions) at slot 1 when the pipeline takes it.
+    pub(crate) fn bind(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'_>,
+        mesh: &Mesh,
+        previous: Option<&wgpu::Buffer>,
+    ) {
+        if self.vertex.as_ref() != Some(mesh.vertex_buffer()) {
+            pass.set_vertex_buffer(0, mesh.vertex_buffer().slice(..));
+            self.vertex = Some(mesh.vertex_buffer().clone());
+        }
+        if let Some(previous) = previous {
+            if self.previous.as_ref() != Some(previous) {
+                pass.set_vertex_buffer(1, previous.slice(..));
+                self.previous = Some(previous.clone());
+            }
+        }
+        // The index format follows the buffer: one buffer, one format.
+        if self.index.as_ref() != Some(mesh.index_buffer()) {
+            pass.set_index_buffer(mesh.index_buffer().slice(..), mesh.index_format());
+            self.index = Some(mesh.index_buffer().clone());
+        }
     }
 }
 

@@ -84,23 +84,27 @@ milliseconds (timestamp queries) and the CPU stage times in the report to the fr
 
 | Part | Characters | Raster: fps (1% low), GPU ms | Raster + FSR 50%: fps (1% low), GPU ms |
 |---|---|---|---|
-| Roll call | 47 | 346 (257), 1.4 | 305 (217), 1.6 |
-| Dance floor | 196 | 167 (125), 3.0 | 152 (116), 3.3 |
-| Marathon | 300 | 114 (92), 4.5 | 103 (81), 4.5 |
-| Battle | 300 | 109 (89), 4.7 | 102 (82), 4.3 |
-| Stadium | 1,040 | 35 (28), 12.2 | 35 (31), 11.7 |
-| Curtain call | 1,051 | 36 (32), 12.3 | 35 (30), 11.7 |
-| Whole show | | 141 | 128 |
+| Roll call | 47 | 346 (244), 1.3 | 332 (231), 1.4 |
+| Dance floor | 196 | 206 (117), 3.0 | 201 (147), 2.5 |
+| Marathon | 300 | 137 (82), 3.8 | 149 (117), 3.4 |
+| Battle | 300 | 154 (124), 3.3 | 150 (115), 3.4 |
+| Stadium | 1,040 | 61 (45), 9.2 | 62 (51), 8.8 |
+| Curtain call | 1,051 | 63 (52), 9.2 | 62 (52), 8.9 |
+| Whole show | | 168 | 166 |
 
-The crowds are CPU-bound: in the stadium the frame spends about 12 ms submitting draws and
-skinning dispatches (one of each per skinned mesh: 2,933 meshes for 1,040 characters),
-5.4 ms propagating transforms, 4.9 ms collecting what to draw and 3 ms posing skeletons,
-while the GPU needs 12 ms. That is also why FSR at half resolution changes nothing here:
-the GPU's work is mostly geometry (skinning 14.5 million vertices, shadow maps, the depth
-prepass), not pixels. The engine changes made with the show (parallel posing, one view for
-transform propagation, shared palettes, borrowed meshes) took the stadium from 15 to 29 fps
-measured under the same conditions (with a game running alongside): animation 10.8 to
-4.2 ms, transforms 13.1 to 6.4 ms, collecting 11.5 to 5.8 ms, submitting 18.2 to 12.7 ms.
+The crowds are CPU-bound: in the stadium the frame spends about 6.3 ms submitting draws
+(one per skinned mesh per pass: 2,933 meshes for 1,040 characters, 6,866 draws), 2.4 ms
+propagating transforms, 2.7 ms collecting what to draw and 2.2 ms posing skeletons, while
+the GPU needs 9 ms. That is also why FSR at half resolution changes nothing here: the GPU's
+work is mostly geometry (skinning 14.5 million vertices, shadow maps, the depth prepass),
+not pixels. Earlier the same part ran at 35 fps (GPU 12.2 ms): the engine changes made with
+the show (parallel posing, one view for transform propagation, shared palettes, borrowed
+meshes) took it from 15 to 29 fps with a game running alongside, and the pooled skinning
+that followed (all skinned vertices in a few pool buffers, one compute dispatch per pool
+page instead of one per mesh, passes binding a pool once and drawing instance after
+instance by base vertex, transform propagation and palettes on the thread pool) took it
+from 35 to 61 fps with nothing else running: submission 11.2 to 6.3 ms, transforms 5.2 to
+2.4 ms, collecting 4.5 to 2.7 ms, posing 2.7 to 2.2 ms, GPU 12.3 to 9.2 ms.
 
 ## How it is built
 
