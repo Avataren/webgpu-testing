@@ -1479,7 +1479,7 @@ impl Server {
                 json!({
                     "kind": "directional_light", "name": "Sun",
                     "translation": [0, 10, 0], "rotation": [-55, 25, 0],
-                    "directional_light": { "color": [1.0, 0.96, 0.9], "intensity": 1.6, "shadow_size": 30 },
+                    "directional_light": { "color": [1.0, 0.96, 0.9], "intensity": 1.6 },
                     "quiet": true,
                 }),
             ),

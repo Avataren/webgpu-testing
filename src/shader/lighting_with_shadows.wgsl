@@ -22,7 +22,8 @@ fn calculate_scene_lighting(
 }
 
 // The same for the opaque surface at framebuffer `pixel`, whose directional shadows may
-// come from the ray-traced shadow mask instead of the shadow maps (pixel.x < 0: never).
+// come from the ray-traced shadow mask instead of the shadow maps (pixel.x < 0: never;
+// the pixel also turns the shadow maps' soft shadow filter).
 fn calculate_scene_lighting_at(
     world_pos: vec3<f32>,
     N: vec3<f32>,
@@ -48,7 +49,7 @@ fn calculate_scene_lighting_at(
         }
         var shadow = rt_shadow_bit(i, pixel);
         if (shadow < 0.0) {
-            shadow = sample_directional_shadow(i, world_pos, N, light_dir);
+            shadow = sample_directional_shadow(i, world_pos, N, light_dir, pixel);
         }
         if (shadow <= 0.0) {
             continue;

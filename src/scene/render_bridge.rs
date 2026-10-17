@@ -153,12 +153,8 @@ impl RenderBridge {
         let mut lights_data = LightsData::default();
 
         for (node_key, node) in scene.nodes_with_keys() {
-            let node_lights = lights::collect_lights(
-                node.instance().world(),
-                camera_vectors,
-                *node.world_transform(),
-                node_key,
-            );
+            let node_lights =
+                lights::collect_lights(node.instance().world(), *node.world_transform(), node_key);
             lights_data.extend_from(&node_lights);
         }
 

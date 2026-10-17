@@ -1,5 +1,4 @@
 use glam::{Mat4, Vec2, Vec3, Vec4};
-use wgpu_cube::scene::components::DirectionalLight;
 
 const EPSILON: f32 = 1e-5;
 
@@ -59,8 +58,9 @@ struct DirectionalShadow {
 }
 
 fn build_directional_shadow_matrix(direction: Vec3) -> DirectionalShadow {
-    let shadow_size = DirectionalLight::DEFAULT_SHADOW_SIZE;
-    let shadow_distance = DirectionalLight::DEFAULT_SHADOW_DISTANCE;
+    // An orthographic light view of the kind each directional cascade uses.
+    let shadow_size = 30.0;
+    let shadow_distance = 30.0;
 
     let focus = Vec3::ZERO;
     let light_pos = focus - direction * shadow_distance;

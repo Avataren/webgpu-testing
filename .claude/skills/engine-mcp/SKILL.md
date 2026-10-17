@@ -62,7 +62,17 @@ engine you launched; save first).
   the totals (shadowed, over_budget, atlas size and use) and `shadow_views_deferred` the
   shadow views waiting for the per-frame update budget. Graphics settings
   `shadow_atlas_size` (1024-8192) and `shadow_updates_per_frame` (default 48) trade
-  shadow room and freshness for cost.
+  shadow room and freshness for cost. Directional lights (the sun) cast through up to 4
+  cascaded shadow maps that follow the camera, fitted to what it sees within the light's
+  `shadow_distance` (directional_light field, default 150 m): sharp near the camera,
+  coarser further out, soft edges that widen with the caster's height (sized by
+  `rt_shadows.softness`, the sun's apparent size, shared with the traced shadows). Most
+  scenes need no tuning; a shorter `shadow_distance` sharpens every cascade.
+  `engine_stats renderer.lights.cascade_splits` shows where the cascades meet and
+  `renderer.gpu` their cost (`shadow_cascades`); graphics settings `shadow_cascades` (1-4)
+  and `shadow_cascade_size` (1024-4096) trade quality for cost. With ray-traced shadows on
+  (the default where available) the main pass reads the traced mask instead: set
+  `ray_traced_shadows: false` (`save: false`) to look at the maps.
 
 ## Building scenes
 

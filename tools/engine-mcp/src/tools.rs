@@ -163,8 +163,7 @@ fn entity_fields() -> serde_json::Map<String, Value> {
     spot["inner_angle_deg"] = json!({ "type": "number" });
     spot["outer_angle_deg"] = json!({ "type": "number" });
     let mut directional = light_common;
-    directional["shadow_size"] =
-        json!({ "type": "number", "description": "Half-size of the shadow map area in meters" });
+    directional["shadow_distance"] = json!({ "type": "number", "description": "How far from the camera (meters of view depth, default 150) the light's shadows reach, in cascaded shadow maps that are sharp near the camera and coarser further out; they fade out toward it. The cascades shrink to what is in view when that is nearer, so most scenes need no tuning; a shorter distance sharpens every cascade" });
 
     let animator = json!({
         "libraries": { "type": "array", "items": { "type": "string" }, "description": "Replace the clip library files (project-relative glTF/GLB paths)" },
@@ -795,6 +794,8 @@ pub fn tools() -> Vec<Tool> {
                 "sharpness": { "type": "number", "description": "FSR sharpening 0-1" },
                 "shadow_atlas_size": { "type": "integer", "enum": [1024, 2048, 4096, 8192], "description": "Most texels across the point/spot light shadow atlas (default 8192 native, 4096 web; 8 bytes a texel): room for more shadowed lights at higher resolution. engine_stats renderer.lights shows its use" },
                 "shadow_updates_per_frame": { "type": "integer", "description": "Point/spot light shadow views redrawn per frame at most (default 48; views wait at most a few frames). engine_stats renderer.shadow_views_deferred counts the waiting ones" },
+                "shadow_cascades": { "type": "integer", "minimum": 1, "maximum": 4, "description": "Shadow map cascades per directional light (default 4): more keep sun shadows sharp further from the camera. engine_stats renderer.lights shows the cascades' split depths" },
+                "shadow_cascade_size": { "type": "integer", "enum": [1024, 2048, 4096], "description": "Texels across each directional shadow cascade (default 2048; 8 bytes a texel with its static casters' copy)" },
                 "ray_tracing": { "type": "boolean", "description": "Hardware ray tracing at all (default true). false: every effect takes its raster version (shadow maps, screen-space reflections and AO, see-through glass, no traced GI or path tracing) and light probes show their bakes, as on a GPU without ray tracing (or the web); the individual choices are kept for when it is switched back on" },
                 "ray_traced_shadows": { "type": "boolean" },
                 "reflections": { "type": "string", "enum": ["off", "screen_space", "ray_traced"] },
@@ -988,7 +989,7 @@ pub fn tools() -> Vec<Tool> {
             schema: object(json!({
                 "texture": { "type": "string", "description": "Target name, e.g. gbuffer.normal, scene, depth, pt.history.specular; omit to list them" },
                 "rect": { "type": "array", "items": { "type": "integer" }, "minItems": 4, "maxItems": 4, "description": "[x, y, width, height] in the texture's pixels (default the whole texture). Path tracing targets are the scene region's size (half of it with half-resolution global illumination)" },
-                "layer": { "type": "integer", "description": "Array layer (shadow maps: one per light, six per point light)" },
+                "layer": { "type": "integer", "description": "Array layer (shadows.directional: light * cascades + cascade, the nearest cascade first)" },
                 "points": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } }, "description": "[[x, y], ...] pixels (inside rect) whose raw values to return" },
                 "channels": { "type": "string", "description": "One to three of r, g, b, a for the image (default rgb, or the texture's own channels when fewer)" },
                 "mode": { "type": "string", "enum": ["range", "tonemap", "false_color"], "description": "range (default): linear from range low to high; tonemap: HDR colour through Reinhard and sRGB; false_color: one channel through a Turbo colour map" },

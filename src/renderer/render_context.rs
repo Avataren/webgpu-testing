@@ -19,9 +19,18 @@ pub enum CustomRenderStage {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShadowPassStage {
-    Directional { light_index: u32 },
-    Spot { light_index: u32 },
-    Point { light_index: u32, face_index: u32 },
+    /// One of a directional light's cascades (0 nearest the camera).
+    Directional {
+        light_index: u32,
+        cascade: u32,
+    },
+    Spot {
+        light_index: u32,
+    },
+    Point {
+        light_index: u32,
+        face_index: u32,
+    },
 }
 
 /// Convenience alias for the callback type accepted by the renderer.

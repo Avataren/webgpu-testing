@@ -207,41 +207,9 @@ pub(crate) struct Visibility {
 }
 
 impl Visibility {
-    /// Test every batch (and the instances of those with bounds) against `frustum`.
-    /// `bounds(batch)` gives a batch's union sphere and per-instance spheres (empty when
-    /// its instances' extents are not known, so they all count as visible).
-    pub(crate) fn compute<'a, I>(&mut self, batches: I, frustum: &Frustum)
-    where
-        I: IntoIterator<Item = (Option<Sphere>, &'a [Sphere])>,
-    {
-        self.batches.clear();
-        self.ranges.clear();
-        self.instances.clear();
-        for (whole, spheres) in batches {
-            let start = self.instances.len() as u32;
-            if spheres.is_empty() {
-                self.batches.push(true);
-                self.ranges.push((start, 0));
-                continue;
-            }
-            if whole.is_some_and(|sphere| !frustum.intersects(sphere)) {
-                self.batches.push(false);
-                self.ranges.push((start, 0));
-                continue;
-            }
-            let mut any = false;
-            for sphere in spheres {
-                let visible = frustum.intersects(*sphere);
-                any |= visible;
-                self.instances.push(visible);
-            }
-            self.batches.push(any);
-            self.ranges.push((start, spheres.len() as u32));
-        }
-    }
-
-    /// As [`Self::compute`] for `batches`, keeping only the instances `keep(batch,
-    /// instance)` accepts (instances without bounds pass the frustum).
+    /// Test every batch of `batches` (and the instances of those with bounds) against
+    /// `frustum`, keeping only the instances `keep(batch, instance)` accepts (instances
+    /// without bounds pass the frustum).
     pub(crate) fn compute_filtered(
         &mut self,
         batches: &crate::renderer::internal::PreparedBatches,
@@ -505,33 +473,9 @@ mod tests {
     }
 
     #[test]
-    fn visibility_tracks_batches_and_instances() {
-        let frustum = Frustum::from_view_proj(camera());
-        let near = Sphere {
-            center: Vec3::ZERO,
-            radius: 0.5,
-        };
-        let far = Sphere {
-            center: Vec3::new(0.0, 0.0, 50.0),
-            radius: 0.5,
-        };
-        let mixed = [near, far, near];
-        let gone = [far, far];
-        let mut visibility = Visibility::default();
-        visibility.compute(
-            [
-                (Sphere::around(&mixed), &mixed[..]),
-                (Sphere::around(&gone), &gone[..]),
-                (None, &[][..]),
-            ],
-            &frustum,
-        );
-        assert!(visibility.batch(0));
-        assert_eq!(visibility.instances(0), &[true, false, true]);
-        assert!(!visibility.batch(1));
-        assert!(visibility.batch(2));
-        assert!(visibility.instances(2).is_empty());
+    fn instances_without_flags_are_visible() {
         assert!(instance_visible(&[], 7));
         assert!(!instance_visible(&[false], 0));
+        assert!(instance_visible(&[false, true], 1));
     }
 }

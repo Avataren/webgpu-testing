@@ -323,6 +323,7 @@ pub(crate) fn shadow_pass(
         skip,
         mask_textures.as_ref(),
         texture_generation,
+        &mut |encoder| renderer.gpu_timer.mark(encoder, "shadow_cascades"),
     );
 
     if custom_shadow_enabled {

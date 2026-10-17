@@ -9,6 +9,7 @@
 
 pub mod batches;
 pub mod buffers;
+pub(crate) mod cascades;
 pub mod context;
 pub(crate) mod culling;
 pub mod environment;

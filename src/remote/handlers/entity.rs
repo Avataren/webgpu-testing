@@ -254,7 +254,7 @@ fn point_light_json(light: &PointLight) -> Value {
 }
 
 fn directional_light_json(light: &DirectionalLight) -> Value {
-    json!({ "color": vec3_json(light.color), "intensity": round(light.intensity), "shadow_size": round(light.shadow_size) })
+    json!({ "color": vec3_json(light.color), "intensity": round(light.intensity), "shadow_distance": round(light.shadow_distance) })
 }
 
 fn spot_light_json(light: &SpotLight) -> Value {
@@ -1204,8 +1204,8 @@ pub(crate) fn patch_light_or_camera(
         "directional_light" => {
             patch_component(world, entity, value, |light: &mut DirectionalLight, v| {
                 patch_light_common(&mut light.color, &mut light.intensity, v)?;
-                if let Some(size) = opt_f64(v, "shadow_size") {
-                    light.shadow_size = size as f32;
+                if let Some(distance) = opt_f64(v, "shadow_distance") {
+                    light.shadow_distance = (distance as f32).max(1.0);
                 }
                 Ok(())
             })?

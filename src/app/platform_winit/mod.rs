@@ -441,6 +441,7 @@ where
             renderer.set_vsync(settings.vsync);
             renderer.set_shadow_atlas_size(settings.shadow_atlas_size);
             renderer.set_shadow_updates_per_frame(settings.shadow_updates_per_frame);
+            renderer.set_shadow_cascades(settings.shadow_cascades, settings.shadow_cascade_size);
         }
         let manage_window = crate::graphics_settings::graphics_settings().manage_window;
         // The browser decides the canvas size.

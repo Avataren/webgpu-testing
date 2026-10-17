@@ -9,6 +9,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 pub const MAX_DIRECTIONAL_LIGHTS: usize = 4;
+/// Shadow map cascades per directional light at most (see `internal/cascades.rs`).
+pub const MAX_SHADOW_CASCADES: usize = 4;
 /// Point and spot lights together. Beyond this, the lights nearest the camera are kept.
 pub const MAX_LOCAL_LIGHTS: usize = 4096;
 /// Point and spot lights with shadow maps at once (each a slot of the shadows uniform);
@@ -163,7 +165,7 @@ fn safe_normalize(vec: Vec3, fallback: Vec3) -> Vec3 {
 #[derive(Clone, Default)]
 pub struct LightsData {
     directional: Vec<DirectionalLightRaw>,
-    directional_shadows: Vec<DirectionalShadowRaw>,
+    directional_shadows: Vec<Option<DirectionalShadowData>>,
     local: Vec<LocalLight>,
 }
 
@@ -187,8 +189,7 @@ impl LightsData {
     ) {
         self.directional
             .push(DirectionalLightRaw::new(direction, color, intensity));
-        self.directional_shadows
-            .push(DirectionalShadowRaw::from_data(shadow));
+        self.directional_shadows.push(shadow);
     }
 
     /// Add a point or spot light.
@@ -213,7 +214,8 @@ impl LightsData {
         &self.directional[..count]
     }
 
-    pub fn directional_shadows(&self) -> &[DirectionalShadowRaw] {
+    /// Per directional light (as [`Self::directional_lights`]), how it casts shadows.
+    pub fn directional_shadows(&self) -> &[Option<DirectionalShadowData>] {
         let count = self.directional_shadows.len().min(MAX_DIRECTIONAL_LIGHTS);
         &self.directional_shadows[..count]
     }
@@ -246,36 +248,6 @@ impl LightsData {
             kept
         });
     }
-
-    /// Shift each directional shadow projection so the world lands on the same
-    /// `map_size` texel grid every frame. The shadow area follows the camera; without
-    /// this its edges crawl across the texels as it moves and shadow borders shimmer.
-    pub fn snap_directional_shadows(&mut self, map_size: u32) {
-        if map_size == 0 {
-            return;
-        }
-        let texel = 2.0 / map_size as f32;
-        for shadow in &mut self.directional_shadows {
-            if shadow.params[0] == 0.0 {
-                continue;
-            }
-            let view_proj = Mat4::from_cols_array_2d(&shadow.view_proj);
-            shadow.view_proj = snap_to_texel_grid(view_proj, texel).to_cols_array_2d();
-        }
-    }
-}
-
-/// `view_proj` (orthographic) moved by under a texel so the world origin falls on a
-/// texel corner: every world point then keeps its place within its texel as the
-/// projection slides by whole texels.
-fn snap_to_texel_grid(view_proj: Mat4, texel: f32) -> Mat4 {
-    let origin = view_proj * glam::Vec4::W;
-    if origin.w.abs() < 1e-6 {
-        return view_proj;
-    }
-    let ndc = origin.truncate().truncate() / origin.w;
-    let snapped = (ndc / texel).round() * texel;
-    Mat4::from_translation((snapped - ndc).extend(0.0)) * view_proj
 }
 
 // All raw light/shadow structs are uploaded directly to GPU buffers.  WebGPU
@@ -302,39 +274,41 @@ impl DirectionalLightRaw {
     }
 }
 
-#[derive(Clone, Copy)]
+/// How a directional light casts shadows: cascaded shadow maps that follow the camera
+/// (the renderer fits them to the view each frame).
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DirectionalShadowData {
-    pub view_proj: Mat4,
+    /// The farthest from the camera (in view depth, meters) its shadows reach; they fade
+    /// out toward it. The cascades cover less when everything in view is nearer.
+    pub distance: f32,
 }
 
+/// One cascade of a directional light's shadow maps (`ShadowCascade` in shadows.wgsl).
 #[repr(C, align(16))]
-#[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
-pub struct DirectionalShadowRaw {
-    pub view_proj: [[f32; 4]; 4],
-    pub params: [f32; 4],
-    pub _padding: [f32; 4],
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug)]
+pub struct ShadowCascadeRaw {
+    /// Light-space x and y to map coordinates: `uv = xy * [x, y] + [z, w]`.
+    pub uv_transform: [f32; 4],
+    /// x, y: light-space z to depth (`z * x + y`); z: a texel's width in meters; w: 0.
+    pub depth_transform: [f32; 4],
 }
 
-impl DirectionalShadowRaw {
-    fn disabled() -> Self {
-        Self {
-            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
-            params: [0.0, 0.0, 0.0, 0.0],
-            _padding: [0.0; 4],
-        }
-    }
-
-    fn from_data(data: Option<DirectionalShadowData>) -> Self {
-        if let Some(data) = data {
-            Self {
-                view_proj: data.view_proj.to_cols_array_2d(),
-                params: [1.0, 0.0, 0.0, 0.0],
-                _padding: [0.0; 4],
-            }
-        } else {
-            Self::disabled()
-        }
-    }
+/// A directional light's cascaded shadow maps (`DirectionalShadow` in shadows.wgsl).
+#[repr(C, align(16))]
+#[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug)]
+pub struct DirectionalShadowRaw {
+    /// World to light space (a rotation: the light shines along -z).
+    pub light_view: [[f32; 4]; 4],
+    pub cascades: [ShadowCascadeRaw; MAX_SHADOW_CASCADES],
+    /// x: cascades (0: no shadow maps), y: the first one's layer of the cascade maps, z:
+    /// texels across a map, w: tan of half the light's apparent size (soft shadows).
+    pub params: [f32; 4],
+    /// The camera's view depth of a point: `dot(xyz, point) + w`.
+    pub view_depth: [f32; 4],
+    /// x: view depth where the shadows start to fade out, y: 1 / the fade's length (0:
+    /// no fade), z: the widest soft shadow edge in meters (how far the filter looks for
+    /// casters), w: 0.
+    pub fade: [f32; 4],
 }
 
 /// A point or spot light in the lights buffer (`LocalLight` in lighting_common.wgsl).
@@ -426,20 +400,28 @@ pub struct LocalShadowRaw {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq)]
 pub struct ShadowsUniform {
+    /// x: directional lights, y: local shadow slots, z: the frame's noise index (soft
+    /// shadow filter rotation), w: 0.
     pub counts: [u32; 4],
     pub directionals: [DirectionalShadowRaw; MAX_DIRECTIONAL_LIGHTS],
     pub locals: [LocalShadowRaw; MAX_SHADOWED_LOCAL_LIGHTS],
 }
 
 impl ShadowsUniform {
-    /// The directional shadows of `data` and the local shadow slots `locals`.
-    pub fn new(data: &LightsData, locals: &[LocalShadowRaw]) -> Self {
+    /// The directional lights' cascades `directionals`, the local shadow slots `locals`,
+    /// and the noise index `frame`.
+    pub fn new(
+        directionals: &[DirectionalShadowRaw],
+        locals: &[LocalShadowRaw],
+        frame: u32,
+    ) -> Self {
         let mut uniform = Self::zeroed();
-        let directional = data.directional_shadows();
-        uniform.counts[0] = directional.len() as u32;
-        uniform.directionals[..directional.len()].copy_from_slice(directional);
+        let directional = directionals.len().min(MAX_DIRECTIONAL_LIGHTS);
+        uniform.counts[0] = directional as u32;
+        uniform.directionals[..directional].copy_from_slice(&directionals[..directional]);
         let count = locals.len().min(MAX_SHADOWED_LOCAL_LIGHTS);
         uniform.counts[1] = count as u32;
+        uniform.counts[2] = frame;
         uniform.locals[..count].copy_from_slice(&locals[..count]);
         uniform
     }
@@ -448,24 +430,6 @@ impl ShadowsUniform {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn snapped_shadows_keep_world_points_on_the_texel_grid() {
-        let texel = 2.0 / 1024.0;
-        let light_dir = Vec3::new(0.3, -1.0, 0.2).normalize();
-        let proj = Mat4::orthographic_rh(-20.0, 20.0, -20.0, 20.0, 0.1, 200.0);
-        let point = glam::Vec4::new(3.3, 0.7, -5.1, 1.0);
-        // The same world point lands at the same sub-texel offset whatever the focus.
-        let fraction = |focus: Vec3| {
-            let view = Mat4::look_at_rh(focus - light_dir * 100.0, focus, Vec3::Z);
-            let ndc = snap_to_texel_grid(proj * view, texel) * point;
-            let texels = ndc.truncate().truncate() / texel;
-            texels - texels.floor()
-        };
-        let a = fraction(Vec3::new(0.0, 0.0, 0.0));
-        let b = fraction(Vec3::new(0.123, 0.0, 0.457));
-        assert!((a - b).abs().max_element() < 1e-2, "{a:?} vs {b:?}");
-    }
 
     #[test]
     fn local_lights_pack_their_cone_shadow_slot_and_mask_bit() {
@@ -582,6 +546,11 @@ mod tests {
 
         assert_eq!(align_of::<DirectionalLightRaw>(), 16);
         assert_eq!(align_of::<DirectionalShadowRaw>(), 16);
+        assert_eq!(size_of::<ShadowCascadeRaw>(), 32);
+        assert_eq!(
+            size_of::<DirectionalShadowRaw>(),
+            64 + 32 * MAX_SHADOW_CASCADES + 48
+        );
         assert_eq!(size_of::<LocalLightRaw>(), 64);
         assert_eq!(size_of::<LightsHeader>() as u64, LOCAL_LIGHTS_OFFSET);
         assert_eq!(size_of::<LocalShadowRaw>(), 496);

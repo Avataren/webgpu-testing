@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 
 use crate::renderer::shader_source::wgsl;
 use crate::renderer::{
-    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS},
+    lights::{MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS, MAX_SHADOW_CASCADES},
     MAX_TEXTURES,
 };
 
@@ -75,6 +75,7 @@ impl ShaderBuilder {
             "MAX_SHADOWED_LOCAL_LIGHTS",
             MAX_SHADOWED_LOCAL_LIGHTS as u32,
         );
+        self.set_constant("MAX_SHADOW_CASCADES", MAX_SHADOW_CASCADES as u32);
         self.set_constant(
             "MAX_TEXTURES",
             u32::try_from(MAX_TEXTURES).expect("MAX_TEXTURES must fit in u32"),

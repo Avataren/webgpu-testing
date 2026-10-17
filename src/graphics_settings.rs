@@ -77,6 +77,12 @@ pub struct GraphicsSettings {
     /// and CPU time, and the moving shadows of lower-ranked lights then trail by a frame or
     /// more.
     pub shadow_updates_per_frame: u32,
+    /// Shadow map cascades per directional light (1 to 4): more keep the sun's shadows
+    /// sharp further from the camera, each a pass over the casters it sees when it moves.
+    pub shadow_cascades: u32,
+    /// Texels across each cascade's map (1024, 2048 or 4096): sharper shadows at that
+    /// size squared times 8 bytes per cascade.
+    pub shadow_cascade_size: u32,
     /// Hardware ray tracing at all. Off, every effect takes its raster version (shadow
     /// maps, screen-space reflections and ambient occlusion, see-through glass, no traced
     /// global illumination or path tracing) and light probes show their bakes, as on a
@@ -118,6 +124,8 @@ impl Default for GraphicsSettings {
             sharpness: 0.5,
             shadow_atlas_size: Self::DEFAULT_SHADOW_ATLAS_SIZE,
             shadow_updates_per_frame: Self::DEFAULT_SHADOW_UPDATES_PER_FRAME,
+            shadow_cascades: Self::DEFAULT_SHADOW_CASCADES,
+            shadow_cascade_size: Self::DEFAULT_SHADOW_CASCADE_SIZE,
             ray_tracing: true,
             ray_traced_shadows: true,
             reflections: EffectQuality::RayTraced,
@@ -164,6 +172,10 @@ impl GraphicsSettings {
     pub const DEFAULT_SHADOW_UPDATES_PER_FRAME: u32 = 48;
     /// Shadow atlas sizes offered.
     pub const SHADOW_ATLAS_SIZES: [u32; 4] = [1024, 2048, 4096, 8192];
+    pub const DEFAULT_SHADOW_CASCADES: u32 = 4;
+    pub const DEFAULT_SHADOW_CASCADE_SIZE: u32 = 2048;
+    /// Cascade map sizes offered.
+    pub const SHADOW_CASCADE_SIZES: [u32; 3] = [1024, 2048, 4096];
 
     /// Render scales offered as presets (FSR's quality modes).
     pub const RENDER_SCALE_PRESETS: [(&'static str, f32); 5] = [
@@ -248,6 +260,13 @@ impl GraphicsSettings {
             .map(|size| [size[0].min(16384), size[1].min(16384)]);
         self.shadow_atlas_size = self.shadow_atlas_size.clamp(1024, 8192).next_power_of_two();
         self.shadow_updates_per_frame = self.shadow_updates_per_frame.clamp(1, 1024);
+        self.shadow_cascades = self
+            .shadow_cascades
+            .clamp(1, crate::renderer::MAX_SHADOW_CASCADES as u32);
+        self.shadow_cascade_size = self
+            .shadow_cascade_size
+            .clamp(1024, 4096)
+            .next_power_of_two();
         self
     }
 }

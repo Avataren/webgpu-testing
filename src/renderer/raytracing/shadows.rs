@@ -306,9 +306,7 @@ fn traced_lights(lights: &LightsData, locals: &[usize]) -> (RtShadowUniform, u32
         .enumerate()
         .take(RT_SHADOW_LIGHTS)
     {
-        let casts = directional_shadows
-            .get(index)
-            .is_some_and(|shadow| shadow.params[0] > 0.5);
+        let casts = directional_shadows.get(index).is_some_and(Option::is_some);
         let [x, y, z, _] = light.direction;
         let length = (x * x + y * y + z * z).sqrt();
         if casts && length > 1e-6 {

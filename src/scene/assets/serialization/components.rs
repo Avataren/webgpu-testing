@@ -272,11 +272,19 @@ impl From<SerializedMeshBounds> for MeshBounds {
     }
 }
 
+/// A directional light. Scenes saved before cascaded shadows have a `shadow_size` (the
+/// half-size of one fixed shadow area) instead of `shadow_distance`; it no longer applies
+/// and is ignored, and those lights get the default distance.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SerializedDirectionalLight {
     pub color: [f32; 3],
     pub intensity: f32,
-    pub shadow_size: f32,
+    #[serde(default = "default_shadow_distance")]
+    pub shadow_distance: f32,
+}
+
+fn default_shadow_distance() -> f32 {
+    DirectionalLight::DEFAULT_SHADOW_DISTANCE
 }
 
 impl From<DirectionalLight> for SerializedDirectionalLight {
@@ -284,19 +292,18 @@ impl From<DirectionalLight> for SerializedDirectionalLight {
         Self {
             color: light.color.to_array(),
             intensity: light.intensity,
-            shadow_size: light.shadow_size,
+            shadow_distance: light.shadow_distance,
         }
     }
 }
 
 impl From<SerializedDirectionalLight> for DirectionalLight {
     fn from(serialized: SerializedDirectionalLight) -> Self {
-        let mut light = DirectionalLight::new(
+        DirectionalLight::new(
             glam::Vec3::from_array(serialized.color),
             serialized.intensity,
-        );
-        light.shadow_size = serialized.shadow_size;
-        light
+        )
+        .with_shadow_distance(serialized.shadow_distance)
     }
 }
 

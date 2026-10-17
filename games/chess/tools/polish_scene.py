@@ -60,7 +60,7 @@ def main():
                  depth_of_field={"enabled": True, "mode": "manual", "near_start": 0, "near_end": 3, "far_start": 32, "far_end": 48, "max_blur": 40},
                  color={"temperature": 6, "saturation": 0.98, "contrast": 1.04},
                  sharpen={"enabled": True, "strength": 0.18}, anti_aliasing="taa")
-        mcp.call("entity_update", entity="Warm key", directional_light={"color": "#ffe4bf", "intensity": 1.8, "shadow_size": 20})
+        mcp.call("entity_update", entity="Warm key", directional_light={"color": "#ffe4bf", "intensity": 1.8})
         mcp.call("entity_update", entity="Cool fill", directional_light={"color": "#c6d8ef", "intensity": 0.85}, cast_shadow=False)
         mcp.call("entity_update", entity="Studio floor", visible=False)
         if "script" in mcp.call("entity_get", entity="Scene labels")["components"]:

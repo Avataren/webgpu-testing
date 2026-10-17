@@ -286,14 +286,6 @@ impl PreparedBatches {
         culled
     }
 
-    /// Every batch's union sphere and instance spheres, in `all()` order, for
-    /// [`crate::renderer::internal::culling::Visibility::compute`].
-    pub(crate) fn bounds(&self) -> impl Iterator<Item = (Option<Sphere>, &[Sphere])> {
-        self.batches
-            .iter()
-            .map(|batch| (batch.bounding_sphere, batch.bounds.as_slice()))
-    }
-
     pub(crate) fn opaque(&self) -> &[OrderedBatch] {
         &self.batches[self.opaque_range.clone()]
     }

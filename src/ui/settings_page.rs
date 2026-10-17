@@ -358,6 +358,33 @@ fn quality_rows(
              lower-ranked lights trail when the budget runs out",
     );
     ui.end_row();
+
+    // The sun's shadows: cascades and their maps' size (8 bytes a texel with their static
+    // casters' copy).
+    ui.label("Sun shadow cascades");
+    ui.add(egui::Slider::new(
+        &mut settings.shadow_cascades,
+        1..=crate::renderer::MAX_SHADOW_CASCADES as u32,
+    ))
+    .on_hover_text(
+        "Shadow maps a directional light's shadows are split into by distance: more keep \
+         them sharp further from the camera",
+    );
+    ui.end_row();
+
+    let cascade_label =
+        |size: u32| format!("{size} ({} MiB each)", (u64::from(size).pow(2) * 8) >> 20);
+    ui.label("Sun shadow resolution");
+    egui::ComboBox::from_id_salt("engine_settings_shadow_cascade_size")
+        .selected_text(cascade_label(settings.shadow_cascade_size))
+        .show_ui(ui, |ui| {
+            for size in GraphicsSettings::SHADOW_CASCADE_SIZES {
+                ui.selectable_value(&mut settings.shadow_cascade_size, size, cascade_label(size));
+            }
+        })
+        .response
+        .on_hover_text("Texels across each cascade's map: sharper sun shadows");
+    ui.end_row();
 }
 
 fn ray_tracing_rows(

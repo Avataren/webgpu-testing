@@ -1231,7 +1231,7 @@ impl ScriptCommands {
                     json!({
                         "color": vec3_to_json(value.color),
                         "intensity": value.intensity,
-                        "shadow_size": value.shadow_size
+                        "shadow_distance": value.shadow_distance
                     })
                 })
             }

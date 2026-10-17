@@ -129,6 +129,40 @@ its TAA jitter and texture LOD bias depend on both.
   come from the 12 lights bringing the most light to the casters. A light without a
   `range` gets one where its inverse-square falloff drops below a small cutoff, and is
   faded out toward it like any other.
+- **Directional light shadows** (`renderer/internal/cascades.rs`, `shadows.rs`,
+  `shader/shadows.wgsl`): each shadow-casting directional light has up to 4 cascades
+  (graphics setting `shadow_cascades`), layers `light * cascades + cascade` of one
+  Depth32Float array of `shadow_cascade_size` (2048) texels across. Each frame
+  (`ShadowResources::plan_directional`, in `prepare_lights`) the cascades are fitted to the
+  unjittered camera: the view depths they cover run from the nearest receiver the camera
+  sees to the farthest (sphere bounds of the visible opaque and transparent instances, the
+  whole view when one has none), within the light's `shadow_distance` (default 150 m) and
+  the camera's far plane, both ends rounded outward in steps of 2^(1/8) so they hold still
+  while the view barely changes. That range is split mostly logarithmically (lambda 0.9).
+  A cascade covers the sphere around its slice of the view, whose size depends only on the
+  projection (kept with 8% hysteresis), in a light space that only rotates with the light,
+  centred on whole texels: a world point keeps its place in its texel as the camera moves
+  or turns, so edges do not shimmer. Its depth range reaches from the sphere's far side
+  back past the caster nearest the light (rounded in coarse steps); casters nearer the
+  light than that (no bounds) are flattened onto the near plane by the shadow vertex
+  shader. Casters under half a texel are left out. A cascade's map is kept while its view
+  and casters stay; when only dynamic casters changed (as for local faces, below) it is
+  rebuilt from a static-casters copy in a second array, restored only in the texel
+  rectangle the dynamic casters covered last frame or cover now (a scissored
+  fullscreen-triangle depth copy), then those casters are drawn; when the camera or light
+  moved it, it is drawn anew. The two farthest cascades take turns while the camera moves
+  (each keeps last frame's view every other frame). The shaders pick, per point, the
+  nearest cascade whose map holds it (inside its square, with room for the filter, and
+  before its far plane) rather than by view depth, so a cascade a frame behind still
+  serves what it covers; the last few percent of a map blend into the next cascade, and
+  shadows cut off by the shadow distance fade out over its last tenth. Filtering is
+  percentage-closer soft shadows: 12 point taps look for casters within the light's
+  apparent size (`rt_shadows.softness`, the same sun size the ray-traced shadows use)
+  times 32 m, then 16 bilinear compare taps over the penumbra those casters give (1 to 16
+  texels), both on a Vogel disc turned per pixel and frame for TAA to average, with a
+  receiver-plane depth slope from the normal against acne under wide filters; points with
+  no casters (or only casters) in reach skip the filter. `engine_stats` shows the splits
+  (`renderer.lights.cascade_splits`) and the GPU stage `shadow_cascades`.
 - **Local light shadows** (`renderer/internal/shadow_atlas.rs`, `shadows.rs`,
   `shadow_casters.rs`): every point and spot light's shadow maps are square tiles of one
   Depth32Float atlas (six cube faces for a point light, one for a spot light), rendered

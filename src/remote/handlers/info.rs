@@ -186,7 +186,13 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
                 "shadow_atlas_used": round(stats.lights.shadow_atlas_used),
                 "cluster_light_indices": stats.lights.cluster_light_indices,
                 "cluster_lights_dropped": stats.lights.cluster_lights_dropped,
-                "note": "local = point and spot lights. shadowed: shadow-casting local lights with a shadow map this frame; ray_traced_shadows: traced into the ray-traced shadow mask instead; over_budget: shadow casters drawn unshadowed for lack of room (atlas or slots). shadow_atlas_size: texels across the point/spot shadow atlas (it grows with demand and shrinks when demand stays low; 0: none), shadow_atlas_used: share of it holding tiles. cluster_light_indices: entries the per-cluster light lists needed when last read back; cluster_lights_dropped: lights left out of clusters for lack of room (the lists grow the next frames).",
+                "shadow_cascades": stats.lights.shadow_cascades,
+                "shadow_cascade_size": stats.lights.shadow_cascade_size,
+                "cascade_splits": stats.lights.cascade_splits[..(stats.lights.shadow_cascades as usize + 1).min(stats.lights.cascade_splits.len())]
+                    .iter()
+                    .map(|depth| round(*depth))
+                    .collect::<Vec<_>>(),
+                "note": "shadow_cascades: the first shadow-casting directional light's cascades (0: none this frame), each shadow_cascade_size texels across; cascade_splits: the view depths in meters where they meet, from the nearest receiver in view to the shadow distance (or the farthest receiver). local = point and spot lights. shadowed: shadow-casting local lights with a shadow map this frame; ray_traced_shadows: traced into the ray-traced shadow mask instead; over_budget: shadow casters drawn unshadowed for lack of room (atlas or slots). shadow_atlas_size: texels across the point/spot shadow atlas (it grows with demand and shrinks when demand stays low; 0: none), shadow_atlas_used: share of it holding tiles. cluster_light_indices: entries the per-cluster light lists needed when last read back; cluster_lights_dropped: lights left out of clusters for lack of room (the lists grow the next frames).",
             }),
             "render_scale": ctx.gpu.renderer.render_scale(),
             "path_traced": stats.path_traced,
@@ -204,7 +210,7 @@ fn stats_now(ctx: &mut RemoteContext<'_, '_>) -> RemoteResult {
             "gpu": ctx.gpu.renderer.gpu_timings().map(|gpu| json!({
                 "total_ms": round(gpu.total_ms),
                 "stages_ms": gpu.stages.iter().map(|(stage, ms)| json!([stage, round(*ms)])).collect::<Vec<_>>(),
-                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; with ray-traced global illumination they are global_illumination (the trace), gi_denoise and gi_composite (full-resolution upsample and add, with the radiance cache copy); reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
+                "note": "GPU time per stage from timestamp queries, a frame or two old. Stages end where the next begins: shadow_cascades is the directional lights' cascaded shadow maps and shadows the point and spot lights' atlas; path_tracing (the trace) and denoise (denoiser and composite) follow the main pass when lighting is path traced; with ray-traced global illumination they are global_illumination (the trace), gi_denoise and gi_composite (full-resolution upsample and add, with the radiance cache copy); reflections, temporal (TAA or upscaling, motion blur) and ambient_occlusion are split out of post-processing when they run; post_process is the rest (bloom, depth of field, exposure, composite)",
             })),
         },
         "assets": {

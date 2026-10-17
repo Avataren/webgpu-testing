@@ -51,7 +51,7 @@ pub use light_probes::{
 };
 pub use lights::{
     DirectionalShadowData, LightsData, LocalLight, SpotCone, MAX_DIRECTIONAL_LIGHTS,
-    MAX_LIGHTS_PER_CLUSTER, MAX_LOCAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS,
+    MAX_LIGHTS_PER_CLUSTER, MAX_LOCAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS, MAX_SHADOW_CASCADES,
 };
 pub use material::Material;
 pub use objects::{MaterialData, ObjectData};

@@ -147,6 +147,12 @@ pub struct LightStats {
     /// they left out for lack of room (the lists then grow).
     pub cluster_light_indices: u32,
     pub cluster_lights_dropped: u32,
+    /// The first shadow-casting directional light's cascades: how many, texels across
+    /// each map, and the view depths where they meet (`cascades + 1` values from the
+    /// nearest receiver to the shadow distance; 0 cascades: no directional shadows).
+    pub shadow_cascades: u32,
+    pub shadow_cascade_size: u32,
+    pub cascade_splits: [f32; crate::renderer::lights::MAX_SHADOW_CASCADES + 1],
 }
 
 impl RendererStats {
@@ -1110,9 +1116,7 @@ impl Renderer {
             self.prev_view_proj = Some(view_proj);
         }
 
-        // Shadow maps that follow the camera stay on one texel grid.
         let mut lights = lights;
-        lights.snap_directional_shadows(self.shadows.directional_map_size());
 
         let mut custom_render = custom_render;
         let custom_shadow_enabled = custom_render
@@ -1581,13 +1585,30 @@ impl Renderer {
             }
         }
         let corners = frustum_corners(unjittered);
-        if self.shadows.plan_local(
+        let cascade_camera = crate::renderer::internal::cascades::CascadeCamera {
+            view: camera.view,
+            projection: camera.projection,
+            near: camera.near,
+            far: camera.far,
+            orthographic: camera.orthographic,
+        };
+        // The sun's apparent size softens shadow-mapped edges as it does traced ones.
+        let sun_size = self.postprocess.settings().rt_shadows.softness;
+        let cascades_recreated = self.shadows.plan_directional(
+            &self.context.device,
+            lights,
+            &cascade_camera,
+            &frame.prepared_batches,
+            sun_size,
+        );
+        let atlas_recreated = self.shadows.plan_local(
             &self.context.device,
             lights,
             &shadow_camera,
             &corners,
             &skip,
-        ) {
+        );
+        if cascades_recreated || atlas_recreated {
             self.lights_buffer.rebuild_bind_group(
                 &self.context.device,
                 &self.shadows,
@@ -1626,7 +1647,11 @@ impl Renderer {
         header.cluster_slices = fields.slices;
         header.grid_origin = fields.grid_origin;
         header.grid_dims = fields.grid_dims;
-        let shadows_uniform = ShadowsUniform::new(lights, &local_shadows.uniforms);
+        let shadows_uniform = ShadowsUniform::new(
+            &self.shadows.directional_frame().uniforms,
+            &local_shadows.uniforms,
+            self.jitter_index % 64,
+        );
         self.lights_buffer.upload(
             &self.context.device,
             &self.context.queue,
@@ -1661,6 +1686,11 @@ impl Renderer {
         self.gpu_timer.mark(&mut frame.encoder, "light_culling");
 
         let atlas = self.shadows.atlas_stats();
+        let cascade_frame = self.shadows.directional_frame();
+        let (cascade_count, cascade_size) = self.shadows.cascades();
+        let mut cascade_splits = [0.0; crate::renderer::lights::MAX_SHADOW_CASCADES + 1];
+        let splits = cascade_frame.splits.len().min(cascade_splits.len());
+        cascade_splits[..splits].copy_from_slice(&cascade_frame.splits[..splits]);
         frame.stats.lights = LightStats {
             directional: directional.len() as u32,
             local: local.len() as u32,
@@ -1671,6 +1701,9 @@ impl Renderer {
             shadow_atlas_used: atlas.used,
             cluster_light_indices: self.light_culling.last_needed,
             cluster_lights_dropped: self.light_culling.last_dropped,
+            shadow_cascades: if splits > 0 { cascade_count as u32 } else { 0 },
+            shadow_cascade_size: cascade_size,
+            cascade_splits,
         };
     }
 
@@ -1707,6 +1740,30 @@ impl Renderer {
 
     pub fn shadow_updates_per_frame(&self) -> u32 {
         self.shadows.update_budget()
+    }
+
+    /// Give each directional light `count` shadow cascades (1 to 4; 0: the default, 4)
+    /// of `size` texels across (0: the default, `RenderSettings::shadow_map_size`).
+    /// More cascades keep shadows sharp further from the camera; each costs a pass over
+    /// the casters in its view when it changes, and `size` squared times 8 bytes.
+    pub fn set_shadow_cascades(&mut self, count: u32, size: u32) {
+        let count = if count == 0 {
+            crate::renderer::internal::shadows::DEFAULT_SHADOW_CASCADES
+        } else {
+            count as usize
+        };
+        let size = if size == 0 {
+            self.settings.shadow_map_size
+        } else {
+            size
+        };
+        self.shadows.set_cascades(&self.context.device, count, size);
+    }
+
+    /// Shadow cascades per directional light and texels across each.
+    pub fn shadow_cascades(&self) -> (u32, u32) {
+        let (count, size) = self.shadows.cascades();
+        (count as u32, size)
     }
 
     /// The shadow state of the point or spot light with key `key` (see

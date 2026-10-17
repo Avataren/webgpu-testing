@@ -1,7 +1,12 @@
-//! Shadow maps: a layer per directional light, and one atlas for every point and spot
-//! light (tiles placed by `shadow_atlas.rs`).
+//! Shadow maps: cascades for each directional light, and one atlas for every point and
+//! spot light (tiles placed by `shadow_atlas.rs`).
 //!
-//! The directional maps follow the camera at `shadow_map_size`. A local light's faces
+//! A directional light has up to four cascades, layers of one array texture, fitted to
+//! the camera's view each frame (`cascades.rs`). A cascade's map is kept while its view
+//! and casters stay as they were. When only dynamic casters changed, it is rebuilt like
+//! a local face (below) from its static casters' depth in a second array, restored only
+//! where dynamic casters were or are; when the camera moved it, it is drawn anew. The two farthest cascades take turns being
+//! redrawn while the camera moves, and keep their last view in between. A local light's faces
 //! (six cube faces for a point light, one for a spot light) are square tiles of the atlas,
 //! sized by how large the light looks on screen and by the shadow budget; each face is
 //! rendered with a small border so the shaders' filter taps stay inside its tile.
@@ -24,7 +29,11 @@ use std::num::NonZeroU64;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
-use crate::renderer::batch::{CullMode, InstanceSource};
+use crate::renderer::batch::{CullMode, RenderPass};
+use crate::renderer::internal::cascades::{
+    cascade_view, caster_reach, fit_receivers, light_rotation, settle_radius, slice_sphere,
+    split_depths, CascadeCamera, CascadeView, ReceiverDepths,
+};
 use crate::renderer::internal::culling::{
     frustum_corners, instance_visible, Frustum, Sphere, Visibility,
 };
@@ -36,8 +45,8 @@ use crate::renderer::internal::{
     DynamicObjectsBuffer, OrderedBatch, PreparedBatches, RenderContext,
 };
 use crate::renderer::lights::{
-    LightsData, LocalShadowRaw, MAX_DIRECTIONAL_LIGHTS, MAX_SHADOWED_LOCAL_LIGHTS,
-    POINT_SHADOW_FACES,
+    DirectionalShadowRaw, LightsData, LocalShadowRaw, ShadowCascadeRaw, MAX_DIRECTIONAL_LIGHTS,
+    MAX_SHADOWED_LOCAL_LIGHTS, MAX_SHADOW_CASCADES, POINT_SHADOW_FACES,
 };
 use crate::renderer::{PipelineBuilder, ShaderBuilder, ShadowPassStage, Vertex};
 
@@ -143,6 +152,14 @@ impl ShadowArray {
     fn array_view(&self) -> &wgpu::TextureView {
         &self.array_view
     }
+
+    fn layers(&self) -> u32 {
+        self.texture.depth_or_array_layers()
+    }
+
+    fn size(&self) -> u32 {
+        self.texture.width()
+    }
 }
 
 /// The local lights' shadow atlas texture.
@@ -174,9 +191,71 @@ impl AtlasTexture {
     }
 }
 
-/// Shadow views a frame can render: one per directional light and per local light face.
+/// Shadow views a frame can render: each directional light's cascades and every local
+/// light face.
 const MAX_SHADOW_VIEWS: usize =
-    MAX_DIRECTIONAL_LIGHTS + MAX_SHADOWED_LOCAL_LIGHTS * POINT_SHADOW_FACES;
+    MAX_DIRECTIONAL_LIGHTS * MAX_SHADOW_CASCADES + MAX_SHADOWED_LOCAL_LIGHTS * POINT_SHADOW_FACES;
+
+/// Cascades and their maps' size unless the settings say otherwise.
+pub(crate) const DEFAULT_SHADOW_CASCADES: usize = 4;
+/// Casters up to this far above a receiver (along the light) widen its soft shadow edge;
+/// with the light's apparent size this sets how far the filter looks for them.
+const MAX_SOFT_SHADOW_CASTER_DISTANCE: f32 = 32.0;
+/// Casters smaller than this share of a cascade's texel are left out of its map: they
+/// would only flicker in and out of it.
+const MIN_CASTER_TEXELS: f32 = 0.5;
+/// Texels around a dynamic caster's footprint that are restored and redrawn with it (the
+/// depth bias and rounding reach a little past its sphere).
+const DYNAMIC_RECT_PAD: i64 = 2;
+
+/// Texels of a cascade's map: x and y from (inclusive) and to (exclusive).
+type TexelRect = [u32; 4];
+
+fn union_rect(a: Option<TexelRect>, b: Option<TexelRect>) -> Option<TexelRect> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some([
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[2].max(b[2]),
+            a[3].max(b[3]),
+        ]),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Where in a cascade's map (`view`, `size` texels across, light space `light_view`) the
+/// casters `spheres` that `frustum` meets land, padded; the whole map for one without
+/// bounds. None when no sphere is in view.
+fn caster_rect(
+    spheres: &[Sphere],
+    frustum: &Frustum,
+    light_view: Mat4,
+    view: &CascadeView,
+    size: u32,
+) -> Option<TexelRect> {
+    let mut rect = None;
+    let [sx, sy, ox, oy] = view.uv_transform;
+    let texels = size as f32;
+    for sphere in spheres.iter().filter(|sphere| frustum.intersects(**sphere)) {
+        if !sphere.radius.is_finite() || !sphere.center.is_finite() {
+            return Some([0, 0, size, size]);
+        }
+        let local = light_view.transform_point3(sphere.center);
+        let (u, v) = (local.x * sx + ox, local.y * sy + oy);
+        let (ru, rv) = (sphere.radius * sx.abs(), sphere.radius * sy.abs());
+        let clamp = |value: f32, pad: i64| ((value as i64) + pad).clamp(0, size as i64) as u32;
+        let texel_rect = [
+            clamp(((u - ru) * texels).floor(), -DYNAMIC_RECT_PAD),
+            clamp(((v - rv) * texels).floor(), -DYNAMIC_RECT_PAD),
+            clamp(((u + ru) * texels).ceil(), DYNAMIC_RECT_PAD),
+            clamp(((v + rv) * texels).ceil(), DYNAMIC_RECT_PAD),
+        ];
+        if texel_rect[0] < texel_rect[2] && texel_rect[1] < texel_rect[3] {
+            rect = union_rect(rect, Some(texel_rect));
+        }
+    }
+    rect
+}
 
 /// What the shadow pass did this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -195,6 +274,46 @@ pub(crate) struct ShadowPassOutcome {
 pub(crate) const DEFAULT_SHADOW_UPDATES_PER_FRAME: u32 = 48;
 /// A face that waited this many frames goes ahead of the others.
 const MAX_FACE_WAIT: u32 = 4;
+
+/// A directional light's cascade, from frame to frame.
+#[derive(Clone, Copy, Default)]
+struct CascadeState {
+    /// The view its map was drawn with (None: its content is not usable).
+    view: Option<CascadeView>,
+    /// Its static casters' depth (in the static layers) is up to date for that view.
+    static_ok: bool,
+    /// Where its map holds dynamic casters, which may have moved since.
+    dynamic_rect: Option<TexelRect>,
+    /// The sphere radius it was fitted with (see `settle_radius`).
+    radius: f32,
+}
+
+/// A directional light's cascades, from frame to frame.
+#[derive(Clone, Copy, Default)]
+struct DirectionalState {
+    light_view: Option<Mat4>,
+    cascades: [CascadeState; MAX_SHADOW_CASCADES],
+}
+
+/// A cascade of this frame: drawn, kept, or (moved) waiting for its turn.
+struct CascadeJob {
+    light: usize,
+    cascade: usize,
+    layer: u32,
+    view: CascadeView,
+    /// It keeps last frame's view and map until its turn comes.
+    deferred: bool,
+}
+
+/// The directional shadows of a frame ([`ShadowResources::plan_directional`]).
+#[derive(Default)]
+pub(crate) struct DirectionalFrame {
+    /// Per directional light (as `LightsData::directional_lights`), its cascades.
+    pub uniforms: Vec<DirectionalShadowRaw>,
+    jobs: Vec<CascadeJob>,
+    /// The view depths where the first shadowed light's cascades meet (for the stats).
+    pub splits: Vec<f32>,
+}
 
 /// What a local light's face holds, from frame to frame.
 struct FaceState {
@@ -247,7 +366,22 @@ pub(crate) struct ShadowAtlasStats {
 }
 
 pub(crate) struct ShadowResources {
+    /// Every directional light's cascades, layer `light * cascades + cascade`; one 1x1
+    /// layer until a light casts shadows.
     directional: ShadowArray,
+    /// The same layers holding only the static casters, made when a cascade first needs
+    /// them, with a bind group per layer for restoring a map from it.
+    directional_static: Option<(ShadowArray, Vec<wgpu::BindGroup>)>,
+    /// Cascades per directional light, and texels across each map.
+    cascade_count: usize,
+    cascade_size: u32,
+    directional_states: [DirectionalState; MAX_DIRECTIONAL_LIGHTS],
+    /// This frame's directional shadows ([`Self::plan_directional`]).
+    directional_frame: DirectionalFrame,
+    /// Frames planned, for the far cascades' turns.
+    frame: u64,
+    /// The largest local light tile.
+    max_local_tile: u32,
     /// Every local light's shadow map tiles; a 1x1 texture until a light needs one.
     atlas: AtlasTexture,
     /// The same tiles holding only the static casters, which each frame's dynamic casters
@@ -273,9 +407,6 @@ pub(crate) struct ShadowResources {
     copy_pipeline: wgpu::RenderPipeline,
     copy_layout: wgpu::BindGroupLayout,
     copy_group: wgpu::BindGroup,
-    /// What each directional map holds: a hash of the inputs it was rendered from (the
-    /// view projection and every caster), or nothing when its content is unknown.
-    directional_cache: [Option<u64>; MAX_DIRECTIONAL_LIGHTS],
     /// Each local light face's state, by light key and face.
     faces: HashMap<(u64, usize), FaceState>,
     /// Which casters stay put.
@@ -300,8 +431,9 @@ impl ShadowResources {
         use crate::renderer::readback::FetchableTexture;
         out.push(FetchableTexture::new(
             "shadows.directional",
-            "Directional shadow maps (light-space depth, 0 near to 1 far): one array layer per \
-             directional light; layers are unused while ray-traced shadows replace them",
+            "Directional shadow cascades (light-space depth, 0 near to 1 far): array layer \
+             light * cascades + cascade, nearest cascade first; layers are unused while \
+             ray-traced shadows replace them",
             &self.directional.texture,
         ));
         out.push(FetchableTexture::new(
@@ -312,20 +444,16 @@ impl ShadowResources {
         ));
     }
 
-    /// `shadow_map_size`: the directional maps' size and the largest local tile;
-    /// `atlas_size`: the largest the local shadow atlas may grow to.
+    /// `shadow_map_size`: the directional cascades' size (until
+    /// [`Self::set_cascades`]) and the largest local tile; `atlas_size`: the largest the
+    /// local shadow atlas may grow to.
     pub(crate) fn new(
         device: &wgpu::Device,
         objects: &DynamicObjectsBuffer,
         shadow_map_size: u32,
         atlas_size: u32,
     ) -> Self {
-        let directional = ShadowArray::new(
-            device,
-            "DirectionalShadowMap",
-            MAX_DIRECTIONAL_LIGHTS as u32,
-            shadow_map_size,
-        );
+        let directional = ShadowArray::new(device, "DirectionalShadowCascades", 1, 1);
         let atlas_size = atlas_size.min(device.limits().max_texture_dimension_2d);
         let planner = ShadowAtlasPlanner::new(atlas_size, shadow_map_size.min(atlas_size / 8));
         let atlas = AtlasTexture::new(device, "LocalShadowAtlas", 1);
@@ -462,6 +590,13 @@ impl ShadowResources {
 
         Self {
             directional,
+            directional_static: None,
+            cascade_count: DEFAULT_SHADOW_CASCADES,
+            cascade_size: shadow_map_size.clamp(256, device.limits().max_texture_dimension_2d),
+            directional_states: [DirectionalState::default(); MAX_DIRECTIONAL_LIGHTS],
+            directional_frame: DirectionalFrame::default(),
+            frame: 0,
+            max_local_tile: shadow_map_size,
             atlas,
             static_atlas,
             planner,
@@ -477,7 +612,6 @@ impl ShadowResources {
             copy_pipeline,
             copy_layout,
             copy_group,
-            directional_cache: [None; MAX_DIRECTIONAL_LIGHTS],
             faces: HashMap::new(),
             casters: CasterTracker::default(),
             update_budget: DEFAULT_SHADOW_UPDATES_PER_FRAME,
@@ -533,13 +667,30 @@ impl ShadowResources {
                 .build()
         }));
         // The maps were drawn without the alpha test.
-        self.directional_cache = [None; MAX_DIRECTIONAL_LIGHTS];
+        self.directional_states = [DirectionalState::default(); MAX_DIRECTIONAL_LIGHTS];
         self.faces.clear();
     }
 
-    /// Width (and height) in texels of the directional shadow maps.
-    pub(crate) fn directional_map_size(&self) -> u32 {
-        self.directional.texture.width()
+    /// Cascades per directional light and texels across each of their maps.
+    pub(crate) fn cascades(&self) -> (usize, u32) {
+        (self.cascade_count, self.cascade_size)
+    }
+
+    /// Give each directional light `count` cascades (1 to 4) of `size` texels across
+    /// (within the device's limit), from the next frame.
+    pub(crate) fn set_cascades(&mut self, device: &wgpu::Device, count: usize, size: u32) {
+        let count = count.clamp(1, MAX_SHADOW_CASCADES);
+        let size = size.clamp(256, device.limits().max_texture_dimension_2d);
+        if (count, size) != (self.cascade_count, self.cascade_size) {
+            self.cascade_count = count;
+            self.cascade_size = size;
+            self.directional_states = [DirectionalState::default(); MAX_DIRECTIONAL_LIGHTS];
+        }
+    }
+
+    /// The directional shadows planned for this frame.
+    pub(crate) fn directional_frame(&self) -> &DirectionalFrame {
+        &self.directional_frame
     }
 
     pub(crate) fn directional_array_view(&self) -> &wgpu::TextureView {
@@ -586,7 +737,7 @@ impl ShadowResources {
             .next_power_of_two()
             .min(device.limits().max_texture_dimension_2d);
         if size != self.planner.max_size() {
-            let max_tile = self.directional_map_size().min(size / 8);
+            let max_tile = self.max_local_tile.min(size / 8);
             self.planner = ShadowAtlasPlanner::new(size, max_tile);
             self.faces.clear();
         }
@@ -679,14 +830,178 @@ impl ShadowResources {
         recreated
     }
 
-    /// Render the directional maps (except those in `skip`, bits as the ray-traced shadow
-    /// mask's 0-3, whose maps nothing reads this frame) and update this frame's local
-    /// faces ([`Self::plan_local`]; see the module comment). A directional map whose
-    /// inputs (the light's view and every caster's geometry, transform and cut-out
-    /// textures, by `texture_generation`) are the same as when it was last rendered is
-    /// kept as it is. Custom passes that draw into the maps (`record_custom_passes`) count
-    /// as dynamic casters in every view; each view updated is listed in
-    /// `custom_invocations` for them.
+    /// Fit each shadow-casting directional light's cascades to `camera` and what it sees
+    /// in `batches` (see `cascades.rs`), and decide which cascades are drawn this frame.
+    /// `sun_size_degrees` is the lights' apparent size, for their soft shadow edges.
+    /// Returns whether the cascade maps were recreated (whoever binds them must rebind).
+    pub(crate) fn plan_directional(
+        &mut self,
+        device: &wgpu::Device,
+        lights: &LightsData,
+        camera: &CascadeCamera,
+        batches: &PreparedBatches,
+        sun_size_degrees: f32,
+    ) -> bool {
+        self.frame += 1;
+        let shadows = lights.directional_shadows();
+        let directional = lights.directional_lights();
+        let count = self.cascade_count;
+        let size = self.cascade_size;
+        let frame = &mut self.directional_frame;
+        frame.uniforms.clear();
+        frame.jobs.clear();
+        frame.splits.clear();
+
+        // Layers by light index, so a light keeps its own when another comes or goes.
+        let layers = shadows
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |last| (last + 1) * count) as u32;
+        let mut recreated = false;
+        if layers > 0 && (self.directional.layers() < layers || self.directional.size() != size) {
+            self.directional = ShadowArray::new(device, "DirectionalShadowCascades", layers, size);
+            self.directional_static = None;
+            self.directional_states = [DirectionalState::default(); MAX_DIRECTIONAL_LIGHTS];
+            recreated = true;
+        }
+        if layers == 0 {
+            frame
+                .uniforms
+                .resize(directional.len(), DirectionalShadowRaw::zeroed());
+            return recreated;
+        }
+
+        // The depths of what the camera sees that can receive a shadow (a batch without
+        // bounds: anything, so the whole view counts).
+        let receiver_batches = || {
+            batches
+                .all()
+                .iter()
+                .filter(|batch| matches!(batch.pass, RenderPass::Opaque | RenderPass::Transparent))
+        };
+        let receivers = if receiver_batches()
+            .any(|batch| batch.bounds.is_empty() && !batch.instances.is_empty())
+        {
+            ReceiverDepths::Unknown
+        } else {
+            ReceiverDepths::of(
+                camera,
+                receiver_batches().flat_map(|batch| {
+                    batch
+                        .bounds
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, sphere)| {
+                            batch
+                                .camera_visible
+                                .get(index)
+                                .copied()
+                                .unwrap_or(true)
+                                .then_some(sphere)
+                        })
+                }),
+            )
+        };
+        let casters = || {
+            batches
+                .all()
+                .iter()
+                .filter(|batch| casts_shadows(batch.pass))
+                .flat_map(|batch| batch.bounds.iter())
+        };
+
+        let camera_world = camera.view.inverse();
+        let (eye, forward) = camera.eye_and_forward();
+        let tan_half = (0.5 * sun_size_degrees.max(0.0)).to_radians().tan();
+        for (index, light) in directional.iter().enumerate() {
+            let state = &mut self.directional_states[index];
+            let settings = shadows.get(index).copied().flatten();
+            let range =
+                settings.and_then(|shadow| fit_receivers(camera, receivers, shadow.distance));
+            let (Some(_), Some(range)) = (settings, range) else {
+                // No shadows, or nothing in view to receive them: the maps keep what they
+                // hold for when they are needed again.
+                frame.uniforms.push(DirectionalShadowRaw::zeroed());
+                continue;
+            };
+            let [x, y, z, _] = light.direction;
+            let light_view = light_rotation(Vec3::new(x, y, z));
+            let rotated = state.light_view != Some(light_view);
+            state.light_view = Some(light_view);
+            let reach = caster_reach(light_view, casters());
+            let splits = split_depths(range, count);
+            if frame.splits.is_empty() {
+                frame.splits.extend_from_slice(&splits[..=count]);
+            }
+
+            let mut raw = DirectionalShadowRaw::zeroed();
+            raw.light_view = light_view.to_cols_array_2d();
+            for cascade in 0..count {
+                let cascade_state = &mut state.cascades[cascade];
+                let (center, radius) = slice_sphere(camera, splits[cascade], splits[cascade + 1]);
+                cascade_state.radius = settle_radius(radius, cascade_state.radius);
+                let sphere = Sphere {
+                    center: camera_world.transform_point3(center),
+                    radius: cascade_state.radius,
+                };
+                let view = cascade_view(light_view, sphere, size, reach);
+                // The far cascades take turns while the camera moves them: each keeps its
+                // last view and map every other frame (the shaders pick, per point, the
+                // nearest cascade whose map holds it, so a cascade a frame behind still
+                // serves what it covers).
+                let deferred = cascade >= 2
+                    && !rotated
+                    && cascade_state
+                        .view
+                        .is_some_and(|old| old != view && old.texel == view.texel)
+                    && (self.frame + cascade as u64) % 2 == 1;
+                let used = match (deferred, cascade_state.view) {
+                    (true, Some(old)) => old,
+                    _ => view,
+                };
+                raw.cascades[cascade] = ShadowCascadeRaw {
+                    uv_transform: used.uv_transform,
+                    depth_transform: [
+                        used.depth_transform[0],
+                        used.depth_transform[1],
+                        used.texel,
+                        0.0,
+                    ],
+                };
+                frame.jobs.push(CascadeJob {
+                    light: index,
+                    cascade,
+                    layer: (index * count + cascade) as u32,
+                    view: used,
+                    deferred,
+                });
+            }
+            raw.params = [count as f32, (index * count) as f32, size as f32, tan_half];
+            raw.view_depth = [forward.x, forward.y, forward.z, -forward.dot(eye)];
+            // Shadows cut off by the shadow distance fade out over its last tenth.
+            let fade_length = (range.far * 0.1).max(1e-3);
+            raw.fade = [
+                if range.fade {
+                    range.far - fade_length
+                } else {
+                    f32::MAX
+                },
+                if range.fade { 1.0 / fade_length } else { 0.0 },
+                tan_half * MAX_SOFT_SHADOW_CASTER_DISTANCE,
+                0.0,
+            ];
+            frame.uniforms.push(raw);
+        }
+        recreated
+    }
+
+    /// Draw this frame's directional cascades ([`Self::plan_directional`]) except those of
+    /// the lights in `skip` (bits as the ray-traced shadow mask's 0-3, whose maps nothing
+    /// reads this frame), and update this frame's local faces ([`Self::plan_local`]; see
+    /// the module comment). Custom passes that draw into the maps (`record_custom_passes`)
+    /// count as dynamic casters in every view; each view updated is listed in
+    /// `custom_invocations` for them. `after_cascades` runs between the cascades and the
+    /// local faces (a GPU timer mark).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn render(
         &mut self,
@@ -701,6 +1016,7 @@ impl ShadowResources {
         skip: u32,
         mask_textures: Option<&MaskTextures>,
         texture_generation: u64,
+        after_cascades: &mut dyn FnMut(&mut wgpu::CommandEncoder),
     ) -> ShadowPassOutcome {
         let mut outcome = ShadowPassOutcome::default();
         let mesh_identity = |batch: &OrderedBatch| {
@@ -708,35 +1024,89 @@ impl ShadowResources {
                 .mesh(batch)
                 .map(|mesh| std::sync::Arc::as_ptr(mesh.shared_data()) as usize as u64)
         };
-        let casters = if record_custom_passes {
-            None
-        } else {
-            casters_signature(batches, mesh_identity, texture_generation)
-        };
+        // Which casters stay put, and where static ones changed (`shadow_casters.rs`).
+        let changes = self
+            .casters
+            .update(batches, mesh_identity, texture_generation);
 
-        // Directional layers to render.
-        let mut directional: Vec<(usize, Mat4, Option<u64>)> = Vec::new();
-        for (index, shadow) in lights.directional_shadows().iter().enumerate() {
-            if shadow.params[0] == 0.0 {
+        // Cascades to draw: anew when the camera or light moved them (or static casters in
+        // view changed and nothing moves there), rebuilt from their static casters' depth
+        // when dynamic casters are in view (or were), else kept as they are. A rebuild
+        // restores the static depth only where dynamic casters were or are (`restore`; the
+        // whole map after new static depth) and draws those in `dynamic`.
+        enum CascadeWork {
+            Full,
+            Layered {
+                render_static: bool,
+                restore: TexelRect,
+                dynamic: Option<TexelRect>,
+            },
+        }
+        let size = self.directional.size();
+        let mut cascades: Vec<(usize, CascadeWork)> = Vec::new();
+        for (index, job) in self.directional_frame.jobs.iter().enumerate() {
+            let light_view = self.directional_states[job.light]
+                .light_view
+                .unwrap_or(Mat4::IDENTITY);
+            let state = &mut self.directional_states[job.light].cascades[job.cascade];
+            if skip & (1 << job.light) != 0 {
+                // Nothing reads the map this frame; it is drawn again when something does.
+                state.view = None;
+                state.static_ok = false;
                 continue;
             }
-            if skip & (1 << index) != 0 {
-                self.directional_cache[index] = None;
+            if job.deferred {
+                outcome.views_deferred += 1;
                 continue;
             }
-            let key = casters.map(|casters| view_key(casters, &[shadow.view_proj]));
-            if key.is_some() && self.directional_cache[index] == key {
+            let frustum = Frustum::from_view_proj(job.view.view_proj);
+            let static_dirty = changes.all_dirty
+                || changes
+                    .dirty
+                    .iter()
+                    .any(|sphere| frustum.intersects(*sphere));
+            let dynamic = if record_custom_passes {
+                Some([0, 0, size, size])
+            } else {
+                caster_rect(
+                    &changes.dynamic_spheres,
+                    &frustum,
+                    light_view,
+                    &job.view,
+                    size,
+                )
+            };
+            let moved = state.view != Some(job.view);
+            if moved || static_dirty {
+                state.static_ok = false;
+            }
+            let work = if moved || (static_dirty && dynamic.is_none()) {
+                CascadeWork::Full
+            } else if static_dirty || dynamic.is_some() || state.dynamic_rect.is_some() {
+                let render_static = !state.static_ok;
+                CascadeWork::Layered {
+                    render_static,
+                    restore: if render_static {
+                        [0, 0, size, size]
+                    } else {
+                        union_rect(state.dynamic_rect, dynamic).unwrap_or([0, 0, size, size])
+                    },
+                    dynamic,
+                }
+            } else {
                 outcome.views_cached += 1;
                 continue;
+            };
+            if matches!(work, CascadeWork::Layered { .. }) {
+                state.static_ok = true;
             }
-            directional.push((index, Mat4::from_cols_array_2d(&shadow.view_proj), key));
+            state.view = Some(job.view);
+            state.dynamic_rect = dynamic;
+            cascades.push((index, work));
         }
 
         // Local faces to update: where static casters changed, faces lose their static
         // depth; faces with dynamic casters in view (or that held some) are rebuilt.
-        let changes = self
-            .casters
-            .update(batches, mesh_identity, texture_generation);
         if changes.all_dirty {
             self.faces
                 .values_mut()
@@ -830,17 +1200,18 @@ impl ShadowResources {
             outcome.views_deferred += 1;
         }
         jobs.truncate(take);
-        if directional.is_empty() && jobs.is_empty() {
+        if cascades.is_empty() && jobs.is_empty() {
+            after_cascades(encoder);
             return outcome;
         }
 
-        // Every view's projection, one slot each, uploaded at once: directional layers,
-        // then faces.
+        // Every view's projection, one slot each, uploaded at once: cascades, then faces.
         let stride = self.view_stride as usize;
         self.view_scratch.clear();
-        let matrices = directional
+        let cascade_jobs = &self.directional_frame.jobs;
+        let matrices = cascades
             .iter()
-            .map(|(_, matrix, _)| *matrix)
+            .map(|(job, _)| cascade_jobs[*job].view.view_proj)
             .chain(jobs.iter().map(|job| self.local.faces[job.face].view_proj));
         for (slot, matrix) in matrices.enumerate() {
             let uniform = ShadowViewUniform {
@@ -855,35 +1226,125 @@ impl ShadowResources {
             .write_buffer(&self.view_buffer, 0, &self.view_scratch);
 
         let mut visibility = std::mem::take(&mut self.visibility);
-        // Directional layers, a pass each.
-        for (slot, &(index, matrix, key)) in directional.iter().enumerate() {
-            let layer = self.directional.layer_view(index);
-            visibility.compute(batches.bounds(), &Frustum::from_view_proj(matrix));
-            let mut pass = begin_shadow_pass(encoder, layer, true);
-            outcome.draw_calls += self.draw_casters(
-                &mut pass,
-                geometry,
-                batches,
-                objects,
-                mask_textures,
-                (slot * stride) as u32,
-                &visibility,
+        // The static layers, the first time a cascade needs them.
+        let needs_static = cascades.iter().any(|(_, work)| {
+            matches!(
+                work,
+                CascadeWork::Layered {
+                    render_static: true,
+                    ..
+                }
+            )
+        });
+        if needs_static
+            && self.directional_static.as_ref().is_none_or(|(maps, _)| {
+                maps.layers() != self.directional.layers() || maps.size() != self.directional.size()
+            })
+        {
+            let maps = ShadowArray::new(
+                &context.device,
+                "DirectionalShadowStaticCascades",
+                self.directional.layers(),
+                self.directional.size(),
             );
-            drop(pass);
+            let groups = maps
+                .layer_views
+                .iter()
+                .map(|view| copy_bind_group(&context.device, &self.copy_layout, view))
+                .collect();
+            self.directional_static = Some((maps, groups));
+        }
+        // Cascades, each in its own passes.
+        for (slot, (job, work)) in cascades.iter().enumerate() {
+            let job = &self.directional_frame.jobs[*job];
+            let offset = (slot * stride) as u32;
+            let frustum = Frustum::from_view_proj(job.view.view_proj);
+            let min_radius = job.view.texel * MIN_CASTER_TEXELS;
+            let big_enough = |batch: usize, instance: usize| {
+                batches.all()[batch]
+                    .bounds
+                    .get(instance)
+                    .is_none_or(|sphere| sphere.radius >= min_radius)
+            };
+            let layer = self.directional.layer_view(job.layer as usize).clone();
+            match *work {
+                CascadeWork::Full => {
+                    visibility.compute_filtered(batches, &frustum, big_enough);
+                    let mut pass = begin_shadow_pass(encoder, &layer, true, "ShadowCascade");
+                    outcome.draw_calls += self.draw_casters(
+                        &mut pass,
+                        geometry,
+                        batches,
+                        objects,
+                        mask_textures,
+                        offset,
+                        &visibility,
+                    );
+                }
+                CascadeWork::Layered {
+                    render_static,
+                    restore,
+                    dynamic,
+                } => {
+                    let Some((static_maps, copy_groups)) = self.directional_static.as_ref() else {
+                        continue;
+                    };
+                    if render_static {
+                        visibility.compute_filtered(batches, &frustum, |batch, instance| {
+                            !changes.is_dynamic(batch, instance) && big_enough(batch, instance)
+                        });
+                        let static_layer = static_maps.layer_view(job.layer as usize);
+                        let mut pass =
+                            begin_shadow_pass(encoder, static_layer, true, "ShadowCascadeStatic");
+                        outcome.draw_calls += self.draw_casters(
+                            &mut pass,
+                            geometry,
+                            batches,
+                            objects,
+                            mask_textures,
+                            offset,
+                            &visibility,
+                        );
+                    }
+                    // The static depth back where dynamic casters were or are, then those.
+                    let mut pass =
+                        begin_shadow_pass(encoder, &layer, false, "ShadowCascadeDynamic");
+                    let [x0, y0, x1, y1] = restore;
+                    pass.set_scissor_rect(x0, y0, x1 - x0, y1 - y0);
+                    pass.set_pipeline(&self.copy_pipeline);
+                    pass.set_bind_group(0, &copy_groups[job.layer as usize], &[]);
+                    pass.draw(0..3, 0..1);
+                    if dynamic.is_some() {
+                        visibility.compute_filtered(batches, &frustum, |batch, instance| {
+                            changes.is_dynamic(batch, instance) && big_enough(batch, instance)
+                        });
+                        outcome.draw_calls += self.draw_casters(
+                            &mut pass,
+                            geometry,
+                            batches,
+                            objects,
+                            mask_textures,
+                            offset,
+                            &visibility,
+                        );
+                    }
+                }
+            }
             outcome.views_rendered += 1;
             if record_custom_passes {
                 custom_invocations.push(ShadowInvocation {
                     stage: ShadowPassStage::Directional {
-                        light_index: index as u32,
+                        light_index: job.light as u32,
+                        cascade: job.cascade as u32,
                     },
-                    view: layer.clone(),
-                    view_proj: matrix,
+                    view: layer,
+                    view_proj: job.view.view_proj,
                     viewport: None,
                 });
             }
-            self.directional_cache[index] = key;
         }
-        let first_face_slot = directional.len();
+        after_cascades(encoder);
+        let first_face_slot = cascades.len();
         let set_tile = |pass: &mut wgpu::RenderPass<'_>, tile: Tile| {
             pass.set_viewport(
                 tile.x as f32,
@@ -899,7 +1360,7 @@ impl ShadowResources {
         // Static casters of the faces that lost them, into the static atlas.
         if jobs.iter().any(|job| job.render_static) {
             let static_view = self.static_atlas.view.clone();
-            let mut pass = begin_shadow_pass(encoder, &static_view, false);
+            let mut pass = begin_shadow_pass(encoder, &static_view, false, "ShadowAtlasStatic");
             for (offset, job) in jobs.iter().enumerate() {
                 if !job.render_static {
                     continue;
@@ -928,7 +1389,7 @@ impl ShadowResources {
         // The shadow maps: each face's static depth, then its dynamic casters.
         let atlas_view = self.atlas.view.clone();
         {
-            let mut pass = begin_shadow_pass(encoder, &atlas_view, false);
+            let mut pass = begin_shadow_pass(encoder, &atlas_view, false, "ShadowAtlas");
             for (offset, job) in jobs.iter().enumerate() {
                 let face = &self.local.faces[job.face];
                 set_tile(&mut pass, face.tile);
@@ -1109,15 +1570,17 @@ fn sphere_meets(a: Sphere, b: Sphere) -> bool {
     a.center.distance_squared(b.center) <= (a.radius + b.radius).powi(2)
 }
 
-/// A depth pass over `view`: cleared to the far plane, or keeping what is there (the
-/// atlases, whose tiles each view clears or copies itself).
+/// A depth pass `label` over `view`: cleared to the far plane, or keeping what is there
+/// (the atlases, whose tiles each view clears or copies itself, and cascades rebuilt over
+/// a copy of their static casters).
 fn begin_shadow_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
     clear: bool,
+    label: &str,
 ) -> wgpu::RenderPass<'a> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("ShadowPass"),
+        label: Some(label),
         color_attachments: &[],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
             view,
@@ -1137,90 +1600,6 @@ fn begin_shadow_pass<'a>(
     })
 }
 
-/// One step of a fast, order-sensitive 64-bit mix (as FxHash).
-fn mix(hash: u64, value: u64) -> u64 {
-    (hash.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95)
-}
-
-fn mix_floats(mut hash: u64, values: &[f32]) -> u64 {
-    for value in values {
-        hash = mix(hash, u64::from(value.to_bits()));
-    }
-    hash
-}
-
-/// A hash of everything that decides what the shadow casters look like from any view:
-/// each instance's geometry (`mesh_identity`, None for a batch with no mesh to draw),
-/// transform, whether it casts, and for cut-outs its material and the texture set's
-/// generation. Order-independent, so reordered batches do not count as a change. `None`
-/// when the casters move every frame (skinned meshes, GPU-placed instances), in which
-/// case the maps are rendered every frame.
-fn casters_signature(
-    batches: &PreparedBatches,
-    mesh_identity: impl Fn(&OrderedBatch) -> Option<u64>,
-    texture_generation: u64,
-) -> Option<u64> {
-    use std::hash::{Hash, Hasher};
-    let materials = batches.materials();
-    let mut sum = 0u64;
-    let mut count = 0u64;
-    for batch in batches.all() {
-        if !casts_shadows(batch.pass) {
-            continue;
-        }
-        if batch.skin.is_some()
-            || batch
-                .instances
-                .iter()
-                .any(|instance| instance.source == InstanceSource::Gpu)
-        {
-            return None;
-        }
-        let Some(mesh_id) = mesh_identity(batch) else {
-            continue;
-        };
-        let batch_hash = mix(
-            mix(0x9e37_79b9_7f4a_7c15, mesh_id),
-            u64::from(batch.alpha_masked),
-        );
-        for instance in &batch.instances {
-            let Some(material) = materials.get(instance.material_index as usize) else {
-                continue;
-            };
-            if !material.casts_shadow() {
-                continue;
-            }
-            let transform = &instance.transform;
-            let mut hash = mix_floats(batch_hash, &transform.translation.to_array());
-            hash = mix_floats(hash, &transform.rotation.to_array());
-            hash = mix_floats(hash, &transform.scale.to_array());
-            if batch.alpha_masked {
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                material.hash(&mut hasher);
-                hash = mix(hash, hasher.finish());
-            }
-            // Spread the bits, since the sum below is commutative.
-            hash ^= hash >> 29;
-            hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            hash ^= hash >> 32;
-            sum = sum.wrapping_add(hash);
-            count += 1;
-        }
-    }
-    Some(mix(mix(sum, count), texture_generation))
-}
-
-/// The cache key of a view: the casters and the view projections of its faces.
-fn view_key(casters: u64, view_projs: &[[[f32; 4]; 4]]) -> u64 {
-    let mut hash = casters;
-    for matrix in view_projs {
-        for column in matrix {
-            hash = mix_floats(hash, column);
-        }
-    }
-    hash
-}
-
 /// The shadow map shader; with `textures` (bindless or not) the cut-out entry points too
 /// (shadow_masked.wgsl), with the material texture bindings (group 3).
 fn shadow_shader_source(textures: Option<bool>) -> String {
@@ -1237,82 +1616,6 @@ fn shadow_shader_source(textures: Option<bool>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::asset::{Assets, Handle, MaterialAsset};
-    use crate::renderer::batch::{CullMode, RenderBatcher, RenderObject};
-    use crate::renderer::material::Material;
-    use crate::scene::components::DepthState;
-    use crate::scene::transform::Transform;
-    use glam::Vec3;
-    use std::path::PathBuf;
-
-    fn prepared(objects: &[(usize, Vec3, InstanceSource)]) -> PreparedBatches {
-        let mut batcher = RenderBatcher::new();
-        let mut assets = Assets::new();
-        let material = Material::white();
-        let handle = assets
-            .materials
-            .insert(MaterialAsset::from_material(material, PathBuf::new()));
-        for (index, (mesh, position, source)) in objects.iter().enumerate() {
-            batcher
-                .add(
-                    RenderObject {
-                        mesh: Handle::new(*mesh),
-                        material: handle,
-                        resolved_material: Some(material),
-                        transform: Transform::from_translation(*position),
-                        depth_state: DepthState::default(),
-                        force_overlay: false,
-                        render_pass: None,
-                        instance_source: *source,
-                        gpu_index: (*source == InstanceSource::Gpu).then_some(index as u32),
-                        cull_mode: CullMode::Back,
-                        pick_id: index as u64 + 1,
-                        skin: None,
-                    },
-                    &assets,
-                )
-                .unwrap();
-        }
-        PreparedBatches::from_batcher(&batcher, Vec3::ZERO, &|_| None, &|_, _| None)
-    }
-
-    fn signature(objects: &[(usize, Vec3, InstanceSource)], generation: u64) -> Option<u64> {
-        casters_signature(
-            &prepared(objects),
-            |batch| Some(batch.mesh.index() as u64),
-            generation,
-        )
-    }
-
-    #[test]
-    fn caster_signature_changes_only_with_the_casters() {
-        let cpu = InstanceSource::Cpu;
-        let a = (1, Vec3::new(1.0, 0.0, 0.0), cpu);
-        let b = (2, Vec3::new(0.0, 2.0, 0.0), cpu);
-        let moved = (1, Vec3::new(1.5, 0.0, 0.0), cpu);
-        let same = signature(&[a, b], 0);
-        assert!(same.is_some());
-        assert_eq!(signature(&[b, a], 0), same, "order does not matter");
-        assert_ne!(signature(&[moved, b], 0), same, "a moved caster counts");
-        assert_ne!(signature(&[a], 0), same, "a removed caster counts");
-        assert_ne!(signature(&[a, b], 1), same, "new textures count");
-        assert_eq!(
-            signature(&[a, b, (3, Vec3::ZERO, InstanceSource::Gpu)], 0),
-            None,
-            "GPU-placed instances disable the cache"
-        );
-    }
-
-    #[test]
-    fn view_keys_differ_per_view() {
-        let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
-        let moved = glam::Mat4::from_translation(Vec3::X).to_cols_array_2d();
-        assert_eq!(view_key(7, &[identity]), view_key(7, &[identity]));
-        assert_ne!(view_key(7, &[identity]), view_key(7, &[moved]));
-        assert_ne!(view_key(7, &[identity]), view_key(8, &[identity]));
-    }
-
     #[test]
     fn shadow_shaders_validate() {
         for textures in [None, Some(true), Some(false)] {

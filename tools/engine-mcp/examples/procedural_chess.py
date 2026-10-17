@@ -150,7 +150,7 @@ def lighting(mcp, camera, target):
     mcp.call("postprocess_set", ssao=True, fxaa=True, bloom=False,
              color={"saturation": 1.02, "contrast": 1.03})
     mcp.call("entity_spawn", kind="directional_light", name="Warm key", translation=[-6, 10, 6],
-             rotation=[-48, -32, 0], directional_light={"color": "#fff1da", "intensity": 2.2, "shadow_size": 15}, quiet=True)
+             rotation=[-48, -32, 0], directional_light={"color": "#fff1da", "intensity": 2.2}, quiet=True)
     mcp.call("entity_spawn", kind="directional_light", name="Cool fill", translation=[6, 9, -6],
              rotation=[-35, 135, 0], directional_light={"color": "#aecaff", "intensity": .8}, cast_shadow=False, quiet=True)
     mcp.call("entity_spawn", kind="camera", name="GameCamera", translation=camera, look_at=target,

@@ -1386,28 +1386,32 @@ impl Default for PointLight {
     }
 }
 
-/// Directional light component
+/// Directional light component: light from far away (the sun) along the entity's -Z.
+/// With `CanCastShadow` it casts shadows through cascaded shadow maps that follow the
+/// camera: sharp near it, softer further out, up to `shadow_distance`.
 #[derive(Debug, Clone, Copy)]
 pub struct DirectionalLight {
     pub color: Vec3,
     pub intensity: f32,
-    pub shadow_size: f32,
+    /// How far from the camera (in meters of view depth) its shadows reach; they fade
+    /// out toward it. When everything in view is nearer, the shadows cover only that,
+    /// with finer detail.
+    pub shadow_distance: f32,
 }
 
 impl DirectionalLight {
-    pub const DEFAULT_SHADOW_SIZE: f32 = 30.0;
-    pub const DEFAULT_SHADOW_DISTANCE: f32 = 30.0;
+    pub const DEFAULT_SHADOW_DISTANCE: f32 = 150.0;
 
     pub fn new(color: Vec3, intensity: f32) -> Self {
         Self {
             color,
             intensity,
-            shadow_size: Self::DEFAULT_SHADOW_SIZE,
+            shadow_distance: Self::DEFAULT_SHADOW_DISTANCE,
         }
     }
 
-    pub fn with_shadow_size(mut self, shadow_size: f32) -> Self {
-        self.shadow_size = shadow_size;
+    pub fn with_shadow_distance(mut self, shadow_distance: f32) -> Self {
+        self.shadow_distance = shadow_distance;
         self
     }
 }
@@ -1417,7 +1421,7 @@ impl Default for DirectionalLight {
         Self {
             color: Vec3::new(0.9, 0.95, 1.0),
             intensity: 3.0,
-            shadow_size: Self::DEFAULT_SHADOW_SIZE,
+            shadow_distance: Self::DEFAULT_SHADOW_DISTANCE,
         }
     }
 }

@@ -2488,15 +2488,16 @@ fn show_directional_light_section(
                     light.intensity = 0.0;
                 }
 
+                // How far from the camera the cascaded shadows reach.
                 changed |= float_drag_value(
                     ui,
-                    "Shadow Size",
-                    &mut light.shadow_size,
-                    0.1,
-                    Some(0.0..=500.0),
+                    "Shadow Distance",
+                    &mut light.shadow_distance,
+                    1.0,
+                    Some(1.0..=5000.0),
                 );
-                if light.shadow_size < 0.0 {
-                    light.shadow_size = 0.0;
+                if light.shadow_distance < 1.0 {
+                    light.shadow_distance = 1.0;
                 }
 
                 shadow_checkbox_row(ui, entity, casts_shadow, actions);

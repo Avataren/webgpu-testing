@@ -52,11 +52,17 @@ The test bed is `games/marionette` (its README has the benchmark numbers). The s
   import, `meshoptimizer` or Blender) picked by screen size per instance, and a pose
   update rate that drops with distance (animate every second or fourth frame far away),
   would cut skinning, posing and propagation together.
-- **Shadow maps for crowds.** Every skinned caster is drawn into every shadow view each
-  frame (the shadow cache is bypassed for skinned and GPU-placed casters, see
-  `renderer-perf-pass` notes in `shadows.rs`). Cascade-aware culling of casters and a
-  lower-resolution caster set for far cascades would help the 1.1 ms shadow pass and the
-  1,961 shadow draws.
+- **Shadow maps for crowds.** Skinned casters are dynamic, so every shadow view they
+  reach redraws them each frame: the sun's cascades restore only the rectangle they cover
+  from a static copy (with Lantern Market's 89 NPCs the four cascades cost about 0.2 ms),
+  and point and spot faces copy their whole tile. A crowd spread over a cascade still
+  makes one rectangle around all of it; a few rectangles, or a lower-resolution caster
+  set (mesh LODs) for the far cascades, would cut the draws further.
+- **Cascades fitted to the scene.** A cascade covers the sphere around its slice of the
+  view so that it holds still as the camera turns, which wastes texels where the slice
+  reaches past the level (in the character playground the last cascade's map is mostly
+  empty). Clipping the squares to the receivers' light-space bounds, with the size
+  quantized to steps, would sharpen far shadows in bounded scenes.
 - **Ray tracing with crowds.** With ray tracing on, 1,000 skinned characters rebuild
   about 2,900 BLAS a frame and fill VRAM, so the show runs raster only. Skinned BLAS are
   now rebuilt only when the pose changed, and off-screen ones every 2-4 frames

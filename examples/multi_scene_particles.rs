@@ -112,7 +112,7 @@ impl MultiSceneParticlesExample {
                     light_rotation,
                     Vec3::ONE,
                 )),
-                DirectionalLight::new(Vec3::new(1.0, 0.97, 0.92), 6.5).with_shadow_size(64.0),
+                DirectionalLight::new(Vec3::new(1.0, 0.97, 0.92), 6.5).with_shadow_distance(120.0),
                 CanCastShadow(true),
             ));
         }
@@ -196,7 +196,7 @@ impl MultiSceneParticlesExample {
                     light_rotation,
                     Vec3::ONE,
                 )),
-                DirectionalLight::new(Vec3::splat(1.0), 7.5).with_shadow_size(70.0),
+                DirectionalLight::new(Vec3::splat(1.0), 7.5).with_shadow_distance(120.0),
                 CanCastShadow(true),
             ));
         }
